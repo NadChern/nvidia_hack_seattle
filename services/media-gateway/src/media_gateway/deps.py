@@ -108,9 +108,50 @@ def authorize_device_websocket(websocket: WebSocket, *, device_id: str) -> None:
         raise UnauthorizedError("device credential does not match the requested device")
 
 
+def authorize_helper_request(request: Request) -> None:
+    """Accept the internal operator, or any currently valid device credential.
+
+    Unlike :func:`authorize_device_request`, there is no `device_id` to check
+    a match against here: a remote helper is by definition not the wearer's
+    own device, and listing or accepting an assist request is not scoped to
+    any one device the way a session's own event stream is. Any paired phone
+    -- glasses or helper -- may call this; `verify` still rejects anything
+    unsigned, expired, or forged.
+    """
+    settings: Settings = request.app.state.settings
+    presented = _presented_token(request.headers.get("authorization"))
+    if _matches_internal_token(settings, presented) and not _is_device_credential(presented):
+        return
+    if presented is None:
+        raise UnauthorizedError("missing bearer token")
+    request.app.state.device_credentials.verify(presented)
+
+
+def authorize_helper_websocket(websocket: WebSocket) -> None:
+    """WebSocket form of :func:`authorize_helper_request`.
+
+    Same header-only rule as :func:`authorize_device_websocket`: a device
+    credential is long-lived, so it must never ride in a URL. The internal
+    token keeps the query-string concession for callers that cannot set
+    headers.
+    """
+    settings: Settings = websocket.app.state.settings
+    header_token = _presented_token(websocket.headers.get("authorization"))
+    presented = header_token or websocket.query_params.get("token")
+    if _matches_internal_token(settings, presented) and not _is_device_credential(presented):
+        return
+    if presented is None:
+        raise UnauthorizedError("missing bearer token")
+    if header_token is None:
+        raise UnauthorizedError("device credentials must use the authorization header")
+    websocket.app.state.device_credentials.verify(header_token)
+
+
 __all__ = [
     "authorize_device_request",
     "authorize_device_websocket",
+    "authorize_helper_request",
+    "authorize_helper_websocket",
     "authorize_request",
     "authorize_websocket",
     "check_internal_token",

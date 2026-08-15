@@ -14,9 +14,19 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from media_gateway import __version__
-from media_gateway.api import device_events, health, pairing, return_audio, sessions, status, stream
+from media_gateway.api import (
+    assist,
+    device_events,
+    health,
+    pairing,
+    return_audio,
+    sessions,
+    status,
+    stream,
+)
 from media_gateway.config import Settings, get_settings
-from media_gateway.domain.device_events import DeviceEventHub
+from media_gateway.domain.assist import AssistEndedEvent, AssistEventHub, AssistRequestRegistry
+from media_gateway.domain.device_events import AssistDeviceEvent, DeviceEventHub
 from media_gateway.domain.epoch import EpochRegistry
 from media_gateway.domain.manual_trigger import ManualTriggerRegistry
 from media_gateway.domain.metrics import MetricsRegistry
@@ -32,6 +42,7 @@ from media_gateway.transport.memory_sink import MemorySink
 from media_gateway.transport.scripted import ScriptedMediaSource, ScriptedPlan
 from media_gateway.transport.source import MediaSource
 from media_gateway.transport.supervisor import SessionSupervisor
+from media_gateway.transport.tokens import helper_identity
 
 logger = logging.getLogger(__name__)
 
@@ -114,8 +125,45 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         max_subscribers=settings.device_event_max_subscribers,
     )
     app.state.manual_triggers = ManualTriggerRegistry(ttl_s=settings.manual_trigger_ttl_s)
+    app.state.assist_requests = AssistRequestRegistry(ttl_s=settings.assist_request_ttl_s)
+    # Reuses the device-event queue/subscriber sizing rather than adding a
+    # second pair of knobs for a hub with the same shape and the same
+    # trust boundary.
+    app.state.assist_events = AssistEventHub(
+        queue_size=settings.device_event_queue_size,
+        max_subscribers=settings.device_event_max_subscribers,
+    )
 
-    supervisor = SessionSupervisor(settings=settings, sink=pipeline)
+    def _end_assist_if_helper_left(session_id: str, participant_identity: str) -> None:
+        # The only non-publisher participant this room ever admits today is a
+        # remote-assist helper (docs/12); a helper leaving -- hang-up or a
+        # dropped connection -- is what ends the call, since no dedicated
+        # "hang up" endpoint exists yet (see role-prompts/Jacky-Remote-Assist.md,
+        # "Open items to resolve before building").
+        if participant_identity != helper_identity(session_id):
+            return
+        ended = app.state.assist_requests.end(session_id)
+        if ended is None:
+            return
+        app.state.assist_events.publish(
+            AssistEndedEvent(
+                request_id=ended.request_id,
+                session_id=session_id,
+                occurred_at=dt.datetime.now(dt.UTC),
+            )
+        )
+        app.state.device_events.publish(
+            session_id,
+            AssistDeviceEvent(state="ended", occurred_at=dt.datetime.now(dt.UTC)),
+        )
+        logger.info(
+            "assist ended by the helper leaving the room",
+            extra={"session_id": session_id, "request_id": ended.request_id},
+        )
+
+    supervisor = SessionSupervisor(
+        settings=settings, sink=pipeline, on_participant_left=_end_assist_if_helper_left
+    )
     await supervisor.start()
     app.state.supervisor = supervisor
     # Readiness reflects whether LiveKit is reachable, never whether a device
@@ -157,6 +205,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         await memory_sink.stop()
         hub.close_all("gateway_shutdown")
         app.state.device_events.close_all("gateway_shutdown")
+        app.state.assist_events.close_all("gateway_shutdown")
         logger.info("media gateway stopped")
 
 
@@ -199,6 +248,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(pairing.router)
     app.include_router(sessions.router)
     app.include_router(device_events.router)
+    app.include_router(assist.router)
     app.include_router(stream.router)
     app.include_router(return_audio.router)
     app.include_router(status.router)

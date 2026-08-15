@@ -47,21 +47,44 @@ class ReplyEvent(BaseModel):
     occurred_at: dt.datetime
 
 
-DeviceEvent = Annotated[TranscriptEvent | ReplyEvent, Field(discriminator="type")]
+class AssistDeviceEvent(BaseModel):
+    """What the wearer's HUD is told about a remote-assist call.
+
+    `state` matches `domain.assist.AssistState` exactly -- the request
+    registry and this event must use the same three words, or the two sides
+    of docs/12's assist contract silently drift.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal["1.0"] = "1.0"
+    type: Literal["assist"] = "assist"
+    state: Literal["requested", "accepted", "ended"]
+    #: No real identity system for a helper exists yet -- nothing in the
+    #: pairing flow captures a human-readable name -- so this is left
+    #: explicitly absent rather than guessed. See "Open items to resolve
+    #: before building" in role-prompts/Jacky-Remote-Assist.md.
+    helper_name: str | None = None
+    occurred_at: dt.datetime
+
+
+DeviceEvent = Annotated[
+    TranscriptEvent | ReplyEvent | AssistDeviceEvent, Field(discriminator="type")
+]
 
 
 @dataclass(eq=False)
 class DeviceEventSubscriber:
     session_id: str
     queue_size: int
-    queue: asyncio.Queue[TranscriptEvent | ReplyEvent] = field(init=False)
+    queue: asyncio.Queue[TranscriptEvent | ReplyEvent | AssistDeviceEvent] = field(init=False)
     closed: asyncio.Event = field(default_factory=asyncio.Event)
     close_reason: str | None = None
 
     def __post_init__(self) -> None:
         self.queue = asyncio.Queue(maxsize=self.queue_size)
 
-    def push(self, event: TranscriptEvent | ReplyEvent) -> None:
+    def push(self, event: TranscriptEvent | ReplyEvent | AssistDeviceEvent) -> None:
         if self.closed.is_set():
             return
         try:
@@ -93,7 +116,9 @@ class DeviceEventHub:
     def unsubscribe(self, subscriber: DeviceEventSubscriber) -> None:
         self._subscribers.discard(subscriber)
 
-    def publish(self, session_id: str, event: TranscriptEvent | ReplyEvent) -> int:
+    def publish(
+        self, session_id: str, event: TranscriptEvent | ReplyEvent | AssistDeviceEvent
+    ) -> int:
         delivered = 0
         for subscriber in tuple(self._subscribers):
             if subscriber.session_id != session_id:
@@ -117,6 +142,7 @@ class DeviceEventHub:
 
 
 __all__ = [
+    "AssistDeviceEvent",
     "DeviceEvent",
     "DeviceEventHub",
     "DeviceEventSubscriber",

@@ -23,8 +23,21 @@ from media_gateway.errors import UnavailableError
 #: `publisher` is the glasses client: it publishes camera and microphone, and
 #: subscribes so it can hear the assistant's return audio. `worker` is the
 #: gateway itself: it subscribes to media and publishes synthesized speech.
-#: `viewer` is the operator console and may only subscribe.
-GrantRole = Literal["publisher", "viewer", "worker"]
+#: `viewer` is the operator console and may only subscribe. `helper` is a
+#: remote-assist participant (docs/12): it subscribes like a viewer but may
+#: additionally publish exactly one thing, a microphone -- never a camera,
+#: which would break the single-video-publisher assumption the relay's
+#: dimension guard depends on (SG-C's simulcast-collapse finding).
+GrantRole = Literal["publisher", "viewer", "worker", "helper"]
+
+#: LiveKit's own vocabulary for what a participant may publish -- confirmed
+#: against the installed `livekit-server-sdk` by minting a token and decoding
+#: it: `can_publish_sources=[api.TrackSource.MICROPHONE]` encodes as
+#: `canPublishSources: [2]` in the signed grant. Restricting a `helper` grant
+#: to this one source, rather than `can_publish=True` with no further limit,
+#: is what keeps a compromised or buggy helper client from ever being able to
+#: publish video -- the grant forbids it at the server, not client discipline.
+HELPER_PUBLISH_SOURCES = [api.TrackSource.MICROPHONE]
 
 
 class MintedToken:
@@ -80,6 +93,13 @@ def mint_access_token(
         room_list=False,
         room_record=False,
         can_update_own_metadata=False,
+        # Unset (None) for every other role, which LiveKit reads as "no
+        # source restriction" -- `publisher` still needs both camera and mic.
+        # Only `helper` is narrowed, and only here: this is the one place a
+        # phone or browser tab could otherwise be handed a camera-publish
+        # grant into a room whose entire relay topology assumes one video
+        # publisher (docs/12).
+        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,
     )
 
     token = (
@@ -119,9 +139,20 @@ def worker_identity(session_id: str) -> str:
     return f"gateway-{session_id}"
 
 
+def helper_identity(session_id: str) -> str:
+    """Stable identity for the one remote-assist participant on a session.
+
+    `room_worker.py`'s ingest filter and participant-lifecycle handling key
+    off this exact prefix to recognize a helper as *not* the wearer.
+    """
+    return f"helper-{session_id}"
+
+
 __all__ = [
+    "HELPER_PUBLISH_SOURCES",
     "GrantRole",
     "MintedToken",
+    "helper_identity",
     "mint_access_token",
     "publisher_identity",
     "viewer_identity",

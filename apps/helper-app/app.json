@@ -1,0 +1,59 @@
+{
+  "expo": {
+    "name": "helper-app",
+    "slug": "helper-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Helper needs the camera to scan the pairing QR code.",
+        "NSMicrophoneUsageDescription": "Helper needs the microphone to talk to the person you're assisting.",
+        "ITSAppUsesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.anonymous.helperapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.anonymous.helperapp"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-build-properties",
+      "@livekit/react-native-expo-plugin",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Helper needs the camera to scan the pairing QR code."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "9c2d6f4f-52f7-499c-ad28-5680aeb3a8c1"
+      }
+    },
+    "owner": "nvidiahack2026"
+  }
+}
