@@ -148,6 +148,27 @@ def test_a_late_observation_recomputes_rather_than_appends(db: DbSession) -> Non
     assert state.last_confirmed_placement.surface == "coffee_table"
 
 
+def test_preresolved_object_id_still_receives_lifecycle_signals(db: DbSession) -> None:
+    """A registered id still gets a tracker-scope mapping for lifecycle fan-out."""
+    object_id = "object_registered_keys"
+    observations = [
+        item.model_copy(
+            update={
+                "object": item.object.model_copy(update={"object_id": object_id}),
+            }
+        )
+        for item in keys_placed_then_picked_up()
+    ]
+    ingest(db, observations)
+
+    states = repository.record_lifecycle(db, envelope_for(), policy=POLICY)
+    db.commit()
+
+    assert db.query(ObjectIdentity).filter(ObjectIdentity.object_id == object_id).count() == 1
+    assert len(states) == 1
+    assert states[0].current_status == "unknown"
+
+
 def test_lifecycle_fans_out_to_every_object_in_the_epoch(db: DbSession) -> None:
     """The docs/06 sign-off, exercised.
 
@@ -200,6 +221,44 @@ def test_a_repeated_lifecycle_signal_is_ignored(db: DbSession) -> None:
     db.commit()
 
     assert second == []
+
+
+def test_registered_object_survives_session_delete_and_answers_in_a_new_session(
+    db: DbSession,
+) -> None:
+    enrolled, _ = repository.create_enrolled_object(
+        db, label="keys", idempotency_key="register/keys"
+    )
+    object_id = enrolled.object_id
+    session_b = "sess_second"
+    placed_a = keys_placed_and_left()[0]
+    placed_b = keys_placed_and_left()[0].model_copy(
+        update={
+            "observation_id": "obs_session_b",
+            "idempotency_key": "glasses-01/sess_second/track-2/placed/1",
+            "session_id": session_b,
+            "media_epoch_id": "TR_second",
+            "object": placed_a.object.model_copy(
+                update={"object_id": object_id, "track_id": "track-2"}
+            ),
+            "event": placed_a.event.model_copy(
+                update={"occurred_at": T0 + dt.timedelta(minutes=10)}
+            ),
+        }
+    )
+    placed_a = placed_a.model_copy(
+        update={"object": placed_a.object.model_copy(update={"object_id": object_id})}
+    )
+    ingest(db, [placed_a, placed_b])
+
+    repository.delete_session(db, SESSION, policy=POLICY)
+    db.commit()
+
+    assert repository.find_objects_by_label(db, "keys", session_id=session_b) == [object_id]
+    state = repository.state_of(db, object_id)
+    assert state is not None
+    assert state.current_status == "confirmed_at_location"
+    assert db.get(models.EnrolledObjectRow, object_id) is not None
 
 
 def test_deleting_a_session_removes_the_claim(db: DbSession) -> None:

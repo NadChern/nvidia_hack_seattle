@@ -46,9 +46,10 @@ Recommended demo defaults:
 | Non-event frames | Do not persist |
 | Evidence frames or short clips | Session-scoped; automatically delete after 24 hours |
 | Structured event metadata | Session-scoped; automatically delete after 24 hours |
+| Registered-object crops and embeddings | Persist until the enrolled object is explicitly deleted |
 | Logs | Seven days, with transcripts, media, tokens, and precise evidence paths redacted |
 
-Retention must be configurable. Deletion removes database records, evidence files, derived embeddings, caches, and backups within the documented scope. For a longer-lived prototype, obtain an explicit retention decision rather than silently changing these defaults.
+Retention must be configurable. Registered-object crops use a separate object-scoped root and are never placed under the 24-hour session evidence sweeper; otherwise a successful enrollment would silently stop matching overnight. `DELETE /v1/objects/{object_id}` removes the enrolled metadata, pooled embeddings, and that object's crop subtree. Session deletion removes its observations and evidence but preserves the registry and state supported by another session. Deletion removes database records, evidence files, derived embeddings, caches, and backups within the documented scope. For a longer-lived prototype, obtain an explicit retention decision rather than silently changing these defaults.
 
 ## Bystanders and sensitive content
 

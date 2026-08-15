@@ -12,6 +12,8 @@ from visual_memory_memory_contract.protocol import (
     EventDetail,
     Location,
     ObjectRef,
+    ObjectViewQuality,
+    ObjectViewUpload,
     Observation,
     ObservationConfidence,
     Provenance,
@@ -99,6 +101,31 @@ def test_unknown_fields_are_ignored_so_a_pinned_producer_keeps_working() -> None
     payload["a_field_from_a_later_version"] = True
 
     assert Observation.model_validate(payload).object.label == "keys"
+
+
+def test_object_view_upload_requires_two_finite_vectors_of_the_declared_dim() -> None:
+    quality = ObjectViewQuality(
+        detection_confidence=0.9,
+        box_area_fraction=0.3,
+        sharpness_score=1.2,
+        mask_box_ratio=0.8,
+        quality_score=0.9,
+    )
+    upload = ObjectViewUpload(
+        view_index=0,
+        quality=quality,
+        embedder_id="fixture-v1",
+        pooling="summary+spatial-v1",
+        dim=2,
+        summary=(0.25, -0.5),
+        pooled_spatial=(0.125, -0.25),
+        crop_sha256="a" * 64,
+        crop_base64="aW1hZ2U=",
+    )
+
+    assert upload.dim == 2
+    with pytest.raises(ValidationError, match="must both match dim"):
+        ObjectViewUpload.model_validate(upload.model_dump(mode="json") | {"dim": 3})
 
 
 def test_models_are_frozen() -> None:

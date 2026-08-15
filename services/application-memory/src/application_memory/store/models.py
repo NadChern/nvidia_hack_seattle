@@ -25,6 +25,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -50,6 +51,55 @@ class Session(Base):
     device_id: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+
+
+class RegistryStateRow(Base):
+    """Singleton monotonic version for gallery cache invalidation."""
+
+    __tablename__ = "registry_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class EnrolledObjectRow(Base):
+    """A personal object identity that survives sessions and reconnects."""
+
+    __tablename__ = "enrolled_objects"
+
+    object_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    label: Mapped[str] = mapped_column(String(128), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(512), unique=True, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    registry_version: Mapped[int] = mapped_column(Integer, index=True)
+
+
+class ObjectViewRow(Base):
+    """A selected reference crop and two float32 pooled vectors."""
+
+    __tablename__ = "object_views"
+    __table_args__ = (
+        UniqueConstraint("object_id", "view_index", "crop_sha256", name="uq_object_view_content"),
+        Index("ix_object_views_object_index", "object_id", "view_index"),
+    )
+
+    view_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    object_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("enrolled_objects.object_id", ondelete="CASCADE"), index=True
+    )
+    view_index: Mapped[int] = mapped_column(Integer)
+    quality: Mapped[dict[str, Any]] = mapped_column(JSON)
+    embedder_id: Mapped[str] = mapped_column(String(256))
+    pooling: Mapped[str] = mapped_column(String(128))
+    dim: Mapped[int] = mapped_column(Integer)
+    summary: Mapped[bytes] = mapped_column(LargeBinary)
+    pooled_spatial: Mapped[bytes] = mapped_column(LargeBinary)
+    crop_sha256: Mapped[str] = mapped_column(String(64), index=True)
+    crop_media_type: Mapped[str] = mapped_column(String(64))
+    crop_relative_path: Mapped[str] = mapped_column(String(512))
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    registry_version: Mapped[int] = mapped_column(Integer, index=True)
 
 
 class ObjectIdentity(Base):
@@ -189,10 +239,13 @@ class AuditRow(Base):
 __all__ = [
     "AuditRow",
     "Base",
+    "EnrolledObjectRow",
     "EvidenceRow",
     "LifecycleSignal",
     "ObjectIdentity",
+    "ObjectViewRow",
     "ObjectStateRow",
     "Observation",
+    "RegistryStateRow",
     "Session",
 ]

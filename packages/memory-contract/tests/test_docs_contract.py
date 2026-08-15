@@ -21,8 +21,10 @@ import pytest
 
 from visual_memory_memory_contract.protocol import (
     LIFECYCLE_SCHEMA_VERSION,
+    OBJECT_REGISTRY_SCHEMA_VERSION,
     SCHEMA_VERSION,
     LifecycleEnvelope,
+    ObjectGallery,
     ObjectState,
     Observation,
     QueryResponse,
@@ -82,6 +84,16 @@ def test_the_lifecycle_envelope_validates(contract: str) -> None:
     # The point of the whole amendment: scoped by epoch, carrying no object.
     assert envelope.scope.media_epoch_id is not None
     assert envelope.scope.object_id is None
+
+
+def test_the_object_registry_example_validates(contract: str) -> None:
+    gallery = ObjectGallery.model_validate(
+        json.loads(json_blocks(section(contract, "Object registry contract"))[0])
+    )
+
+    assert gallery.schema_version == OBJECT_REGISTRY_SCHEMA_VERSION
+    assert gallery.objects[0].object_id == gallery.views[0].object_id
+    assert gallery.views[0].dim == len(gallery.views[0].summary)
 
 
 def test_the_trusted_state_example_validates(contract: str) -> None:

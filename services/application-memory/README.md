@@ -32,8 +32,10 @@ Run `uv` from **inside this directory**; from the repository root it resolves a 
 | `POST /v1/query` | "Where are my keys?" |
 | `POST /v1/lifecycle` | The gateway reports a track or session ending |
 | `POST /v1/evidence` · `GET /v1/evidence/{id}` | Frames, verified by digest |
-| `POST /v1/sessions` · `DELETE /v1/sessions/{id}` | Registration and deletion |
-| `GET /v1/status` | Counts and the promotion thresholds |
+| `POST /v1/sessions` · `DELETE /v1/sessions/{id}` | Session registration and deletion |
+| `POST /v1/objects` · `GET /v1/objects` · `DELETE /v1/objects/{id}` | Personal-object registry |
+| `POST /v1/objects/{id}/views` | Durable crop plus pooled identity vectors |
+| `GET /v1/status` | Counts, registry version, and configured limits |
 
 ## How it works
 
@@ -45,7 +47,9 @@ It also means deletion works: there is no second place a deleted memory can surv
 
 **A confirmed answer requires evidence that can be loaded, not merely referenced.** Retention deletes files while rows survive, and a row pointing at a deleted frame looks exactly like a valid one. The query path checks the filesystem and downgrades to `last_confirmed_only` when the frame is gone — making [docs/04](../../docs/04-Evaluation-Plan.md)'s *unsupported confident answer* impossible rather than merely measured.
 
-**Identity resolution is deliberately dumb**: exact label match within `(session_id, media_epoch_id, track_id)`. The epoch is part of the key, so a tracker that restarts its numbering after a reconnect cannot silently merge two objects. An honest `ambiguous_object` beats a confident wrong merge.
+**Unregistered identity resolution is deliberately dumb**: exact label match within `(session_id, media_epoch_id, track_id)`. The epoch is part of the key, so a tracker that restarts its numbering after a reconnect cannot silently merge two objects. Vision may instead submit a registry-minted `object_id`; Memory still records its tracker mapping so lifecycle fan-out works, while the stable id and its latest state survive session changes.
+
+**Registration crops are not session evidence.** They live under `VMA_REGISTRATION_CROP_DIR`, carry digest-verified server paths, and persist until `DELETE /v1/objects/{id}`. The 24-hour session sweeper never touches this root. Gallery clients use monotonic `registry_version` and `since_version` to retain a last-known-good cache without repeatedly transferring unchanged vectors.
 
 ## Boundary decisions
 

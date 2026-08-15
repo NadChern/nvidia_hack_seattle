@@ -321,6 +321,74 @@ The `idempotency_key` is deterministic — `{device_id}/{session_id}/{media_epoc
 
 One rule worth stating explicitly, because it is not obvious from the reducer table: a `track_lost` for an object that is **confirmed at a location is ignored**. A camera disconnect is not evidence that an object moved, and downgrading a good answer because the network blinked discards correct memory for nothing. The transition only applies while an object is `in_transit`.
 
+## Object registry contract
+
+Personal-object registration versions independently from observations under
+`OBJECT_REGISTRY_SCHEMA_VERSION = "1.0"`. It does not bump the observation schema:
+`object.object_id` was already nullable and a resolved producer already had a compatible place
+to carry a stable id.
+
+Memory mints `object_id`. Registered objects and views are durable, have no foreign key to a
+session, and therefore survive reconnects and ordinary session retention. Each selected view
+stores its controlled crop plus two little-endian float32 pooled vectors. `embedder_id`,
+`pooling`, and `dim` make a stale or incompatible gallery fail loudly rather than compare vectors
+from different domains.
+
+```json
+{
+  "schema_version": "1.0",
+  "registry_version": 2,
+  "unchanged": false,
+  "objects": [
+    {
+      "schema_version": "1.0",
+      "object_id": "object_01JABC",
+      "label": "keys",
+      "idempotency_key": "registration/sess_01JAB/keys/1",
+      "created_at": "2026-07-29T17:42:11.240Z",
+      "updated_at": "2026-07-29T17:42:17.240Z",
+      "registry_version": 2
+    }
+  ],
+  "views": [
+    {
+      "schema_version": "1.0",
+      "view_id": "view_01JABC",
+      "object_id": "object_01JABC",
+      "view_index": 0,
+      "quality": {
+        "detection_confidence": 0.94,
+        "box_area_fraction": 0.31,
+        "sharpness_score": 1.12,
+        "mask_box_ratio": 0.76,
+        "quality_score": 0.91,
+        "angular_velocity_rad_s": null
+      },
+      "embedder_id": "nvidia/C-RADIOv4-SO400M@c0457f5d",
+      "pooling": "summary+mask-weighted-spatial-v1",
+      "dim": 2,
+      "summary": [0.25, -0.5],
+      "pooled_spatial": [0.125, -0.25],
+      "crop_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "crop_media_type": "image/jpeg",
+      "crop_reference": "/v1/objects/object_01JABC/views/view_01JABC/crop",
+      "created_at": "2026-07-29T17:42:17.240Z",
+      "registry_version": 2
+    }
+  ]
+}
+```
+
+`registry_version` is monotonic across creates, view writes, and deletions. A gallery request with
+`since_version` equal to the current version returns `unchanged=true` and empty object/view lists;
+an older version receives a full snapshot. Serving a last-known-good snapshot while Memory is
+unreachable is a Vision policy, not permission for Memory to return stale data.
+
+View insertion is idempotent on `(object_id, view_index, crop_sha256)`, bounded by configured crop,
+dimension, and view-count limits. Deleting an enrolled object removes its registry rows,
+embeddings, and durable crop subtree. Session deletion removes only that session's event history;
+it must not erase a registered object or another session's state for that stable id.
+
 ## Trusted object state
 
 ```json

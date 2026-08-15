@@ -12,12 +12,17 @@ Requires the `client` extra:
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping
 from types import TracebackType
 from typing import Self
 
 from visual_memory_memory_contract.protocol import (
+    EnrolledObject,
     LifecycleEnvelope,
+    ObjectGallery,
     ObjectState,
+    ObjectView,
+    ObjectViewUpload,
     Observation,
     QueryRequest,
     QueryResponse,
@@ -82,6 +87,22 @@ class MemoryClient:
     def _post(self, path: str, payload: object) -> dict[str, object]:
         try:
             response = self._http.post(path, json=payload)
+        except httpx.HTTPError as exc:
+            raise MemoryError_(f"could not reach the memory service: {exc}") from exc
+        if response.status_code >= 400:
+            raise MemoryError_(
+                f"{path} refused the request ({response.status_code}): {response.text}",
+                status_code=response.status_code,
+            )
+        body: dict[str, object] = response.json()
+        return body
+
+    def _get(
+        self, path: str, *, params: Mapping[str, str | int] | None = None
+    ) -> dict[str, object]:
+        """GET JSON with the same bounded error translation as `_post`."""
+        try:
+            response = self._http.get(path, params=params)
         except httpx.HTTPError as exc:
             raise MemoryError_(f"could not reach the memory service: {exc}") from exc
         if response.status_code >= 400:
@@ -177,6 +198,52 @@ class MemoryClient:
         if response.status_code >= 400:
             raise MemoryError_(
                 f"session deletion refused ({response.status_code}): {response.text}",
+                status_code=response.status_code,
+            )
+
+    def create_object(self, *, label: str, idempotency_key: str) -> EnrolledObject:
+        """Mint or idempotently return one stable personal-object identity."""
+        return EnrolledObject.model_validate(
+            self._post(
+                "/v1/objects",
+                {"label": label, "idempotency_key": idempotency_key},
+            )
+        )
+
+    def put_object_view(self, object_id: str, upload: ObjectViewUpload) -> ObjectView:
+        """Persist one bounded reference crop and its pooled embeddings."""
+        return ObjectView.model_validate(
+            self._post(
+                f"/v1/objects/{object_id}/views",
+                upload.model_dump(mode="json"),
+            )
+        )
+
+    def list_gallery(self, *, since_version: int | None = None) -> ObjectGallery:
+        params = {"since_version": since_version} if since_version is not None else None
+        return ObjectGallery.model_validate(self._get("/v1/objects", params=params))
+
+    def get_object_crop(self, object_id: str, view_id: str) -> bytes:
+        path = f"/v1/objects/{object_id}/views/{view_id}/crop"
+        try:
+            response = self._http.get(path)
+        except httpx.HTTPError as exc:
+            raise MemoryError_(f"could not reach the memory service: {exc}") from exc
+        if response.status_code >= 400:
+            raise MemoryError_(
+                f"{path} refused the request ({response.status_code}): {response.text}",
+                status_code=response.status_code,
+            )
+        return response.content
+
+    def delete_object(self, object_id: str) -> None:
+        try:
+            response = self._http.delete(f"/v1/objects/{object_id}")
+        except httpx.HTTPError as exc:
+            raise MemoryError_(f"could not reach the memory service: {exc}") from exc
+        if response.status_code >= 400:
+            raise MemoryError_(
+                f"object deletion refused ({response.status_code}): {response.text}",
                 status_code=response.status_code,
             )
 
