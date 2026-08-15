@@ -45,6 +45,7 @@ multi-session deployment would key these per `epoch_id` instead.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import functools
 import logging
@@ -64,6 +65,7 @@ from visual_memory_vision_contract.protocol import (
     Detection,
     DetectorRef,
     EvidenceWindow,
+    IdentityMatch,
     OverlayFrame,
     OverlayTrack,
     TrackSample,
@@ -75,6 +77,7 @@ from vision_worker.depth.base import DepthEstimator
 from vision_worker.detect.base import Detector
 from vision_worker.domain.stability import TrackRegistry
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
+from vision_worker.identity.base import IdentityFrame, IdentityResolverProtocol
 from vision_worker.pose.base import PoseSource
 from vision_worker.track.base import Tracker
 from vision_worker.verify.base import Verifier
@@ -85,6 +88,10 @@ logger = logging.getLogger(__name__)
 #: Called only for a `confirmed` VerifierResult, with the window's buffered
 #: frames -- see `emit.memory.MemoryEmitter.emit`, the intended implementation.
 OnConfirmed = Callable[[CandidateEvent, VerifierResult, Sequence[BufferedFrame]], Awaitable[None]]
+
+#: A registered track retired without a confirmed placement. This bounded weak
+#: write bypasses the ordinary first-sighting drop and never runs a verifier.
+OnObserved = Callable[[CandidateEvent, Sequence[BufferedFrame]], Awaitable[None]]
 
 #: Called once per processed frame with what a viewer needs to draw it.
 #:
@@ -150,6 +157,9 @@ class PipelineMetrics:
     sightings_not_promoted: int = 0
     #: Resting objects that stopped being detected and had to be asked about.
     vanishings_questioned: int = 0
+    identity_tracks_started: int = 0
+    identity_tracks_resolved: int = 0
+    registered_last_seen_emitted: int = 0
 
 
 #: Actions that never become a trusted observation, however confident.
@@ -242,6 +252,11 @@ class Pipeline:
         overlay_sink: OverlaySink | None = None,
         overlay_depth_interval_s: float = 1.0,
         max_detections_per_frame: int = 20,
+        identity_resolver: IdentityResolverProtocol | None = None,
+        identity_track_frames: int = 3,
+        identity_min_detection_confidence: float = 0.5,
+        identity_min_scale: float = 0.01,
+        on_observed: OnObserved | None = None,
     ) -> None:
         self._detector = detector
         self._detector_ref = detector_ref
@@ -256,6 +271,11 @@ class Pipeline:
         self._state_machine_version = state_machine_version
         self._pipeline_version = pipeline_version
         self._on_confirmed = on_confirmed
+        self._on_observed = on_observed
+        self._identity_resolver = identity_resolver
+        self._identity_track_frames = identity_track_frames
+        self._identity_min_detection_confidence = identity_min_detection_confidence
+        self._identity_min_scale = identity_min_scale
         #: `None` means nothing is watching, and costs nothing: no overlay is
         #: assembled at all, which is the normal state of a deployed service.
         self._overlay_sink = overlay_sink
@@ -275,6 +295,14 @@ class Pipeline:
         #: Bounded by the same retention the evidence ring uses -- a sample
         #: whose frame has already been evicted can never be part of a window.
         self._samples: dict[str, deque[TrackSample]] = {}
+        #: Identity is resolved once per track from a small bounded frame set.
+        #: The tasks run independently of verification and never block the
+        #: detector loop; their result is cached until retirement or epoch reset.
+        self._identity_frames: dict[str, list[IdentityFrame]] = {}
+        self._identity_attempted: set[str] = set()
+        self._identity_by_track: dict[str, IdentityMatch] = {}
+        self._identity_tasks: dict[str, asyncio.Task[None]] = {}
+        self._last_seen_tasks: set[asyncio.Task[None]] = set()
         #: Last depth reading per track, and when it was taken. Depth is
         #: sampled at a cadence rather than per frame, so a viewer sees the
         #: most recent measurement plus its age -- never a stale number
@@ -361,6 +389,12 @@ class Pipeline:
         self._track_registry.reset()
         self._evidence_ring.reset()
         self._samples.clear()
+        for task in self._identity_tasks.values():
+            task.cancel()
+        self._identity_frames.clear()
+        self._identity_attempted.clear()
+        self._identity_by_track.clear()
+        self._identity_tasks.clear()
         self._depth_by_track.clear()
         self._depth_sampled_at = None
         self._frame_intervals.clear()
@@ -414,6 +448,8 @@ class Pipeline:
         for lost_track_id in self._track_registry.active_track_ids - matched_ids:
             lost = self._track_registry.observe(lost_track_id, None)
             if lost.action is not None:
+                # A confirmed placement disappearing asks the stronger
+                # `vanished` question. It must never also emit weak last-seen.
                 await self._propose_vanished(
                     session_id=session_id,
                     device_id=device_id,
@@ -422,12 +458,25 @@ class Pipeline:
                     action=lost.action,
                     now=frame.captured_at,
                 )
+            elif lost.retired:
+                self._schedule_last_seen(
+                    session_id=session_id,
+                    device_id=device_id,
+                    epoch_id=epoch_id,
+                    track_id=lost_track_id,
+                )
 
         # Retired tracks take their sample history with them, for the same
         # reason their state goes: nothing can ever ask about them again.
         for gone in self._samples.keys() - self._track_registry.active_track_ids - matched_ids:
             del self._samples[gone]
             self._depth_by_track.pop(gone, None)
+            self._identity_frames.pop(gone, None)
+            self._identity_attempted.discard(gone)
+            self._identity_by_track.pop(gone, None)
+            task = self._identity_tasks.pop(gone, None)
+            if task is not None and not task.done():
+                task.cancel()
 
         # Built only when something is watching. `None` skips the work
         # entirely rather than assembling a list nobody reads.
@@ -448,8 +497,10 @@ class Pipeline:
                 # `depth_m` half of that computation.
                 world_point=None,
                 background_motion=background_motion,
+                identity=self._identity_by_track.get(track_id),
             )
             self._samples.setdefault(track_id, deque(maxlen=_SAMPLE_HISTORY_MAXLEN)).append(sample)
+            self._maybe_schedule_identity(track_id, detection, rgb, epoch_id=epoch_id)
             result = self._track_registry.observe(track_id, sample)
 
             # Collected here, above every `continue` below, because a viewer
@@ -519,6 +570,145 @@ class Pipeline:
 
         if overlay_tracks is not None:
             self._publish_overlay(session_id=session_id, frame=frame, tracks=overlay_tracks)
+
+    def _maybe_schedule_identity(
+        self,
+        track_id: str,
+        detection: Detection,
+        rgb: NDArray[np.uint8],
+        *,
+        epoch_id: str,
+    ) -> None:
+        resolver = self._identity_resolver
+        if (
+            resolver is None
+            or track_id in self._identity_attempted
+            or not resolver.accepts_label(detection.label)
+        ):
+            return
+        box = detection.box
+        area = max(0.0, box.x_max - box.x_min) * max(0.0, box.y_max - box.y_min)
+        if (
+            detection.confidence < self._identity_min_detection_confidence
+            or area < self._identity_min_scale
+            or box.x_min <= 0.0
+            or box.y_min <= 0.0
+            or box.x_max >= 1.0
+            or box.y_max >= 1.0
+        ):
+            return
+        frames = self._identity_frames.setdefault(track_id, [])
+        frames.append(IdentityFrame(frame_rgb=rgb.copy(), detection=detection))
+        if len(frames) < self._identity_track_frames:
+            return
+        self._identity_attempted.add(track_id)
+        selected = tuple(frames[: self._identity_track_frames])
+        self._identity_frames.pop(track_id, None)
+        self.metrics.identity_tracks_started += 1
+        task = asyncio.create_task(
+            self._resolve_track_identity(track_id, selected, epoch_id=epoch_id),
+            name=f"identity-{track_id}",
+        )
+        self._identity_tasks[track_id] = task
+
+    async def _resolve_track_identity(
+        self,
+        track_id: str,
+        frames: Sequence[IdentityFrame],
+        *,
+        epoch_id: str,
+    ) -> None:
+        resolver = self._identity_resolver
+        if resolver is None:
+            return
+        try:
+            match = await resolver.resolve(frames)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("per-track identity resolution failed; track remains unregistered")
+            return
+        finally:
+            current = asyncio.current_task()
+            if self._identity_tasks.get(track_id) is current:
+                self._identity_tasks.pop(track_id, None)
+        if (
+            epoch_id != self._current_epoch_id
+            or track_id not in self._track_registry.active_track_ids
+        ):
+            return
+        self._identity_by_track[track_id] = match
+        if match.object_id is not None:
+            self.metrics.identity_tracks_resolved += 1
+
+    def _schedule_last_seen(
+        self,
+        *,
+        session_id: str,
+        device_id: str,
+        epoch_id: str,
+        track_id: str,
+    ) -> None:
+        identity = self._identity_by_track.get(track_id)
+        history = self._samples.get(track_id)
+        if (
+            self._on_observed is None
+            or identity is None
+            or identity.object_id is None
+            or not history
+        ):
+            return
+        last = history[-1]
+        started_at = last.captured_at - dt.timedelta(seconds=1.0 / self._source_fps)
+        frames = self._evidence_ring.window(
+            started_at=started_at,
+            ended_at=last.captured_at,
+        )
+        if not frames:
+            return
+        candidate = CandidateEvent(
+            candidate_id=new_candidate_id(),
+            session_id=session_id,
+            device_id=device_id,
+            media_epoch_id=epoch_id,
+            track_id=track_id,
+            label=last.detection.label,
+            action="observed",
+            window=EvidenceWindow(
+                window_started_at=started_at,
+                window_ended_at=last.captured_at,
+                frame_count=len(frames),
+            ),
+            object_candidate=last.detection,
+            detector=self._detector_ref,
+            tracker=self._tracker_ref,
+            state_machine_version=self._state_machine_version,
+            pipeline_version=self._pipeline_version,
+            identity=identity,
+        )
+        task = asyncio.create_task(
+            self._write_last_seen(candidate, frames),
+            name=f"last-seen-{track_id}",
+        )
+        self._last_seen_tasks.add(task)
+        task.add_done_callback(self._last_seen_finished)
+        self.metrics.registered_last_seen_emitted += 1
+
+    async def _write_last_seen(
+        self, candidate: CandidateEvent, frames: Sequence[BufferedFrame]
+    ) -> None:
+        callback = self._on_observed
+        if callback is not None:
+            await callback(candidate, frames)
+
+    def _last_seen_finished(self, task: asyncio.Task[None]) -> None:
+        self._last_seen_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.exception("registered track-end last-seen write failed")
 
     def _should_sample_depth(self, now: dt.datetime) -> bool:
         """Whether to spend a depth pass on this frame.
@@ -669,7 +859,7 @@ class Pipeline:
         stopped being detected -- a hand entering, a lid closing -- and those
         frames are still in the ring.
         """
-        history = self._samples.pop(track_id, None)
+        history = self._samples.get(track_id)
         if not history:
             # Retired without ever producing a sample this epoch. Nothing to
             # describe and nothing to reason about.
@@ -736,6 +926,7 @@ class Pipeline:
             depth_model=self._depth_model_ref if detection.depth_m is not None else None,
             state_machine_version=self._state_machine_version,
             pipeline_version=self._pipeline_version,
+            identity=self._identity_by_track.get(track_id),
         )
         self.metrics.candidates_proposed += 1
 
@@ -816,15 +1007,23 @@ class Pipeline:
         was confirmed, a service shutting down.
         """
         await self._pending.drain()
+        identity_tasks = tuple(self._identity_tasks.values())
+        if identity_tasks:
+            await asyncio.gather(*identity_tasks, return_exceptions=True)
+        last_seen_tasks = tuple(self._last_seen_tasks)
+        if last_seen_tasks:
+            await asyncio.gather(*last_seen_tasks, return_exceptions=True)
 
     async def aclose(self) -> None:
-        """Finish outstanding verification, then stop the workers."""
+        """Finish outstanding verification and identity work, then stop workers."""
+        await self.drain()
         await self._pending.aclose()
 
 
 __all__ = [
     "OBSERVED_NOT_PROMOTED",
     "OnConfirmed",
+    "OnObserved",
     "Pipeline",
     "PipelineEvent",
     "PipelineMetrics",

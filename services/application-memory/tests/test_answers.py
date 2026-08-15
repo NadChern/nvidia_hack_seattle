@@ -6,10 +6,13 @@ it prevents rather than the branch it covers.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from visual_memory_memory_contract.fixtures import (
     keys_placed_and_left,
     keys_placed_then_picked_up,
 )
+from visual_memory_memory_contract.protocol import LastSeen, ObjectState
 
 from application_memory.domain.answers import EvidenceRef, answer_for
 from application_memory.domain.reducer import reduce
@@ -73,6 +76,26 @@ def test_unloadable_evidence_downgrades_a_confirmed_answer() -> None:
     assert answer.answer_status == "last_confirmed_only"
     assert answer.current_location is None
     assert "cannot confirm" in answer.spoken_answer
+
+
+def test_last_seen_only_never_overclaims_a_current_location() -> None:
+    state = ObjectState(
+        object_id=OBJECT,
+        current_status="unknown",
+        last_seen=LastSeen(
+            occurred_at=dt.datetime(2026, 8, 15, 12, 30, tzinfo=dt.UTC),
+            room="living_room",
+        ),
+        updated_at=dt.datetime(2026, 8, 15, 12, 30, tzinfo=dt.UTC),
+    )
+
+    answer = answer_for(state, label="keys")
+
+    assert answer.answer_status == "unknown"
+    assert answer.current_location is None
+    assert "last saw" in answer.spoken_answer
+    assert "living room" in answer.spoken_answer
+    assert " is " not in answer.spoken_answer
 
 
 def test_an_unknown_object_claims_nothing() -> None:

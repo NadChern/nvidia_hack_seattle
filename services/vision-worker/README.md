@@ -102,9 +102,8 @@ install, and is what `ci` runs. `yoloe` (`detect/yoloe.py`) is the real
 detector — two warm YOLOE checkpoints, text-prompt for known targets and
 prompt-free for open vocabulary — and needs the `models` extra (`uv sync
 --extra models`); see `model-manifest.toml` for the pinned checkpoint,
-source, and runtime. SAM 3.1 as a window-scoped identity verifier is the
-next major piece of work; nothing above `detect/base.py`'s `Detector`
-interface changes when it lands.
+source, and runtime. The checkpoint's in-process masks also feed the optional
+personal-object identity path without changing the `Detection` wire contract.
 
 **The device is detected, not assumed:** CUDA, then Apple's MPS, then CPU
 (`_select_device`). `dev-macos` therefore runs the real detector too — PyPI
@@ -126,6 +125,21 @@ VMA_DETECTOR_KIND=yoloe VMA_DETECTION_LABELS="keys,wallet" uv run uvicorn vision
 
 Its own test suite is opt-in (`pytest -m models`) since it needs the extra,
 a cached checkpoint, and ideally a GPU — see `tests/test_detect_yoloe.py`.
+
+**`VMA_IDENTITY_KIND` selects personal identity: `none` (default), `fixture`,
+or `radio`.** Identity resolves once from three quality track frames, caches the
+result for that track, and only annotates events; an unavailable or unmatched
+gallery never suppresses an ordinary observation. `radio` uses the pinned
+C-RADIOv4-SO400M masked summary/spatial vectors and Qwen3-VL only in the
+configured overlap band. Gallery snapshots refresh from Memory every 30 seconds
+and retain their last-known-good version across a temporary outage. The
+`identity` block at `/v1/status` reports resolved/ambiguous/unmatched/escalated,
+latency, and gallery counts.
+
+```bash
+VMA_DETECTOR_KIND=yoloe VMA_IDENTITY_KIND=radio \
+VMA_DETECTION_LABELS="keys" uv run uvicorn vision_worker.main:app --port 8082
+```
 
 **`VMA_DEPTH_KIND` selects the depth adapter: `none` (default), `fixture`,
 `yolo`, or `moge`.** `yolo` uses the pinned YOLO26 metric-depth checkpoint and

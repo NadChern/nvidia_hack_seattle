@@ -12,7 +12,7 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["dev", "ci", "deploy"]
@@ -22,6 +22,10 @@ Environment = Literal["dev", "ci", "deploy"]
 #: real detector (`detect/yoloe.py`), requiring the `models` extra
 #: (`uv sync --extra models`) and a CUDA-capable device.
 DetectorKind = Literal["fixture", "yoloe"]
+#: Personal-object identity is optional and annotates tracks without vetoing
+#: detections or events. `fixture` is deterministic CPU CI; `radio` loads the
+#: pinned C-RADIOv4 adapter from the models extra.
+IdentityKind = Literal["none", "fixture", "radio"]
 #: `none` (the default) runs the pipeline with no depth adapter at all --
 #: the same image-space-only shape the service has always had, not a
 #: degraded state. `fixture` scripts a constant range for testing the
@@ -122,6 +126,25 @@ class Settings(BaseSettings):
     #: YOLOE's text-prompt path runs CLIP, so `cpu` needs to be reachable
     #: without a code edit on the platform this project cannot test.
     yoloe_device: str | None = None
+
+    # --- Personal-object identity -------------------------------------------
+    identity_kind: IdentityKind = "none"
+    identity_device: str | None = None
+    identity_gallery_ttl_s: float = Field(default=30.0, gt=0)
+    identity_track_frames: int = Field(default=3, ge=1, le=8)
+    identity_min_detection_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    identity_min_scale: float = Field(default=0.01, ge=0.0, le=1.0)
+    #: Keys-only Phase-0 probe starting values. Configurable and re-tuned once
+    #: masked enrollment crops replace the conservative full-image probe.
+    identity_min_cosine: float = Field(default=0.8334, ge=0.0, le=1.0)
+    identity_min_margin: float = Field(default=0.0440, ge=0.0, le=1.0)
+    identity_escalation_low: float = Field(default=0.8216, ge=0.0, le=1.0)
+    identity_summary_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    identity_vlm_escalation: bool = True
+    #: Promotion confidence is not raw cosine. Resolved matches are mapped to
+    #: this Memory policy floor or above; unresolved objects retain detection
+    #: confidence so identity cannot make the pre-existing world disappear.
+    memory_min_identity_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
 
     # --- Depth ---------------------------------------------------------------
     depth_kind: DepthKind = "none"
@@ -282,6 +305,12 @@ class Settings(BaseSettings):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
 
+    @model_validator(mode="after")
+    def _identity_band_is_ordered(self) -> Settings:
+        if self.identity_escalation_low > self.identity_min_cosine:
+            raise ValueError("identity_escalation_low cannot exceed identity_min_cosine")
+        return self
+
     @property
     def memory_token(self) -> str | None:
         return self.internal_api_token.get_secret_value() if self.internal_api_token else None
@@ -301,6 +330,7 @@ __all__ = [
     "DepthKind",
     "DetectorKind",
     "Environment",
+    "IdentityKind",
     "Settings",
     "VerifierKind",
     "get_settings",

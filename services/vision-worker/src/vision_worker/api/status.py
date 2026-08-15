@@ -38,6 +38,7 @@ def status(request: Request) -> dict[str, Any]:
     consumer: RelayConsumer | None = getattr(state, "relay_consumer", None)
     detector = getattr(state, "detector", None)
     depth_estimator = getattr(state, "depth_estimator", None)
+    identity_resolver = getattr(state, "identity_resolver", None)
 
     reason = state.readiness.evaluate()
     started_at: dt.datetime = state.started_at
@@ -55,6 +56,7 @@ def status(request: Request) -> dict[str, Any]:
             "memory_base_url": settings.memory_base_url,
             "detector_kind": settings.detector_kind,
             "depth_kind": settings.depth_kind,
+            "identity_kind": settings.identity_kind,
             # What was *asked for*. `world_motion` degrades to plain rules
             # when DA3 will not load, so this is not proof the world check is
             # running -- `verifier` below reports what actually is.
@@ -108,6 +110,21 @@ def status(request: Request) -> dict[str, Any]:
                 }
             ),
         },
+        "identity": (
+            identity_resolver.status_payload()
+            if identity_resolver is not None
+            else {
+                "enabled": False,
+                "resolved": 0,
+                "ambiguous": 0,
+                "unmatched": 0,
+                "escalated": 0,
+                "average_latency_ms": 0.0,
+                "gallery_objects": 0,
+                "gallery_views": 0,
+                "stale_views": 0,
+            }
+        ),
         "verifier": type(state.verifier).__name__,
         # Verification runs off the frame loop, so it can fall behind the
         # stream without anything else looking wrong. `pending` climbing and

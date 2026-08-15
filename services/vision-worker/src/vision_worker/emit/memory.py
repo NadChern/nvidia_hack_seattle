@@ -48,6 +48,7 @@ from visual_memory_memory_contract.protocol import (
 )
 from visual_memory_vision_contract.protocol import (
     CandidateEvent,
+    DetectorRef,
     MemoryAction,
     VerifierResult,
     is_memory_action,
@@ -77,9 +78,18 @@ class MemoryEmitter:
     consuming relay frames while an HTTP round-trip to Memory is in flight.
     """
 
-    def __init__(self, client: MemoryClient, *, clip_fps: float = 24.0) -> None:
+    def __init__(
+        self,
+        client: MemoryClient,
+        *,
+        clip_fps: float = 24.0,
+        min_identity_cosine: float = 0.8334,
+        memory_min_identity_confidence: float = 0.7,
+    ) -> None:
         self._client = client
         self._clip_fps = clip_fps
+        self._min_identity_cosine = min_identity_cosine
+        self._memory_min_identity_confidence = memory_min_identity_confidence
 
     async def emit(
         self,
@@ -120,6 +130,53 @@ class MemoryEmitter:
             )
             raise
 
+    async def emit_last_seen(
+        self,
+        candidate: CandidateEvent,
+        frames: Sequence[BufferedFrame],
+    ) -> None:
+        """Write one identity-gated `observed` event when a track retires.
+
+        This intentionally bypasses the ordinary first-sighting drop. It is
+        bounded to one write per disappearance and requires a registered id.
+        """
+        if candidate.action != "observed" or candidate.identity is None:
+            raise ValueError("last-seen emission requires an identity-annotated observed candidate")
+        if candidate.identity.object_id is None:
+            raise ValueError("last-seen emission requires a resolved registered object")
+        evidence = await asyncio.to_thread(self._upload_still_evidence, candidate, frames)
+        result = VerifierResult(
+            candidate_id=candidate.candidate_id,
+            outcome="confirmed",
+            reason_code="registered_track_ended",
+            latency_ms=0.0,
+            verifier=DetectorRef(
+                name="identity-track-end", checkpoint="n/a", revision="last-seen-v1"
+            ),
+            occurred_at=candidate.window.window_ended_at,
+        )
+        observation = self._build_observation(candidate, result, evidence, "observed")
+        await asyncio.to_thread(self._client.record, observation)
+
+    def _upload_still_evidence(
+        self, candidate: CandidateEvent, frames: Sequence[BufferedFrame]
+    ) -> tuple[Evidence, ...]:
+        if not frames:
+            return ()
+        still = select_still_frame(frames)
+        still_sha256 = payload_digest(still.payload)
+        still_id = self._client.put_evidence(
+            still.payload, session_id=candidate.session_id, sha256=still_sha256
+        )
+        return (
+            Evidence(
+                evidence_id=still_id,
+                captured_at=still.captured_at,
+                media_type="image/jpeg",
+                sha256=still_sha256,
+            ),
+        )
+
     def _upload_evidence(
         self, candidate: CandidateEvent, frames: Sequence[BufferedFrame]
     ) -> tuple[Evidence, ...]:
@@ -131,19 +188,7 @@ class MemoryEmitter:
             # honest; inventing a placeholder id would not be.
             return ()
 
-        still = select_still_frame(frames)
-        still_sha256 = payload_digest(still.payload)
-        still_id = self._client.put_evidence(
-            still.payload, session_id=candidate.session_id, sha256=still_sha256
-        )
-        uploaded = [
-            Evidence(
-                evidence_id=still_id,
-                captured_at=still.captured_at,
-                media_type="image/jpeg",
-                sha256=still_sha256,
-            )
-        ]
+        uploaded = list(self._upload_still_evidence(candidate, frames))
 
         # The clip is best-effort. A still frame already stands as valid
         # evidence, so an encode or upload failure here degrades to today's
@@ -215,7 +260,11 @@ class MemoryEmitter:
             session_id=candidate.session_id,
             device_id=candidate.device_id,
             media_epoch_id=candidate.media_epoch_id,
-            object=ObjectRef(object_id=None, label=candidate.label, track_id=candidate.track_id),
+            object=ObjectRef(
+                object_id=(candidate.identity.object_id if candidate.identity else None),
+                label=candidate.label,
+                track_id=candidate.track_id,
+            ),
             event=EventDetail(
                 action=action,
                 source=_SOURCE,
@@ -225,12 +274,8 @@ class MemoryEmitter:
             ),
             location=location,
             confidence=ObservationConfidence(
-                # No separate identity-resolution confidence exists yet --
-                # v1 identity is exact label match within an epoch (see
-                # track/greedy_iou.py), so detection confidence stands in
-                # until a real identity system exists.
                 event=candidate.object_candidate.confidence,
-                identity=candidate.object_candidate.confidence,
+                identity=self._identity_confidence(candidate),
             ),
             evidence=evidence,
             provenance=Provenance(
@@ -248,6 +293,20 @@ class MemoryEmitter:
                 pipeline_version=candidate.pipeline_version,
             ),
         )
+
+    def _identity_confidence(self, candidate: CandidateEvent) -> float:
+        identity = candidate.identity
+        if identity is None or identity.object_id is None or identity.best_score is None:
+            # Identity did not resolve. Keep the exact pre-feature behavior so
+            # unregistered objects continue promoting at the same rate.
+            return candidate.object_candidate.confidence
+        threshold = self._memory_min_identity_confidence
+        denominator = max(1e-9, 1.0 - self._min_identity_cosine)
+        normalized = max(
+            0.0,
+            min(1.0, (identity.best_score - self._min_identity_cosine) / denominator),
+        )
+        return threshold + (1.0 - threshold) * normalized
 
 
 __all__ = ["MemoryEmitter"]

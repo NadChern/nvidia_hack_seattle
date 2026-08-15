@@ -25,6 +25,7 @@ from visual_memory_vision_contract.protocol import (
     CandidateEvent,
     Detection,
     DetectorRef,
+    IdentityMatch,
     OverlayFrame,
     Point2D,
     VerifierResult,
@@ -35,6 +36,7 @@ from vision_worker.depth.fixture import FixtureDepthEstimator
 from vision_worker.detect.fixture import FixtureDetector
 from vision_worker.domain.stability import StabilityConfig, TrackRegistry
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
+from vision_worker.identity.base import IdentityResolverProtocol
 from vision_worker.pipeline import OBSERVED_NOT_PROMOTED, OverlaySink, Pipeline
 from vision_worker.pose.image_motion import ImageMotionPose
 from vision_worker.track.greedy_iou import GreedyIoUTracker
@@ -103,6 +105,36 @@ def a_video_frame(*, sequence: int, epoch_id: str = "TR_VCaaa") -> VideoFrame:
     return frame.attach_payload(_PAYLOAD)
 
 
+class RecordingObserved:
+    def __init__(self) -> None:
+        self.candidates: list[CandidateEvent] = []
+
+    async def __call__(self, candidate: CandidateEvent, frames: object) -> None:
+        del frames
+        self.candidates.append(candidate)
+
+
+class StaticIdentityResolver:
+    def __init__(self, match: IdentityMatch) -> None:
+        self._match = match
+        self.calls = 0
+
+    def accepts_label(self, label: str) -> bool:
+        return label == "keys"
+
+    async def resolve(self, frames: object) -> IdentityMatch:
+        del frames
+        self.calls += 1
+        await asyncio.sleep(0)
+        return self._match
+
+    def status_payload(self) -> dict[str, object]:
+        return {"resolutions": self.calls}
+
+    async def aclose(self) -> None:
+        return None
+
+
 class RecordingSink:
     def __init__(self) -> None:
         self.confirmed: list[tuple[CandidateEvent, VerifierResult, tuple[BufferedFrame, ...]]] = []
@@ -125,6 +157,8 @@ def a_pipeline(
     overlay_sink: OverlaySink | None = None,
     overlay_depth_interval_s: float = 1.0,
     max_detections_per_frame: int = 20,
+    identity_resolver: IdentityResolverProtocol | None = None,
+    on_observed: RecordingObserved | None = None,
 ) -> Pipeline:
     return Pipeline(
         detector=FixtureDetector(script, loop=False),
@@ -148,6 +182,10 @@ def a_pipeline(
         overlay_sink=overlay_sink,
         overlay_depth_interval_s=overlay_depth_interval_s,
         max_detections_per_frame=max_detections_per_frame,
+        identity_resolver=identity_resolver,
+        identity_track_frames=2,
+        identity_min_scale=0.01,
+        on_observed=on_observed,
     )
 
 
@@ -936,3 +974,143 @@ async def test_a_depth_failure_leaves_the_pipeline_running() -> None:
 
     assert pipeline.metrics.frames_processed == len(script)
     assert all(t.depth_m is None for f in overlays for t in f.tracks)
+
+
+async def test_strong_event_reads_the_cached_track_identity() -> None:
+    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 5
+    sink = RecordingSink()
+    resolver = StaticIdentityResolver(
+        IdentityMatch(
+            object_id="object_my_keys",
+            best_score=0.92,
+            reason_code="embedding_resolved",
+        )
+    )
+    pipeline = a_pipeline(
+        script=script,
+        sink=sink,
+        stability_config=config,
+        identity_resolver=resolver,
+    )
+    await pipeline.epoch_started(session_id="sess_1", device_id="glasses-01", epoch_id="TR_VCaaa")
+    for sequence in range(len(script)):
+        await pipeline.video_frame(
+            session_id="sess_1",
+            device_id="glasses-01",
+            epoch_id="TR_VCaaa",
+            frame=a_video_frame(sequence=sequence),
+        )
+        await asyncio.sleep(0)
+    await pipeline.drain()
+
+    placed = next(candidate for candidate, _, _ in sink.confirmed if candidate.action == "placed")
+    assert resolver.calls == 1
+    assert placed.identity is not None
+    assert placed.identity.object_id == "object_my_keys"
+
+
+async def test_identity_never_vetoes_candidate_availability() -> None:
+    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 5
+    baseline_sink = RecordingSink()
+    identity_sink = RecordingSink()
+    baseline = a_pipeline(
+        script=script,
+        sink=baseline_sink,
+        stability_config=config,
+    )
+    with_identity = a_pipeline(
+        script=script,
+        sink=identity_sink,
+        stability_config=config,
+        identity_resolver=StaticIdentityResolver(
+            IdentityMatch(object_id=None, best_score=0.5, reason_code="below_threshold")
+        ),
+    )
+    for pipeline in (baseline, with_identity):
+        await pipeline.epoch_started(
+            session_id="sess_1", device_id="glasses-01", epoch_id="TR_VCaaa"
+        )
+        await drive(pipeline, len(script))
+
+    assert [item[0].action for item in identity_sink.confirmed] == [
+        item[0].action for item in baseline_sink.confirmed
+    ]
+
+
+async def test_registered_track_end_emits_one_weak_last_seen() -> None:
+    config = StabilityConfig(
+        dwell_frames=3,
+        passive_confirmation_frames=999,
+        reacquire_within_frames=1,
+    )
+    script = [[a_detection(0.5)]] * 3 + [[], [], []]
+    resolver = StaticIdentityResolver(
+        IdentityMatch(
+            object_id="object_my_keys",
+            best_score=0.92,
+            reason_code="embedding_resolved",
+        )
+    )
+    observed = RecordingObserved()
+    pipeline = a_pipeline(
+        script=script,
+        sink=RecordingSink(),
+        stability_config=config,
+        identity_resolver=resolver,
+        on_observed=observed,
+    )
+    await pipeline.epoch_started(session_id="sess_1", device_id="glasses-01", epoch_id="TR_VCaaa")
+
+    for sequence in range(len(script)):
+        await pipeline.video_frame(
+            session_id="sess_1",
+            device_id="glasses-01",
+            epoch_id="TR_VCaaa",
+            frame=a_video_frame(sequence=sequence),
+        )
+        await asyncio.sleep(0)
+    await pipeline.drain()
+
+    assert resolver.calls == 1
+    assert len(observed.candidates) == 1
+    assert observed.candidates[0].action == "observed"
+    assert observed.candidates[0].identity is not None
+    assert observed.candidates[0].identity.object_id == "object_my_keys"
+    assert pipeline.metrics.registered_last_seen_emitted == 1
+
+
+async def test_unregistered_track_end_never_writes_last_seen() -> None:
+    config = StabilityConfig(
+        dwell_frames=3,
+        passive_confirmation_frames=999,
+        reacquire_within_frames=1,
+    )
+    script = [[a_detection(0.5)]] * 3 + [[], [], []]
+    resolver = StaticIdentityResolver(
+        IdentityMatch(object_id=None, best_score=0.5, reason_code="below_threshold")
+    )
+    observed = RecordingObserved()
+    pipeline = a_pipeline(
+        script=script,
+        sink=RecordingSink(),
+        stability_config=config,
+        identity_resolver=resolver,
+        on_observed=observed,
+    )
+    await pipeline.epoch_started(session_id="sess_1", device_id="glasses-01", epoch_id="TR_VCaaa")
+
+    for sequence in range(len(script)):
+        await pipeline.video_frame(
+            session_id="sess_1",
+            device_id="glasses-01",
+            epoch_id="TR_VCaaa",
+            frame=a_video_frame(sequence=sequence),
+        )
+        await asyncio.sleep(0)
+    await pipeline.drain()
+
+    assert resolver.calls == 1
+    assert observed.candidates == []
+    assert pipeline.metrics.registered_last_seen_emitted == 0

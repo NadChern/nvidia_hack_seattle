@@ -23,6 +23,10 @@ threshold once. Every rate includes its numerator/denominator, and a set below a
 physical objects is explicitly labeled too small for a reliability claim. The preliminary
 keys-only set (3 keyrings, 25 balanced positive/negative trials) is a demo risk check, not the
 frozen set; its record is in [Identity Probe Results](spikes/identity-probe/RESULTS.md).
+`services/vision-worker/scripts/eval_identity.py` prints the fixed end-to-end table from labeled
+predictions and reads the running service's resolved/ambiguous/unmatched/escalated, latency, and
+gallery counters from `/v1/status`, so offline evaluation and the demo report the same runtime
+measurements.
 
 ## Ground-truth labels
 

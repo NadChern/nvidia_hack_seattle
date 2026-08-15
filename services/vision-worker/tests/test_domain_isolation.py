@@ -10,8 +10,8 @@ carry for their own domain layers.
 
 Per the plan (`docs/08-Development-and-Deployment.md`:30 -- "code outside a
 model adapter must not depend on MLX, PyTorch, CUDA, operating-system paths,
-or a checkpoint layout"), this extends beyond `domain/`: `detect/`, `depth/`,
-`track/`, and `pose/` are the only packages in this service allowed to import
+or a checkpoint layout"), this extends beyond `domain/`. The adapter packages
+are `detect/`, `depth/`, `identity/`, `track/`, and `pose/`; only they may import
 a model runtime. Everything else -- `api/`, `consume/`, `emit/`, `evidence/`,
 `verify/` -- must stay importable on a machine with no GPU, which is what
 makes the `ci` and `dev-macos` profiles real rather than aspirational.
@@ -29,7 +29,7 @@ DOMAIN = SRC / "domain"
 
 #: Packages allowed to import a model runtime or a media/vision library --
 #: everything else in this service must stay free of them.
-MODEL_ADAPTER_PACKAGES = {"detect", "depth", "track", "pose"}
+MODEL_ADAPTER_PACKAGES = {"detect", "depth", "identity", "track", "pose"}
 
 DOMAIN_FORBIDDEN = ("torch", "numpy", "cv2", "ultralytics", "fastapi", "starlette", "websockets")
 SERVICE_FORBIDDEN = ("torch", "cv2", "ultralytics")
@@ -83,7 +83,7 @@ def test_domain_modules_import_no_infrastructure(source: Path) -> None:
     "source", non_adapter_sources(), ids=lambda path: str(path.relative_to(SRC))
 )
 def test_non_adapter_modules_import_no_model_runtime(source: Path) -> None:
-    """`detect/`, `depth/`, `track/`, and `pose/` are the only packages allowed
+    """`detect/`, `depth/`, `identity/`, `track/`, and `pose/` are the only packages allowed
     to depend on a model runtime. Everything else must stay importable on a
     machine with no GPU -- the `ci` and `dev-macos` profiles depend on it."""
     offenders = imported_modules(source) & set(SERVICE_FORBIDDEN)

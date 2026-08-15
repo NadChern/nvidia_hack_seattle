@@ -38,6 +38,8 @@ import numpy as np
 from numpy.typing import NDArray
 from visual_memory_vision_contract.protocol import BoundingBox, Detection, Point2D
 
+from vision_worker.identity.base import SegmentedDetection
+
 logger = logging.getLogger(__name__)
 
 _WARMUP_IMAGE_SHAPE = (480, 640, 3)  # H, W, C
@@ -118,6 +120,10 @@ class YoloeDetector:
         #: session's detection labels stay constant for its whole duration,
         #: so this saves a CLIP text-encode on every frame after the first.
         self._embedding_cache: dict[frozenset[str], tuple[list[str], Any]] = {}
+        # Per-track identity runs off the frame loop and calls `segment()`.
+        # YOLOE mutates its active text classes before inference, so detector
+        # and identity forwards must not overlap on the shared warm model.
+        self._inference_lock = asyncio.Lock()
 
     @property
     def is_ready(self) -> bool:
@@ -175,9 +181,10 @@ class YoloeDetector:
         started = time.perf_counter()
         prompt_free = not labels
         loop = asyncio.get_running_loop()
-        result, resolved_labels, model = await loop.run_in_executor(
-            None, self._infer_blocking, frame_rgb, list(labels), prompt_free
-        )
+        async with self._inference_lock:
+            result, resolved_labels, model = await loop.run_in_executor(
+                None, self._infer_blocking, frame_rgb, list(labels), prompt_free
+            )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         self._request_count += 1
         self._average_latency_ms = (
@@ -187,6 +194,34 @@ class YoloeDetector:
         if result is None:
             return ()
         return tuple(self._postprocess(result, resolved_labels, model))
+
+    async def segment(
+        self, frame_rgb: NDArray[np.uint8], *, labels: Sequence[str]
+    ) -> Sequence[SegmentedDetection]:
+        """Run the same `-seg` checkpoint but retain its in-process masks."""
+        if not self.is_ready:
+            raise RuntimeError("YoloeDetector.segment() called before initialize()")
+        prompt_free = not labels
+        loop = asyncio.get_running_loop()
+        async with self._inference_lock:
+            result, resolved_labels, model = await loop.run_in_executor(
+                None, self._infer_blocking, frame_rgb, list(labels), prompt_free
+            )
+        if result is None:
+            return ()
+        detections = self._postprocess(result, resolved_labels, model)
+        masks = getattr(result, "masks", None)
+        mask_data = _to_numpy(getattr(masks, "data", None))
+        if mask_data.ndim != 3 or len(mask_data) != len(detections):
+            return ()
+        height, width = frame_rgb.shape[:2]
+        return tuple(
+            SegmentedDetection(
+                detection=detection,
+                mask=_resize_mask(mask_data[index] > 0.5, height=height, width=width),
+            )
+            for index, detection in enumerate(detections)
+        )
 
     async def aclose(self) -> None:
         self._text_model = None
@@ -341,6 +376,21 @@ class YoloeDetector:
         torch = self._torch
         if self._device == "cuda" and torch is not None and torch.cuda.is_available():
             torch.cuda.synchronize()
+
+
+def _resize_mask(mask: NDArray[np.bool_], *, height: int, width: int) -> NDArray[np.bool_]:
+    if mask.shape == (height, width):
+        return mask
+    source_height, source_width = mask.shape
+    rows = np.minimum(
+        (np.arange(height, dtype=np.float64) * source_height / height).astype(int),
+        source_height - 1,
+    )
+    columns = np.minimum(
+        (np.arange(width, dtype=np.float64) * source_width / width).astype(int),
+        source_width - 1,
+    )
+    return mask[rows[:, None], columns[None, :]]
 
 
 __all__ = ["YoloeDetector"]

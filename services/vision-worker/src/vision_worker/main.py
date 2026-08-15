@@ -7,6 +7,7 @@ import datetime as dt
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,6 +31,15 @@ from vision_worker.domain.stability import StabilityConfig, TrackRegistry
 from vision_worker.emit.memory import MemoryEmitter
 from vision_worker.errors import VisionError
 from vision_worker.evidence.ring import EvidenceRing
+from vision_worker.identity.base import IdentityResolverProtocol, SegmentingDetector
+from vision_worker.identity.fixture import FixtureEmbedder
+from vision_worker.identity.gallery import GalleryCache
+from vision_worker.identity.radio import RadioEmbedder
+from vision_worker.identity.resolver import (
+    IdentityResolver,
+    IdentityResolverConfig,
+    VlmIdentityEscalator,
+)
 from vision_worker.logging import configure_logging
 from vision_worker.overlay.hub import OverlayHub
 from vision_worker.pipeline import Pipeline
@@ -177,6 +187,48 @@ async def build_verifier(
     return verifier, rule_config
 
 
+async def build_identity_resolver(
+    settings: Settings,
+    *,
+    detector: Detector,
+    memory_client: MemoryClient,
+) -> IdentityResolverProtocol | None:
+    if settings.identity_kind == "none":
+        return None
+    if not hasattr(detector, "segment"):
+        logger.warning("identity requested but detector cannot segment; identity disabled")
+        return None
+    embedder = (
+        FixtureEmbedder()
+        if settings.identity_kind == "fixture"
+        else RadioEmbedder(device=settings.identity_device)
+    )
+    escalator = (
+        VlmIdentityEscalator(
+            memory_client,
+            base_url=settings.vlm_base_url,
+            model=settings.vlm_model,
+            timeout_s=settings.vlm_timeout_s,
+        )
+        if settings.identity_vlm_escalation
+        else None
+    )
+    resolver = IdentityResolver(
+        segmenter=cast(SegmentingDetector, detector),
+        embedder=embedder,
+        gallery=GalleryCache(memory_client, ttl_s=settings.identity_gallery_ttl_s),
+        config=IdentityResolverConfig(
+            min_cosine=settings.identity_min_cosine,
+            min_margin=settings.identity_min_margin,
+            escalation_low=settings.identity_escalation_low,
+            summary_weight=settings.identity_summary_weight,
+        ),
+        escalator=escalator,
+    )
+    await resolver.initialize()
+    return resolver
+
+
 def build_stability_config(settings: Settings) -> StabilityConfig:
     """Convert the configured durations into frame counts at `source_fps`.
 
@@ -242,7 +294,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         token=settings.memory_token,
         timeout=settings.memory_request_timeout_s,
     )
-    emitter = MemoryEmitter(memory_client, clip_fps=settings.resolved_clip_fps)
+    emitter = MemoryEmitter(
+        memory_client,
+        clip_fps=settings.resolved_clip_fps,
+        min_identity_cosine=settings.identity_min_cosine,
+        memory_min_identity_confidence=settings.memory_min_identity_confidence,
+    )
+    identity_resolver = await build_identity_resolver(
+        settings,
+        detector=detector,
+        memory_client=memory_client,
+    )
 
     # Only a genuinely metric adapter may anchor DA3's scale -- the fixture
     # one scripts a constant and would fit a confidently wrong factor.
@@ -286,11 +348,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         overlay_sink=overlay_hub.publish if overlay_hub is not None else None,
         overlay_depth_interval_s=settings.overlay_depth_interval_s,
         max_detections_per_frame=settings.max_detections_per_frame,
+        identity_resolver=identity_resolver,
+        identity_track_frames=settings.identity_track_frames,
+        identity_min_detection_confidence=settings.identity_min_detection_confidence,
+        identity_min_scale=settings.identity_min_scale,
+        on_observed=emitter.emit_last_seen,
     )
 
     app.state.overlay_hub = overlay_hub
     app.state.detector = detector
     app.state.depth_estimator = depth_estimator
+    app.state.identity_resolver = identity_resolver
 
     media_client = MediaClient(settings.gateway_video_url, token=settings.memory_token)
     consumer = RelayConsumer(media_client, pipeline)
@@ -351,6 +419,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                 "verification still in flight at shutdown; abandoning it",
                 extra={"pending": pipeline.pending_verifications},
             )
+        if identity_resolver is not None:
+            await identity_resolver.aclose()
         await asyncio.to_thread(memory_client.close)
         await detector.aclose()
         if depth_estimator is not None:

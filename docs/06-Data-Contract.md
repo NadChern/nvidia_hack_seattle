@@ -39,7 +39,7 @@ The candidate-event record:
 
 ```json
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "candidate_id": "cand_01JABCEXAMPLE00000000000",
   "session_id": "sess_01JAB...",
   "device_id": "glasses-01",
@@ -60,6 +60,14 @@ The candidate-event record:
     "centroid": {"x": 0.45, "y": 0.55},
     "depth_m": 0.62
   },
+  "identity": {
+    "object_id": "object_01JABC",
+    "best_score": 0.88,
+    "margin": 0.09,
+    "runner_up_object_id": "object_01JABD",
+    "reason_code": "embedding_resolved",
+    "escalated": false
+  },
   "hand_candidate": null,
   "room_candidate": "living_room",
   "surface_candidate": "coffee_table",
@@ -71,6 +79,10 @@ The candidate-event record:
   "pipeline_version": "vision-pipeline-v1"
 }
 ```
+
+`identity` is an optional per-track annotation. `null` means identity did not run;
+`object_id=null` inside an `IdentityMatch` means it ran and abstained. The decision is cached for
+the track's life and is not a verifier result.
 
 `hand_candidate` is nullable and stays null in the current implementation -- the interaction state machine decides `placed`/`picked_up`/`carried` from whether the object itself is at rest or moving through the world, not from hand contact. The field is kept rather than removed so a future owner who adds hand detection has a contract-compatible slot to fill.
 
@@ -451,7 +463,7 @@ The field is absent from stored trusted state on purpose. A URL is not durable â
 - `unknown`
 - `ambiguous_object`
 
-The conversational layer may shorten wording, but it must preserve `answer_status`, uncertainty, and invalidation information.
+The conversational layer may shorten wording, but it must preserve `answer_status`, uncertainty, and invalidation information. A state with `last_seen` but no confirmed placement is historical evidence only: its answer remains `unknown` (or another non-current status) and says *"I last saw it ..."*. It must never use present-tense *"it is ..."* wording. This is the answer-layer half of the reducer rule that `observed` updates `last_seen` without creating a placement.
 
 ## Versioning
 

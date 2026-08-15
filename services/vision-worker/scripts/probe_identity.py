@@ -171,8 +171,12 @@ class RadioEmbedder:
             if self._device.type == "cuda":
                 self._torch.cuda.synchronize(self._device)
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            summary = output["backbone"].summary if isinstance(output, dict) else output.summary
-            batch_vectors = _normalize(summary.float().cpu().numpy())
+            backbone = output["backbone"] if isinstance(output, dict) else output
+            summary = backbone.summary.float()
+            feature_dim = int(backbone.features.shape[2])
+            if summary.shape[1] != feature_dim:
+                summary = summary.reshape(summary.shape[0], -1, feature_dim).mean(dim=1)
+            batch_vectors = _normalize(summary.cpu().numpy())
             for path, vector in zip(batch_paths, batch_vectors, strict=True):
                 vectors[path] = vector.astype(np.float32, copy=False)
                 latencies.append(elapsed_ms / len(batch_paths))

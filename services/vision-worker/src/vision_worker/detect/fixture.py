@@ -14,6 +14,8 @@ import numpy as np
 from numpy.typing import NDArray
 from visual_memory_vision_contract.protocol import Detection
 
+from vision_worker.identity.base import SegmentedDetection
+
 
 class FixtureDetector:
     """Replays `script`, one entry per `detect()` call.
@@ -31,6 +33,7 @@ class FixtureDetector:
         self._loop = loop
         self._cursor = 0
         self._call_count = 0
+        self._last_detections: tuple[Detection, ...] = ()
 
     async def initialize(self) -> None:
         return None
@@ -57,9 +60,32 @@ class FixtureDetector:
         self._call_count += 1
 
         if not labels:
-            return scripted
+            self._last_detections = scripted
+        else:
+            wanted = set(labels)
+            self._last_detections = tuple(
+                detection for detection in scripted if detection.label in wanted
+            )
+        return self._last_detections
+
+    async def segment(
+        self, frame_rgb: NDArray[np.uint8], *, labels: Sequence[str]
+    ) -> Sequence[SegmentedDetection]:
         wanted = set(labels)
-        return tuple(detection for detection in scripted if detection.label in wanted)
+        height, width = frame_rgb.shape[:2]
+        segmented: list[SegmentedDetection] = []
+        for detection in self._last_detections:
+            if wanted and detection.label not in wanted:
+                continue
+            box = detection.box
+            x1 = max(0, min(width, round(box.x_min * width)))
+            x2 = max(0, min(width, round(box.x_max * width)))
+            y1 = max(0, min(height, round(box.y_min * height)))
+            y2 = max(0, min(height, round(box.y_max * height)))
+            mask = np.zeros((height, width), dtype=np.bool_)
+            mask[y1:y2, x1:x2] = True
+            segmented.append(SegmentedDetection(detection=detection, mask=mask))
+        return tuple(segmented)
 
     async def aclose(self) -> None:
         return None
