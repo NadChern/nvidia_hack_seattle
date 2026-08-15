@@ -99,7 +99,10 @@ def mint_access_token(
         # phone or browser tab could otherwise be handed a camera-publish
         # grant into a room whose entire relay topology assumes one video
         # publisher (docs/12).
-        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,
+        # livekit-api's stub types this List[str]; the enum is what's
+        # actually verified above to encode correctly on the wire, so the
+        # fix is the annotation, not the value passed.
+        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,  # type: ignore[arg-type]
     )
 
     token = (
