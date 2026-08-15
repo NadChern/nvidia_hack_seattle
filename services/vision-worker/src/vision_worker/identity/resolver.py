@@ -19,6 +19,7 @@ from visual_memory_memory_contract.client import MemoryClient, MemoryError_
 from visual_memory_vision_contract.protocol import IdentityMatch
 
 from vision_worker.identity.base import (
+    EmbeddingVectors,
     IdentityEscalator,
     IdentityFrame,
     MaskedCrop,
@@ -157,6 +158,13 @@ class IdentityResolver:
             return _match(score, resolved=False, reason_code="ambiguous")
         self.metrics.unmatched += 1
         return _match(score, resolved=False, reason_code="below_threshold")
+
+    async def embed_crops(self, crops: Sequence[MaskedCrop]) -> Sequence[EmbeddingVectors]:
+        """Enrollment uses the exact same loaded embedder as matching."""
+        return await self._embedder.embed(crops)
+
+    async def refresh_gallery(self) -> None:
+        await self._gallery.refresh(force=True)
 
     async def aclose(self) -> None:
         await self._embedder.aclose()

@@ -39,6 +39,7 @@ def status(request: Request) -> dict[str, Any]:
     detector = getattr(state, "detector", None)
     depth_estimator = getattr(state, "depth_estimator", None)
     identity_resolver = getattr(state, "identity_resolver", None)
+    enrollment_manager = getattr(state, "enrollment_manager", None)
 
     reason = state.readiness.evaluate()
     started_at: dt.datetime = state.started_at
@@ -66,6 +67,10 @@ def status(request: Request) -> dict[str, Any]:
             "evidence_ring_seconds": settings.evidence_ring_seconds,
             "clip_fps": settings.resolved_clip_fps,
             "source_fps": settings.source_fps,
+            "registration_capture_seconds": settings.registration_capture_seconds,
+            "registration_target_views": settings.registration_target_views,
+            "registration_min_views": settings.registration_min_views,
+            "registration_dedup_threshold": settings.registration_dedup_threshold,
         },
         # Both halves of the frame-rate assumption. `source_fps` is what the
         # thresholds below were derived from; `observed_fps` is what the relay
@@ -124,6 +129,11 @@ def status(request: Request) -> dict[str, Any]:
                 "gallery_views": 0,
                 "stale_views": 0,
             }
+        ),
+        "registration": (
+            enrollment_manager.status_payload()
+            if enrollment_manager is not None
+            else {"attempts": 0, "succeeded": 0, "failed": 0, "active": 0}
         ),
         "verifier": type(state.verifier).__name__,
         # Verification runs off the frame loop, so it can fall behind the

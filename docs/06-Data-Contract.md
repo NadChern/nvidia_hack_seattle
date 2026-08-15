@@ -401,6 +401,15 @@ dimension, and view-count limits. Deleting an enrolled object removes its regist
 embeddings, and durable crop subtree. Session deletion removes only that session's event history;
 it must not erase a registered object or another session's state for that stable id.
 
+Vision owns registration capture. `POST /v1/objects` validates that the label is trackable and
+proxies object minting to Memory. `POST /v1/objects/{id}/capture` arms a bounded EvidenceRing
+window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `extracting`,
+`succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
+window is decoded in the enrollment service, segmented, filtered relative to its own sharpness
+median, embedded through the same mask-to-crop function used for matching, and farthest-point
+sampled. Fewer than two quality/diverse views is an explicit failed registration and stores no
+weak gallery. No recording endpoint or video process is added to the Media Gateway.
+
 ## Trusted object state
 
 ```json

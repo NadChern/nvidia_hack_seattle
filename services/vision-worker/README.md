@@ -54,11 +54,13 @@ the relay connection is live.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health/live` · `GET /health/ready` | Process health; readiness reflects whether the relay task is alive, never whether an object is in view |
-| `GET /v1/status` | Configuration, the stability and verifier thresholds actually in effect, and pipeline counters |
+| `GET /v1/status` | Configuration, identity/registration counters, stability thresholds, and pipeline counters |
+| `POST /v1/objects` · `GET /v1/objects` | Create/list personal objects through Memory's registry |
+| `POST /v1/objects/{id}/capture` · `GET /v1/objects/{id}/status` | Arm and poll bounded registration capture |
 
-There is no ingestion or query endpoint here — this service only *produces*
-observations, posted to `application-memory`'s `/v1/observations` via
-`MemoryEmitter`.
+There is no video ingestion or memory-query endpoint here. The registration
+routes are bounded control operations; ordinary observations are still posted
+to `application-memory`'s `/v1/observations` via `MemoryEmitter`.
 
 ### The whole stack, with the real models
 
@@ -132,9 +134,12 @@ result for that track, and only annotates events; an unavailable or unmatched
 gallery never suppresses an ordinary observation. `radio` uses the pinned
 C-RADIOv4-SO400M masked summary/spatial vectors and Qwen3-VL only in the
 configured overlap band. Gallery snapshots refresh from Memory every 30 seconds
-and retain their last-known-good version across a temporary outage. The
-`identity` block at `/v1/status` reports resolved/ambiguous/unmatched/escalated,
-latency, and gallery counts.
+and retain their last-known-good version across a temporary outage. Registration
+arms a six-second `EvidenceRing` window, rejects weak footage relative to that
+window's own sharpness median, and stores 2–4 farthest-point-selected views.
+No clip endpoint or ffmpeg process is involved. The `identity` block at
+`/v1/status` reports resolved/ambiguous/unmatched/escalated, latency, and gallery
+counts; `registration` reports attempts and terminal outcomes.
 
 ```bash
 VMA_DETECTOR_KIND=yoloe VMA_IDENTITY_KIND=radio \

@@ -29,9 +29,36 @@ class VisionError(Exception):
         return payload
 
 
+class InvalidRequestError(VisionError):
+    status_code = 400
+    code = "invalid_request"
+
+
 class UnauthorizedError(VisionError):
     status_code = 401
     code = "unauthorized"
 
 
-__all__ = ["UnauthorizedError", "VisionError"]
+class NotFoundError(VisionError):
+    status_code = 404
+    code = "not_found"
+
+
+class ConflictError(VisionError):
+    status_code = 409
+    code = "conflict"
+
+
+class UnavailableError(VisionError):
+    status_code = 503
+    code = "unavailable"
+
+
+__all__ = [
+    "ConflictError",
+    "InvalidRequestError",
+    "NotFoundError",
+    "UnauthorizedError",
+    "UnavailableError",
+    "VisionError",
+]

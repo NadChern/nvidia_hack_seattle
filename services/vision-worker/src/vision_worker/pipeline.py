@@ -311,6 +311,8 @@ class Pipeline:
         self._depth_sampled_at: dt.datetime | None = None
         self._overlay_depth_interval_s = overlay_depth_interval_s
         self._current_epoch_id: str | None = None
+        self._current_session_id: str | None = None
+        self._current_device_id: str | None = None
         #: Verification runs here, never on the frame loop. One worker by
         #: default: there is one GPU and one model server behind `verify/vlm`,
         #: so a larger pool would only move the queue somewhere it cannot be
@@ -323,6 +325,23 @@ class Pipeline:
         self._frame_intervals: deque[float] = deque(maxlen=_RATE_WINDOW_FRAMES)
         self._last_frame_at: dt.datetime | None = None
         self._warned_about_rate = False
+
+    @property
+    def detector(self) -> Detector:
+        """Registration reuses the initialized segmentation-capable detector."""
+        return self._detector
+
+    @property
+    def evidence_ring(self) -> EvidenceRing:
+        return self._evidence_ring
+
+    @property
+    def current_session_id(self) -> str | None:
+        return self._current_session_id
+
+    @property
+    def current_device_id(self) -> str | None:
+        return self._current_device_id
 
     @property
     def observed_fps(self) -> float | None:
@@ -383,7 +402,6 @@ class Pipeline:
         """Reset every piece of per-epoch state together. `track_id` is only
         ever meaningful within one epoch; carrying any of this across a
         reconnect is the exact trap docs/06 warns about."""
-        del device_id
         self._tracker.reset()
         self._pose_source.reset()
         self._track_registry.reset()
@@ -400,13 +418,18 @@ class Pipeline:
         self._frame_intervals.clear()
         self._last_frame_at = None
         self._current_epoch_id = epoch_id
+        self._current_session_id = session_id
+        self._current_device_id = device_id
         logger.info("pipeline epoch reset", extra={"session_id": session_id, "epoch_id": epoch_id})
 
     async def epoch_ended(self, *, session_id: str, epoch_id: str) -> None:
         # State stays until the next epoch_started resets it -- any
         # verification still in flight for this epoch's last frames should
         # complete against valid state rather than an emptied one.
-        del session_id, epoch_id
+        del session_id
+        if epoch_id == self._current_epoch_id:
+            self._current_session_id = None
+            self._current_device_id = None
 
     async def video_frame(
         self, *, session_id: str, device_id: str, epoch_id: str, frame: VideoFrame

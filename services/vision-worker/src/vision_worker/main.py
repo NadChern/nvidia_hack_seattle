@@ -17,7 +17,7 @@ from visual_memory_memory_contract.client import MemoryClient
 from visual_memory_vision_contract.protocol import DetectorRef
 
 from vision_worker import __version__
-from vision_worker.api import events, health, overlay, status
+from vision_worker.api import events, health, objects, overlay, status
 from vision_worker.config import Settings, get_settings
 from vision_worker.consume.relay import RelayConsumer
 from vision_worker.depth.base import DepthEstimator, MetricDepthReference
@@ -32,6 +32,7 @@ from vision_worker.emit.memory import MemoryEmitter
 from vision_worker.errors import VisionError
 from vision_worker.evidence.ring import EvidenceRing
 from vision_worker.identity.base import IdentityResolverProtocol, SegmentingDetector
+from vision_worker.identity.enroll import EnrollmentConfig, EnrollmentManager, ObjectEnroller
 from vision_worker.identity.fixture import FixtureEmbedder
 from vision_worker.identity.gallery import GalleryCache
 from vision_worker.identity.radio import RadioEmbedder
@@ -40,6 +41,7 @@ from vision_worker.identity.resolver import (
     IdentityResolverConfig,
     VlmIdentityEscalator,
 )
+from vision_worker.identity.selection import QualityConfig
 from vision_worker.logging import configure_logging
 from vision_worker.overlay.hub import OverlayHub
 from vision_worker.pipeline import Pipeline
@@ -355,10 +357,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         on_observed=emitter.emit_last_seen,
     )
 
+    enrollment_config = EnrollmentConfig(
+        capture_seconds=settings.registration_capture_seconds,
+        max_capture_seconds=settings.registration_max_capture_seconds,
+        max_frames=settings.registration_max_frames,
+        target_views=settings.registration_target_views,
+        min_views=settings.registration_min_views,
+        dedup_threshold=settings.registration_dedup_threshold,
+        summary_weight=settings.identity_summary_weight,
+        quality=QualityConfig(
+            min_detection_confidence=settings.identity_min_detection_confidence,
+            min_scale=settings.identity_min_scale,
+            min_mask_box_ratio=settings.registration_min_mask_box_ratio,
+            max_mask_box_ratio=settings.registration_max_mask_box_ratio,
+            relative_sharpness_floor=settings.registration_relative_sharpness_floor,
+            max_angular_velocity_rad_s=settings.registration_max_angular_velocity_rad_s,
+        ),
+    )
+    enrollment_manager = (
+        EnrollmentManager(
+            evidence_ring=pipeline.evidence_ring,
+            enroller=ObjectEnroller(
+                segmenter=cast(SegmentingDetector, detector),
+                identity_resolver=identity_resolver,
+                memory_client=memory_client,
+                config=enrollment_config,
+            ),
+            config=enrollment_config,
+        )
+        if isinstance(identity_resolver, IdentityResolver) and hasattr(detector, "segment")
+        else None
+    )
+
     app.state.overlay_hub = overlay_hub
     app.state.detector = detector
     app.state.depth_estimator = depth_estimator
     app.state.identity_resolver = identity_resolver
+    app.state.enrollment_manager = enrollment_manager
+    app.state.memory_client = memory_client
 
     media_client = MediaClient(settings.gateway_video_url, token=settings.memory_token)
     consumer = RelayConsumer(media_client, pipeline)
@@ -412,6 +448,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # candidate already proposed has evidence held in memory and nowhere
         # else; dropping it here would lose an event the service had committed
         # to answering. Bounded, because the queue is.
+        if enrollment_manager is not None:
+            await enrollment_manager.aclose()
         try:
             await asyncio.wait_for(pipeline.aclose(), timeout=settings.shutdown_drain_timeout_s)
         except TimeoutError:
@@ -479,6 +517,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(status.router)
     app.include_router(events.router)
     app.include_router(overlay.router)
+    app.include_router(objects.router)
     return app
 
 

@@ -223,6 +223,9 @@ class MemoryClient:
         params = {"since_version": since_version} if since_version is not None else None
         return ObjectGallery.model_validate(self._get("/v1/objects", params=params))
 
+    def get_object(self, object_id: str) -> EnrolledObject:
+        return EnrolledObject.model_validate(self._get(f"/v1/objects/{object_id}"))
+
     def get_object_crop(self, object_id: str, view_id: str) -> bytes:
         path = f"/v1/objects/{object_id}/views/{view_id}/crop"
         try:

@@ -146,6 +146,18 @@ class Settings(BaseSettings):
     #: confidence so identity cannot make the pre-existing world disappear.
     memory_min_identity_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
 
+    # --- Registration capture ------------------------------------------------
+    registration_capture_seconds: float = Field(default=6.0, gt=0)
+    registration_max_capture_seconds: float = Field(default=15.0, gt=0)
+    registration_max_frames: int = Field(default=48, ge=2, le=240)
+    registration_target_views: int = Field(default=4, ge=2, le=8)
+    registration_min_views: int = Field(default=2, ge=2, le=8)
+    registration_dedup_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    registration_min_mask_box_ratio: float = Field(default=0.4, ge=0.0, le=1.0)
+    registration_max_mask_box_ratio: float = Field(default=1.0, ge=0.0, le=1.2)
+    registration_relative_sharpness_floor: float = Field(default=0.5, ge=0.0)
+    registration_max_angular_velocity_rad_s: float = Field(default=2.5, gt=0)
+
     # --- Depth ---------------------------------------------------------------
     depth_kind: DepthKind = "none"
     moge_model_id: str = "Ruicheng/moge-2-vitl-normal"
@@ -309,6 +321,16 @@ class Settings(BaseSettings):
     def _identity_band_is_ordered(self) -> Settings:
         if self.identity_escalation_low > self.identity_min_cosine:
             raise ValueError("identity_escalation_low cannot exceed identity_min_cosine")
+        if self.registration_min_views > self.registration_target_views:
+            raise ValueError("registration_min_views cannot exceed registration_target_views")
+        if self.registration_capture_seconds > self.registration_max_capture_seconds:
+            raise ValueError(
+                "registration_capture_seconds cannot exceed registration_max_capture_seconds"
+            )
+        if self.registration_min_mask_box_ratio > self.registration_max_mask_box_ratio:
+            raise ValueError(
+                "registration_min_mask_box_ratio cannot exceed registration_max_mask_box_ratio"
+            )
         return self
 
     @property
