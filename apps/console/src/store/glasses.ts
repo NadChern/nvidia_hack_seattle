@@ -10,7 +10,14 @@ import {
 import { create } from "zustand"
 
 import { del, get as apiGet, post } from "@/lib/api"
-import type { GatewaySessionList, GatewaySessionSummary, SessionToken } from "@/lib/contracts"
+import type {
+  AssistAccepted,
+  AssistRequest,
+  AssistRequestList,
+  GatewaySessionList,
+  GatewaySessionSummary,
+  SessionToken,
+} from "@/lib/contracts"
 
 /**
  * Which simulcast layer the admin viewer asks for.
@@ -63,9 +70,10 @@ export type GlassesState =
   | "connecting"
   | "publishing"
   | "viewing"
+  | "helping"
   | "disconnected"
   | "failed"
-export type GlassesMode = "publisher" | "viewer" | null
+export type GlassesMode = "publisher" | "viewer" | "helper" | null
 
 export interface LogLine {
   at: string
@@ -84,6 +92,7 @@ interface GlassesStore {
   audioSid: string | null
   resolution: string | null
   log: LogLine[]
+  pendingAssist: AssistRequest[]
 
   publish: () => Promise<void>
   watch: (sessionId: string) => Promise<void>
@@ -96,6 +105,12 @@ interface GlassesStore {
   speak: () => Promise<void>
   attachPreview: (element: HTMLVideoElement | null) => void
   attachAssistantAudio: (element: HTMLAudioElement | null) => void
+  /** Granny, without glasses: ask the console's own publisher session for help. */
+  askForHelp: () => Promise<void>
+  /** Refresh the operator's list of currently-ringing assist requests. */
+  refreshAssist: () => Promise<void>
+  /** Accept a pending request and join that session's room as a helper. */
+  acceptAssist: (sessionId: string) => Promise<void>
 }
 
 const MAX_LOG = 200
@@ -224,6 +239,7 @@ export const useGlasses = create<GlassesStore>((set, get) => {
     audioSid: null,
     resolution: null,
     log: [],
+    pendingAssist: [],
 
     publish: async () => {
       try {
@@ -315,6 +331,91 @@ export const useGlasses = create<GlassesStore>((set, get) => {
         if (viewerRoom) await viewerRoom.disconnect().catch(() => {})
         set({ state: "failed", mode: null, session: null, room: null })
         append(`viewer error: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    },
+
+    askForHelp: async () => {
+      const session = get().session
+      if (!session) return
+      try {
+        const result = await post<AssistRequest>(
+          "gateway",
+          `/v1/assist/${session.session_id}/request`,
+        )
+        append(`assist request ${result.request_id} · expires ${result.expires_at}`)
+      } catch (error) {
+        append(`ask for help failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    },
+
+    refreshAssist: async () => {
+      try {
+        const listing = await apiGet<AssistRequestList>("gateway", "/v1/assist/requests")
+        set({ pendingAssist: listing.requests })
+      } catch (error) {
+        append(`assist list failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    },
+
+    acceptAssist: async (sessionId) => {
+      if (get().room) await get().stop()
+      set({ state: "connecting", mode: "helper" })
+
+      const room = new Room({ adaptiveStream: false, dynacast: false })
+      room.on(RoomEvent.Connected, () => {
+        set({ state: "helping" })
+        append(`helping ${sessionId}`)
+      })
+      room.on(RoomEvent.Disconnected, (reason) => {
+        set({ state: "disconnected" })
+        append(`helper disconnected (${reason ?? "no reason"})`)
+      })
+      room.on(
+        RoomEvent.TrackSubscribed,
+        (track: RemoteTrack, publication: RemoteTrackPublication) => {
+          if (track.kind !== Track.Kind.Video) return
+          viewerVideoTrack = track
+          if (previewElement) track.attach(previewElement)
+          const settings = track.mediaStreamTrack.getSettings()
+          set({
+            videoSid: publication.trackSid,
+            resolution:
+              settings.width && settings.height
+                ? `${settings.width}x${settings.height}`
+                : null,
+          })
+          append(`seeing ${publication.trackName}`)
+        },
+      )
+      room.on(RoomEvent.TrackUnsubscribed, (track) => {
+        if (track !== viewerVideoTrack) return
+        track.detach()
+        viewerVideoTrack = null
+        set({ videoSid: null, resolution: null })
+      })
+
+      try {
+        await post<AssistAccepted>("gateway", `/v1/assist/${sessionId}/accept`)
+        const session = await post<SessionToken>(
+          "gateway",
+          `/v1/sessions/${sessionId}/helper`,
+        )
+        set({ session, room })
+        await room.connect(livekitUrlFor(session), session.token)
+        await room.localParticipant.setMicrophoneEnabled(true)
+        // Not the shared refreshTracks(): that reads *local* publications for
+        // its videoSid, and a helper has none -- it would overwrite the
+        // remote videoSid the TrackSubscribed handler above just set. Camera
+        // stays off deliberately; the helper grant forbids publishing it
+        // (can_publish_sources=["microphone"]), and calling
+        // setCameraEnabled here would fail silently rather than raise.
+        const mic = room.localParticipant.getTrackPublication(Track.Source.Microphone)
+        set({ micOn: true, audioSid: mic?.trackSid ?? null })
+        await get().refreshAssist()
+      } catch (error) {
+        await room.disconnect().catch(() => {})
+        set({ state: "failed", mode: null, session: null, room: null })
+        append(`assist accept failed: ${error instanceof Error ? error.message : String(error)}`)
       }
     },
 
@@ -425,7 +526,8 @@ export const useGlasses = create<GlassesStore>((set, get) => {
     attachPreview: (element) => {
       previewElement = element
       if (!element) return
-      if (get().mode === "viewer" && viewerVideoTrack) {
+      const mode = get().mode
+      if ((mode === "viewer" || mode === "helper") && viewerVideoTrack) {
         viewerVideoTrack.attach(element)
         return
       }
