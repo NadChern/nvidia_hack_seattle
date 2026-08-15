@@ -410,6 +410,13 @@ median, embedded through the same mask-to-crop function used for matching, and f
 sampled. Fewer than two quality/diverse views is an explicit failed registration and stores no
 weak gallery. No recording endpoint or video process is added to the Media Gateway.
 
+The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
+intent; a background workflow owns all side effects and narration: fixed prompt through
+`ReplyTransport`, create/arm/poll, then one fixed success or honest-failure line. Registration
+speech is not treated as a rewrite of a Memory query result. It passes only the fixed vocabulary
+under `registration:prompt`, `registration:succeeded`, or `registration:failed`; the six
+where-answer guard rules and their canonical fallback remain unchanged.
+
 ## Trusted object state
 
 ```json

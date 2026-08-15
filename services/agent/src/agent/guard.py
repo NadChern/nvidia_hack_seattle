@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import cast
 
 from visual_memory_memory_contract import AnswerStatus, QueryResponse
 
-from agent.models import GuardVerdict
+from agent.models import GuardVerdict, RegistrationStep
 
 NO_TOOL_REPLY = "I do not have a memory of that."
 DEFAULT_MAX_REPLY_CHARS = 400
+
+_REGISTRATION_MESSAGES = {
+    "prompt": "I'll remember this {label}. Rotate it slowly so I can take a short clip.",
+    "succeeded": "Done — I've scanned your {label} and will keep track of it.",
+    "failed": "I couldn't get a clear look. Let's retry.",
+}
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _LOCATION_CLAIM = re.compile(
@@ -191,7 +198,23 @@ def _veto(result: QueryResponse, rule: int) -> GuardResult:
         reply=result.spoken_answer,
         answer_status=result.answer_status,
         object_id=result.object_id,
-        verdict=f"vetoed:{rule}",  # type: ignore[arg-type]
+        verdict=cast(GuardVerdict, f"vetoed:{rule}"),
+    )
+
+
+def registration_message(step: RegistrationStep, label: str) -> str:
+    safe_label = " ".join(label.strip().split()) or "object"
+    return _REGISTRATION_MESSAGES[step].format(label=safe_label)
+
+
+def guard_registration_reply(reply: str, *, step: RegistrationStep, label: str) -> GuardResult:
+    """Pass only the scripted registration vocabulary, byte-for-byte."""
+    expected = registration_message(step, label)
+    return GuardResult(
+        reply=reply if reply == expected else expected,
+        answer_status=None,
+        object_id=None,
+        verdict=cast(GuardVerdict, f"registration:{step}"),
     )
 
 
@@ -265,5 +288,7 @@ __all__ = [
     "DEFAULT_MAX_REPLY_CHARS",
     "GuardResult",
     "NO_TOOL_REPLY",
+    "guard_registration_reply",
     "guard_reply",
+    "registration_message",
 ]

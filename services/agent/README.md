@@ -5,14 +5,14 @@ question, calls the deterministic Memory query API, and supervises any wording
 before returning it. Port: **8086**.
 
 The default backend is a Google ADK 2.6 `Runner` with one `LlmAgent`, one
-LiteLLM model, and one tool. `StubLlm` remains available for deterministic,
+LiteLLM model, and two bounded tools: `where_is` and `start_registration`. `StubLlm` remains available for deterministic,
 fully offline development; it recognizes bounded “where” questions and returns
 Memory's `spoken_answer` unchanged.
 
 ## What it refuses to do
 
 - It does not answer from model knowledge or raw vision output.
-- It exposes only `where_is`; there is no open chat or history tool.
+- It exposes only `where_is` and `start_registration`; there is no open chat or history tool.
 - It never lets a model create or choose a `session_id`.
 - It does not send transcripts to a non-loopback model endpoint unless
   `VMA_ALLOW_EXTERNAL_LLM=true` is explicitly configured.
@@ -31,7 +31,9 @@ A model rewrite is untrusted. Rules run in order:
 6. Speech must be non-empty and bounded.
 
 A veto is a successful safety outcome, not an endpoint error. The response uses
-`spoken_answer` byte-for-byte and reports `guard: "vetoed:<rule>"`.
+`spoken_answer` byte-for-byte and reports `guard: "vetoed:<rule>"`. Registration
+never passes model prose through this guard: its prompt and terminal lines come
+from a fixed vocabulary and carry `registration:prompt|succeeded|failed` verdicts.
 
 ## API
 
@@ -60,6 +62,9 @@ All variables use the `VMA_` prefix.
 | `HANDS_FREE_ENABLED` | `false` |
 | `GATEWAY_BASE_URL` | `http://127.0.0.1:8080` |
 | `SPEECH_BASE_URL` | `http://127.0.0.1:8085` |
+| `VISION_BASE_URL` | `http://127.0.0.1:8082` |
+| `REGISTRATION_CAPTURE_SECONDS` | `6.0` |
+| `REGISTRATION_TIMEOUT_S` | `20.0` |
 | `WAKE_PREFIX` | `hey memory` |
 | `WAKE_PREFIX_VARIANTS` | `hay memory,he memory,hey memories,hey mammary` |
 | `WAKE_CARRY_OVER_S` | `10.0` |
@@ -169,7 +174,8 @@ Ollama `/api/chat` wire format.
 When enabled, the service polls the authenticated Gateway session list and
 opens Speech's existing STT WebSocket only for sessions with a publisher. Most
 transcripts stop at a deterministic double gate: a configured wake prefix must
-appear on a word boundary and be followed by a supported `where` question shape.
+appear on a word boundary and be followed by a supported `where` question or
+`remember/scan/learn my X` registration shape.
 Scanning permits leading disfluency or leaked reply audio; an ordinary mention
 such as “the hey memory demo” still cannot run ADK. Common STT renderings are a
 comma-separated configuration list rather than fuzzy matching.
@@ -180,7 +186,7 @@ people say “Hey memory.” and *then* ask — and any pause longer than Speech
 question reach this service as separate transcripts that neither can fire alone.
 Measured on the glasses, where it read as being cut off mid-sentence. A prefix
 with no question after it therefore stays live for `WAKE_CARRY_OVER_S`, and the
-next supported `where` question consumes it. Both gates still hold and the carry
+next supported where/registration intent consumes it. Both gates still hold and the carry
 is single-use; set it to `0` to require prefix and question in one breath.
 Widening the VAD window alone cannot fix this, because someone will always pause
 a little longer.
@@ -211,10 +217,11 @@ uv run pytest
 |---|---|
 | `test_guard.py` | Every guard rule vetoes unsafe text and accepts grounded text |
 | `test_config.py` | External egress is opt-in and secrets remain redacted |
-| `test_tools_memory.py` | The complete `QueryResponse` and caller session are preserved |
+| `test_tools_memory.py` / `test_tools_register.py` | Complete query state and bounded registration polling are preserved |
 | `test_api_query.py` | Offline end-to-end query and no-tool behavior |
 | `test_agent_litellm.py` | Fake tool-calling completion, bounded ADK sessions, opt-in real model |
-| `test_listener.py` | Wake-prefix/question gate prevents unwanted model calls |
+| `test_listener.py` | Wake-prefix/intent gate prevents unwanted model calls and duplicate registration audio |
+| `test_workflow.py` | Registration always reaches a fixed prompt and terminal success/failure line |
 | `test_reply.py` | WAV validation, resampling, and PCM-only return transport |
 | `test_health.py` / `test_status.py` | Operational and trust-boundary reporting |
 | `test_logging.py` | Structured logging redacts secrets and binary payloads |

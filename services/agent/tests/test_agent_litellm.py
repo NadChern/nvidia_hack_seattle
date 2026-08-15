@@ -22,6 +22,58 @@ def anyio_backend() -> str:
     return "asyncio"
 
 
+class FakeRegistration:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str]] = []
+
+    def start(self, *, label: str, session_id: str) -> bool:
+        self.calls.append((label, session_id))
+        return True
+
+
+class RegistrationLiteLlmClient(LiteLLMClient):
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def acompletion(
+        self, model: Any, messages: Any, tools: Any, **kwargs: Any
+    ) -> ModelResponse:
+        del model, messages, tools, kwargs
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                choices=[
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "register-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "start_registration",
+                                        "arguments": '{"label":"keys"}',
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ]
+            )
+        return ModelResponse(
+            choices=[
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "Starting now."},
+                }
+            ]
+        )
+
+
 class FakeLiteLlmClient(LiteLLMClient):
     """Two-step completion: one tool call, then one grounded answer."""
 
@@ -126,6 +178,23 @@ async def test_fake_litellm_calls_where_is_and_preserves_the_whole_result() -> N
     assert result.tool_result.last_confirmed_placement is not None
     assert calls == [("keys", "sess_01")]
     assert client.calls == 2
+
+
+async def test_fake_litellm_routes_remember_intent_to_registration_tool() -> None:
+    settings = Settings(environment="ci")
+    model = LiteLlm(model="openai/test", llm_client=RegistrationLiteLlmClient())
+    memory = MemoryTool(settings, ask_memory=lambda _label, _session: confirmed_answer())
+    registration = FakeRegistration()
+    backend = AdkRunnerBackend(
+        settings,
+        create_agent(settings, memory, registration, model=model),  # type: ignore[arg-type]
+    )
+
+    result = await backend.query("Remember my keys", "sess_01")
+
+    assert result.registration_started is True
+    assert result.tool_result is None
+    assert registration.calls == [("keys", "sess_01")]
 
 
 async def test_session_history_is_bounded_by_turn_not_raw_event_count() -> None:

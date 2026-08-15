@@ -25,6 +25,14 @@ class FakeBackend:
         return DraftAnswer(text=result.spoken_answer, tool_result=result)
 
 
+class RegistrationBackend(FakeBackend):
+    async def query(self, text: str, session_id: str | None) -> DraftAnswer:
+        self.calls.append((text, session_id))
+        return DraftAnswer(
+            text="model text must not be spoken", tool_result=None, registration_started=True
+        )
+
+
 class FlakyBackend(FakeBackend):
     async def query(self, text: str, session_id: str | None) -> DraftAnswer:
         self.calls.append((text, session_id))
@@ -90,6 +98,18 @@ def transcript(text: str) -> Transcript:
 )
 def test_trigger_discipline_rejects_non_matching_speech(text: str) -> None:
     assert triggered_question(text, "hey memory") is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "hey memory remember my keys",
+        "hey memory scan this wallet",
+        "hey memory learn my bottle",
+    ],
+)
+def test_trigger_accepts_registration_intents(text: str) -> None:
+    assert triggered_question(text, "hey memory") is not None
 
 
 def test_trigger_accepts_wake_prefix_and_where_question_without_punctuation() -> None:
@@ -208,6 +228,20 @@ async def test_wake_question_runs_guarded_core_and_sends_reply() -> None:
     assert events.replies[0]["question"] == "where are my keys?"
     assert events.replies[0]["answer_status"] == "confirmed"
     assert events.replies[0]["guard"] == "passed"
+
+
+async def test_registration_workflow_owns_audio_without_a_duplicate_model_reply() -> None:
+    backend = RegistrationBackend()
+    reply = FakeReply()
+    events = FakeEvents()
+    listener = HandsFreeListener(Settings(environment="ci"), backend, reply, events)
+
+    handled = await listener.process(transcript("hey memory remember my keys"))
+
+    assert handled
+    assert backend.calls == [("remember my keys", "sess_01")]
+    assert reply.calls == []
+    assert events.replies == []
 
 
 async def test_transient_query_failure_does_not_stop_the_stt_message_stream() -> None:

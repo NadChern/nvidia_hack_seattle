@@ -80,12 +80,16 @@ class Settings(BaseSettings):
     hands_free_enabled: bool = False
     gateway_base_url: str = "http://127.0.0.1:8080"
     speech_base_url: str = "http://127.0.0.1:8085"
+    vision_base_url: str = "http://127.0.0.1:8082"
     session_poll_interval_s: float = Field(default=2.0, ge=0.25, le=60.0)
     listener_reconnect_s: float = Field(default=1.0, ge=0.1, le=30.0)
     gateway_event_timeout_s: float = Field(default=2.0, gt=0.0, le=10.0)
     gateway_audio_sample_rate: int = Field(default=48_000, ge=8_000, le=192_000)
     gateway_audio_channels: int = Field(default=1, ge=1, le=2)
     max_synthesis_bytes: int = Field(default=10_000_000, ge=1_024, le=50_000_000)
+    registration_capture_seconds: float = Field(default=6.0, gt=0.0, le=15.0)
+    registration_timeout_s: float = Field(default=20.0, gt=1.0, le=120.0)
+    registration_poll_interval_s: float = Field(default=0.25, ge=0.05, le=5.0)
 
     # Local ADK/LiteLLM is the default path. ``stub`` remains available for
     # deterministic development and the fully offline endpoint suite.
@@ -140,6 +144,7 @@ class Settings(BaseSettings):
         "memory_base_url",
         "gateway_base_url",
         "speech_base_url",
+        "vision_base_url",
         "llm_base_url",
     )
     @classmethod
@@ -225,6 +230,10 @@ class Settings(BaseSettings):
     @property
     def endpoint_scope(self) -> EndpointScope:
         return self._resolved_endpoint_scope
+
+    @property
+    def vision_endpoint_host(self) -> str:
+        return _endpoint_host(self.vision_base_url)
 
 
 @lru_cache

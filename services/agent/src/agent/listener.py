@@ -33,12 +33,16 @@ _QUESTION_ALTERNATION = (
 )
 
 _QUESTION_SHAPE = re.compile(rf"^{_QUESTION_ALTERNATION}")
+_REGISTRATION_ALTERNATION = r"(?:remember|scan|learn)\s+(?:my|our|the|this)\b"
+_SUPPORTED_INTENT_SHAPE = re.compile(rf"^(?:{_QUESTION_ALTERNATION}|{_REGISTRATION_ALTERNATION})")
 
-#: The same shape starting at any word boundary. Used only after a deliberate
+#: The same supported shapes starting at any word boundary. Used only after a deliberate
 #: press, never for the wake word: the button already establishes intent, so
 #: scanning costs nothing there, whereas after a wake prefix the question must
 #: follow the prefix or "hey memory" stops meaning anything.
-_QUESTION_SHAPE_ANYWHERE = re.compile(rf"(?:^|(?<=\W)){_QUESTION_ALTERNATION}")
+_QUESTION_SHAPE_ANYWHERE = re.compile(
+    rf"(?:^|(?<=\W))(?:{_QUESTION_ALTERNATION}|{_REGISTRATION_ALTERNATION})"
+)
 
 
 class Transcript(BaseModel):
@@ -118,7 +122,7 @@ def triggered_question(text: str, wake_prefixes: str | tuple[str, ...]) -> str |
             after_ok = end == len(normalized) or not normalized[end].isalnum()
             if before_ok and after_ok:
                 question = normalized[end:].lstrip(" ,:;.!?-")
-                if question and _QUESTION_SHAPE.match(question) is not None:
+                if question and _SUPPORTED_INTENT_SHAPE.match(question) is not None:
                     matches.append((hit, question))
             start = hit + 1
 
@@ -327,6 +331,11 @@ class HandsFreeListener:
         try:
             started = time.perf_counter()
             draft = await self._backend.query(question, transcript.session_id)
+            if draft.registration_started:
+                # The tool-owned background workflow speaks its own fixed
+                # prompt and terminal line. Sending the model draft here would
+                # duplicate audio and incorrectly guard it as a where-answer.
+                return True
             guarded = guard_reply(draft.text, draft.tool_result)
             latency_ms = max(0, round((time.perf_counter() - started) * 1000))
             self._metrics.record_guard(guarded.verdict)

@@ -10,10 +10,15 @@ from google.adk.tools import FunctionTool, ToolContext
 
 from agent.config import Settings
 from agent.tools.memory import MemoryTool
+from agent.workflow import RegistrationWorkflow
 
 REQUEST_SESSION_STATE = "request_session_id"
 
-INSTRUCTION = """You answer only questions about where the wearer left an object.
+INSTRUCTION = """You orchestrate two visual-memory intents: finding an object and registering one.
+
+For "remember/scan/learn my X", call start_registration exactly once with only
+X as the label. Registration is a background scripted workflow; do not invent
+progress or confirmation text and do not call where_is for that request.
 
 For every supported location question, call where_is exactly once with only the
 object label. The service supplies session identity; never ask for or invent a
@@ -34,6 +39,7 @@ Memory service's spoken_answer.
 def create_agent(
     settings: Settings,
     memory: MemoryTool,
+    registration: RegistrationWorkflow | None = None,
     *,
     model: LiteLlm | None = None,
 ) -> LlmAgent:
@@ -45,6 +51,17 @@ def create_agent(
         session_id = str(raw_session_id) if raw_session_id else None
         result = await memory.where_is(label.strip(), session_id)
         return result.model_dump(mode="json")
+
+    async def start_registration(label: str, tool_context: ToolContext) -> dict[str, Any]:
+        """Start a narrated personal-object scan for the authenticated session."""
+        raw_session_id = tool_context.state.get(REQUEST_SESSION_STATE, "")
+        session_id = str(raw_session_id) if raw_session_id else ""
+        started = (
+            registration.start(label=label.strip(), session_id=session_id)
+            if registration is not None
+            else False
+        )
+        return {"started": started, "label": label.strip(), "background": True}
 
     if model is None:
         api_key = (
@@ -62,10 +79,14 @@ def create_agent(
 
     return LlmAgent(
         name="visual_memory_agent",
-        description="Grounded where-is query orchestration for visual memory",
+        description="Grounded find and personal-object registration orchestration",
         model=model,
         instruction=INSTRUCTION,
-        tools=[FunctionTool(where_is)],
+        tools=(
+            [FunctionTool(where_is), FunctionTool(start_registration)]
+            if registration is not None
+            else [FunctionTool(where_is)]
+        ),
     )
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import OrderedDict
-from typing import Any
+from typing import Any, cast
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig
@@ -111,6 +111,7 @@ class AdkRunnerBackend:
             await self._ensure_session(adk_session_id)
             reply = ""
             tool_result: QueryResponse | None = None
+            registration_started = False
             try:
                 events = self._runner.run_async(
                     user_id=USER_ID,
@@ -124,10 +125,14 @@ class AdkRunnerBackend:
                 )
                 async for event in events:
                     for response in event.get_function_responses():
-                        if response.name != "where_is" or response.response is None:
+                        if response.response is None:
                             continue
                         payload: Any = response.response
-                        tool_result = QueryResponse.model_validate(payload)
+                        if response.name == "where_is":
+                            tool_result = QueryResponse.model_validate(payload)
+                        elif response.name == "start_registration" and isinstance(payload, dict):
+                            registration_payload = cast("dict[str, Any]", payload)
+                            registration_started = bool(registration_payload.get("started", False))
                     if event.is_final_response() and event.content and event.content.parts:
                         text_parts = [part.text for part in event.content.parts if part.text]
                         if text_parts:
@@ -144,7 +149,11 @@ class AdkRunnerBackend:
                     max_turns=self._settings.max_turns_kept,
                 )
 
-            return DraftAnswer(text=reply, tool_result=tool_result)
+            return DraftAnswer(
+                text=reply,
+                tool_result=tool_result,
+                registration_started=registration_started,
+            )
 
 
 __all__ = ["APP_NAME", "USER_ID", "AdkRunnerBackend", "BoundedSessionService"]

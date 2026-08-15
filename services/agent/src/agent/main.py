@@ -17,8 +17,11 @@ from agent.config import Settings, get_settings
 from agent.errors import AgentServiceError
 from agent.logging import configure_logging
 from agent.metrics import AgentMetrics
+from agent.reply import ReplyTransport
 from agent.stub import QueryBackend, StubLlm
 from agent.tools.memory import MemoryTool
+from agent.tools.register import RegisterTool
+from agent.workflow import RegistrationWorkflow
 
 logger = logging.getLogger(__name__)
 
@@ -53,19 +56,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await listener_task
+        workflow: RegistrationWorkflow | None = app.state.registration_workflow
+        if workflow is not None:
+            await workflow.aclose()
 
 
-def _select_backend(settings: Settings) -> QueryBackend:
+def _select_backend(
+    settings: Settings, metrics: AgentMetrics
+) -> tuple[QueryBackend, RegistrationWorkflow]:
     memory = MemoryTool(settings)
+    registration = RegistrationWorkflow(
+        RegisterTool(settings),
+        ReplyTransport(settings),
+        metrics=metrics,
+    )
     if settings.agent_backend == "stub":
-        return StubLlm(memory)
+        return StubLlm(memory, registration), registration
 
     # Imported only on the model path so health/config tooling for the stub
     # does not initialize ADK or LiteLLM as a side effect.
     from agent.agent import create_agent
     from agent.runner import AdkRunnerBackend
 
-    return AdkRunnerBackend(settings, create_agent(settings, memory))
+    return AdkRunnerBackend(settings, create_agent(settings, memory, registration)), registration
 
 
 def create_app(
@@ -85,8 +98,14 @@ def create_app(
         redoc_url=None if hide_schema else "/redoc",
     )
     app.state.settings = resolved
-    app.state.backend = backend or _select_backend(resolved)
-    app.state.metrics = AgentMetrics()
+    metrics = AgentMetrics()
+    if backend is None:
+        selected_backend, registration_workflow = _select_backend(resolved, metrics)
+    else:
+        selected_backend, registration_workflow = backend, None
+    app.state.backend = selected_backend
+    app.state.metrics = metrics
+    app.state.registration_workflow = registration_workflow
     app.state.listener_task = None
 
     async def handle(_: Request, exc: AgentServiceError) -> JSONResponse:

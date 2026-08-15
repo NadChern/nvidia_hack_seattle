@@ -28,6 +28,11 @@ predictions and reads the running service's resolved/ambiguous/unmatched/escalat
 gallery counters from `/v1/status`, so offline evaluation and the demo report the same runtime
 measurements.
 
+The voice-routing set labels utterances as `register`, `where`, or `other`, including wake-prefix
+variants and paraphrases. Report the full confusion matrix, overall accuracy, and the asymmetric
+misroute-to-registration rate (a side effect) with numerator/denominator. Re-run the complete
+where-answer guard suite unchanged whenever registration vocabulary or routing changes.
+
 ## Ground-truth labels
 
 For every clip, label:

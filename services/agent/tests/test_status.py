@@ -28,6 +28,9 @@ async def test_status_reports_boundary_and_never_the_key() -> None:
         "backend": "local",
         "model": "openai/qwen3:4b",
         "endpoint_host": "127.0.0.1",
+        "vision_endpoint_host": "127.0.0.1",
+        "registration_capture_seconds": 6.0,
+        "registration_timeout_s": 20.0,
         "metrics": {
             "queries": 0,
             "guard_passed": 0,
@@ -36,6 +39,9 @@ async def test_status_reports_boundary_and_never_the_key() -> None:
             "hands_free_triggered": 0,
             "hands_free_replies": 0,
             "hands_free_errors": 0,
+            "registrations_started": 0,
+            "registrations_succeeded": 0,
+            "registrations_failed": 0,
         },
     }
     assert secret not in response.text
