@@ -1,0 +1,219 @@
+[project]
+name = "visual-memory-vision-worker"
+version = "0.1.0"
+description = "Visual Memory Assistant vision-worker service"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "uvicorn>=0.34,<1",
+    # Consumes the relay: MediaClient, epoch reset, VideoFrame decode.
+    "visual-memory-media-contract[images]",
+    # Emits confirmed candidates as Observations; posts lifecycle-adjacent
+    # session registration is the gateway's job, not this service's.
+    "visual-memory-memory-contract[client]",
+    # This service's own candidate/verifier contract.
+    "visual-memory-vision-contract",
+    # numpy 2.5+ requires Python >=3.12; the repository standard mandates 3.11.
+    "numpy>=2.4.6,<2.5",
+    # Encodes confirmed-candidate evidence clips (evidence/clip.py). CPU-only
+    # software encoding via libx264, so unlike torch/ultralytics this is a
+    # core dependency for every profile, including ci and dev-macos -- the
+    # same version media-gateway pins for virtual-glasses --file.
+    "av>=18,<19",
+]
+
+[project.optional-dependencies]
+# The real detector's model runtime (detect/yoloe.py). Optional so `uv sync`
+# alone -- what ci and dev-macos run -- never resolves a CUDA wheel for a
+# dependency those profiles don't use; install with `uv sync --extra models`.
+# Per docs/08-Development-and-Deployment.md:30, "code outside a model adapter
+# must not depend on... a checkpoint layout" -- torch and ultralytics are
+# imported only inside detect/, depth/, track/, and pose/, matching
+# tests/test_domain_isolation.py's non-adapter-package check.
+models = [
+    # Keep the stable cu126 pair on macOS and x86_64 CUDA. Linux ARM64 is the
+    # physical GN100 exception: GB10 is compute capability 12.1, while the
+    # torch 2.6 wheel stops at sm_90. The exact cu130 nightly pair below was
+    # proven on that machine with BF16 CUDA matmul and a loaded torchvision
+    # NMS operator. The dates differ because that torchvision build declares
+    # the previous day's Torch build exactly. See standards-exception.toml.
+    "torch==2.15.0.dev20260813+cu130; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torchvision==0.29.0.dev20260814+cu130; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "torch==2.6.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    "torchvision==0.21.0; sys_platform != 'linux' or platform_machine != 'aarch64'",
+    # torch's own METADATA declares these exact pinned versions as its CUDA
+    # runtime (`pip show torch` lists them under Requires). uv's resolver
+    # flattens torch's dependency set from the *aarch64* wheel's metadata
+    # (used for GN100/Jetson-style builds, which expect a system-provided
+    # CUDA/cuDNN rather than pip packages) rather than the x86_64 wheel's,
+    # so on this dev-wsl-cuda profile they're silently absent from uv.lock
+    # and torch fails at import with "libcudnn.so.9: cannot open shared
+    # object file". Declaring them here, matching torch's own platform
+    # marker, keeps them in the lock for x86_64 Linux without affecting the
+    # ARM64 GN100 profile, which doesn't need them.
+    "nvidia-cublas-cu12==12.6.4.1; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-cupti-cu12==12.6.80; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-nvrtc-cu12==12.6.77; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cuda-runtime-cu12==12.6.77; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cudnn-cu12==9.5.1.17; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cufft-cu12==11.3.0.4; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-curand-cu12==10.3.7.77; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cusolver-cu12==11.7.1.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cusparse-cu12==12.5.4.2; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-cusparselt-cu12==0.6.3; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-nccl-cu12==2.21.5; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-nvjitlink-cu12==12.6.85; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "nvidia-nvtx-cu12==12.6.77; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    "triton==3.2.0; platform_system == 'Linux' and platform_machine == 'x86_64'",
+    # Exact dependency of the GN100 nightly Torch wheel. Declared directly so
+    # uv routes it to the explicit cu130 nightly index rather than stopping at
+    # PyPI, where this git-suffixed build does not exist.
+    "triton==3.8.0+git675c5987; sys_platform == 'linux' and platform_machine == 'aarch64'",
+    "ultralytics>=8.4.115",
+    # YOLOE's text-prompt mode (get_text_pe, used by detect/yoloe.py's
+    # text-model path) needs this at import time. Left undeclared,
+    # ultralytics' own AutoUpdate fetches it via a bypass installer that
+    # ignores this project's [tool.uv.index] pin below, silently overwriting
+    # the pinned torchvision with a mismatched build. Declaring it here
+    # keeps its resolution inside uv, honoring the pin.
+    "clip @ git+https://github.com/ultralytics/CLIP.git",
+    # depth/moge.py's model runtime. MoGe has no PyPI release; its own
+    # pyproject.toml declares torch>=2.0.0/torchvision unpinned, gradio,
+    # opencv-python, scipy, matplotlib, trimesh, and two more git
+    # dependencies of its own (utils3d, pipeline) -- all upstream packaging
+    # choices, not this project's; gradio and trimesh in particular are
+    # MoGe's own demo tooling, unused by anything this service calls. The
+    # torch/torchvision entries above still win the resolution (uv resolves
+    # one dependency graph; our exact pins satisfy MoGe's own >=2.0.0), so
+    # this does not reopen the CUDA-index fight documented above.
+    "moge @ git+https://github.com/microsoft/MoGe.git",
+]
+
+# NOTE: there is deliberately no `pose` extra for pose/da3.py's runtime.
+#
+# `depth-anything-3` 0.1.1 requires `numpy<2`; this service and
+# packages/media-contract both pin `numpy>=2.4.6,<2.5`, so declaring it here
+# makes the whole workspace unresolvable ("visual-memory-vision-worker[pose]
+# depends on numpy<2 ... your project depends on numpy>=2.4.6"). Relaxing
+# that pin is not a vision-worker decision: media-contract is shared with the
+# Media Gateway, so it would move both services at once.
+#
+# Until that is settled, `pose/da3.py` is installed out of band -- a separate
+# environment with the same torch pin -- and `VMA_VERIFIER_KIND=world_motion`
+# simply degrades to the rule verifier wherever the import fails. Two ways
+# out, both real: downgrade the workspace to numpy<2 (cheap, wide blast
+# radius), or run DA3 as a sidecar behind an HTTP boundary (more work, but it
+# also isolates open3d/pycolmap, whose native builds are the likeliest thing
+# in this service to fail an ARM64 GN100 build -- docs/02 warns about exactly
+# that).
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8,<9",
+    "pyright>=1.1,<2",
+    "ruff>=0.9,<1",
+    "anyio>=4,<5",
+]
+
+[tool.uv.sources]
+# Editable so edits to a shared package are picked up without a reinstall.
+# A non-editable path dependency is copied into the environment, and
+# `uv sync --frozen` then audits it as satisfied, so this service would
+# silently keep stale contract code. Matches media-gateway's and
+# application-memory's Dockerfiles, which copy the packages/ directory to the
+# same relative offset so the editable path resolves inside the image too.
+visual-memory-media-contract = { path = "../../packages/media-contract", editable = true }
+visual-memory-memory-contract = { path = "../../packages/memory-contract", editable = true }
+visual-memory-vision-contract = { path = "../../packages/vision-contract", editable = true }
+# Plain PyPI's torch (as of 2.13.0) depends on a unified `cuda-toolkit`
+# metapackage that resolves to CUDA 13.x -- newer than CUDA 12.6, the newest
+# this repository's dev-wsl-cuda profile's driver (561.17) supports. `uv
+# sync --extra models` alone, or UV_TORCH_BACKEND, is not enough to route
+# around this: the metapackage dependency is fixed by torch's own published
+# metadata regardless of which index resolves the `torch` entry itself.
+# Pinning torch and torchvision to PyTorch's own cu126-specific index is what
+# actually selects CUDA-12-targeted builds. Bump this only after confirming
+# the dev-wsl-cuda driver supports whatever CUDA version comes with it.
+#
+# ...but only where CUDA exists. That index publishes Linux and Windows
+# wheels only, so routing a Mac through it does not degrade -- `uv sync
+# --extra models` fails outright with "no wheels for the current platform",
+# which is why this service had no real detector on Apple Silicon at all and
+# a Mac ran the fixture one. PyPI publishes macOS arm64 wheels for these
+# exact pinned versions (`torch-2.6.0-cp311-none-macosx_11_0_arm64.whl`,
+# `torchvision-0.21.0-cp311-cp311-macosx_11_0_arm64.whl`), and the
+# cuda-toolkit problem above is specific to CUDA builds, so the darwin arm
+# takes them from the default index. Same versions, same YOLOE, one detector
+# for both platforms.
+torch = [
+    { index = "pytorch-cu130-nightly", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+    { index = "pytorch-cu126", marker = "sys_platform != 'darwin' and (sys_platform != 'linux' or platform_machine != 'aarch64')" },
+    { index = "pypi", marker = "sys_platform == 'darwin'" },
+]
+torchvision = [
+    { index = "pytorch-cu130-nightly", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+    { index = "pytorch-cu126", marker = "sys_platform != 'darwin' and (sys_platform != 'linux' or platform_machine != 'aarch64')" },
+    { index = "pypi", marker = "sys_platform == 'darwin'" },
+]
+# The GN100 Torch wheel pins a nightly Triton build unavailable on PyPI.
+triton = [
+    { index = "pytorch-cu130-nightly", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu130-nightly"
+url = "https://download.pytorch.org/whl/nightly/cu130"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+# The default index, named only so the darwin arm of `torch` above can refer
+# to it -- uv rejects `{ index = "pypi" }` against an index it was never told
+# about. Not `explicit`, because this is where everything else already comes
+# from; naming it changes nothing about resolution.
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+# clip's git+https direct reference (models extra, above) is otherwise
+# refused by hatchling's metadata validation.
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/vision_worker"]
+
+[tool.pytest.ini_options]
+# tests/test_detect_yoloe.py needs the `models` extra, a downloaded
+# checkpoint, and (for a meaningful run) a CUDA device -- none of which the
+# `ci` or `dev-macos` profile has. Opt-in with `-m models`, matching
+# media-gateway's `-m livekit` integration suite.
+addopts = "-q -m 'not models'"
+testpaths = ["tests"]
+markers = ["models: needs the `models` extra installed and a cached YOLOE checkpoint"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["vision_worker"]

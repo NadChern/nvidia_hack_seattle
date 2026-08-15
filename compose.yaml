@@ -1,0 +1,394 @@
+# GN100 release topology.
+#
+# docs/08-Development-and-Deployment.md names six original logical services:
+# livekit, media-worker, speech, vision, application-memory, and database. This
+# topology also carries the Agent query service; application-memory owns SQLite
+# for the hackathon rather than starting a separate database container.
+#
+# The release owner owns this file. Changes to a shared network, port, volume,
+# or secret need review by the affected owners.
+#
+# Local development uses compose.dev.yaml instead -- it runs LiveKit alone, so
+# the gateway can run from a checkout with a debugger attached.
+#
+#   export VMA_LIVEKIT_API_KEY=... VMA_LIVEKIT_API_SECRET=... VMA_INTERNAL_API_TOKEN=...
+#   export VMA_DEVICE_ID_ALLOWLIST=x3-... VMA_BIND_ADDR=<gn100-trusted-lan-ip>
+#   docker compose up -d
+#
+# VMA_BIND_ADDR is required for this release topology and must be the GN100's
+# exact trusted-LAN IPv4. It controls both published ports and LiveKit's
+# advertised ICE address. Never use 0.0.0.0 here: docs/07 requires restriction
+# to the trusted LAN, and LiveKit cannot advertise a wildcard address.
+#
+#   VMA_BIND_ADDR=192.168.1.42 docker compose up -d
+#   python3 tools/dev-livekit/check_listeners.py --allow-lan
+#
+# Verified so far: the original gateway and Memory containers reach healthy,
+# the gateway joins a LiveKit room and publishes its return-audio track
+# container-to-container, the Agent image builds and becomes ready, session
+# minting and the device allowlist behave, and deploy APIs refuse unauthenticated
+# callers. NOT yet verified: the complete updated topology or a device publishing in
+# from off-box. deploy/livekit.yaml omits the dev loopback-candidate setting;
+# the container candidate route needs a real LAN and real glasses. It remains
+# adoption gate 1 in the S01 spike results, not something Compose rendering or
+# an ARM64 cross-build can prove.
+
+name: visual-memory
+
+x-bind: &bind ${VMA_BIND_ADDR:-127.0.0.1}
+
+services:
+  livekit:
+    # Pinned by digest, not by tag, per docs/07. This index covers linux/amd64
+    # and linux/arm64, so the same pin is valid on a laptop and on the GN100.
+    image: livekit/livekit-server:v1.13.4@sha256:189f7c81b704a36642bc5c7e2d3e1ae83744627c11978a23a251bf19fbec64e0
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      LIVEKIT_KEYS: "${VMA_LIVEKIT_API_KEY:?set VMA_LIVEKIT_API_KEY}: ${VMA_LIVEKIT_API_SECRET:?set VMA_LIVEKIT_API_SECRET}"
+      # LiveKit runs behind a Docker bridge here. Auto-detection would advertise
+      # the container's private 172.x address to off-box glasses. The release
+      # operator must set VMA_BIND_ADDR to the GN100's trusted-LAN IPv4; the
+      # generated LiveKit config environment maps this to rtc.node_ip.ipv4.
+      LIVEKIT_RTC_NODE_IP_IPV4: "${VMA_BIND_ADDR:?set VMA_BIND_ADDR to the GN100 trusted-LAN IPv4}"
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      # Signaling and ICE. The UDP mux is easy to omit in an edit and ICE
+      # degrades silently without it.
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7880:7880"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7881:7881"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7882:7882/udp"
+    networks:
+      - media
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:7880"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    restart: unless-stopped
+
+  # Owner: Person 4. Directory services/media-gateway, Compose key media-worker
+  # -- the name in docs/01 and docs/03 is media-worker, and the component is
+  # called the Media Gateway. Both names are load-bearing; neither is wrong.
+  media-worker:
+    build:
+      # The repository root, because this service depends on
+      # packages/media-contract by relative path. Building from the service
+      # directory fails: the COPY layer has nothing to copy.
+      context: .
+      dockerfile: services/media-gateway/Dockerfile
+    image: vma/media-gateway:${VMA_IMAGE_TAG:-dev}
+    environment:
+      VMA_ENVIRONMENT: deploy
+      VMA_MEDIA_SOURCE: livekit
+      # How this container reaches LiveKit.
+      VMA_LIVEKIT_URL: ws://livekit:7880
+      # How a *device* reaches it. Not the same address: `livekit` resolves on
+      # the internal network and nowhere else, so glasses handed that URL in
+      # their session grant cannot connect at all. Set this to the GN100's
+      # address on the trusted LAN.
+      VMA_LIVEKIT_PUBLIC_URL: "ws://${VMA_BIND_ADDR:-127.0.0.1}:7880"
+      VMA_LIVEKIT_API_KEY: "${VMA_LIVEKIT_API_KEY:?set VMA_LIVEKIT_API_KEY}"
+      VMA_LIVEKIT_API_SECRET: "${VMA_LIVEKIT_API_SECRET:?set VMA_LIVEKIT_API_SECRET}"
+      # deploy refuses to start without both of these, and without a device
+      # allowlist. That is the point: a gateway reachable on a LAN with open
+      # token minting hands anyone a publisher grant.
+      VMA_INTERNAL_API_TOKEN: "${VMA_INTERNAL_API_TOKEN:?set VMA_INTERNAL_API_TOKEN}"
+      VMA_DEVICE_ID_ALLOWLIST: "${VMA_DEVICE_ID_ALLOWLIST:?set VMA_DEVICE_ID_ALLOWLIST}"
+      # Real glasses arrive at a resolution nobody has measured yet, so latch
+      # what they send rather than rejecting everything against a guess. Watch
+      # /v1/status to see what they actually send.
+      #
+      # `sustained`, not `first_frame_wins`: an encoder ramps up to its
+      # negotiated resolution over tens of seconds, so the first frame is the
+      # bottom rung of that climb. Latching it rejected 5002 of 5581 frames of
+      # a real 720p session -- silently, for the whole session.
+      VMA_DIMENSION_GUARD_MODE: sustained
+      # docs/07 permits a rolling raw buffer; this service keeps none, and the
+      # setting only accepts 0 so the privacy checklist has something concrete
+      # to point at.
+      VMA_RAW_BUFFER_SECONDS: "0"
+      # The rate the relay delivers sampled frames at. One variable feeds this
+      # and the vision service's VMA_SOURCE_FPS below, because every stability
+      # threshold over there is a frame count derived from this number -- if
+      # the two drift apart, nothing fails, the thresholds just silently come
+      # to mean different durations than they say.
+      VMA_SAMPLE_FPS: "${VMA_SAMPLE_FPS:-8}"
+    ports:
+      # The user-facing API. Consumers reach the relay over the internal
+      # network instead and need nothing published.
+      - "${VMA_BIND_ADDR:-127.0.0.1}:8080:8080"
+    networks:
+      - media
+      - internal
+    depends_on:
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      # No curl or wget in a slim Python image, and adding one to the runtime
+      # image for a health check is not worth the layer.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8080/health/ready", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Readiness reports whether LiveKit is reachable, never whether glasses are
+    # connected, so an idle gateway restarts only when it is genuinely broken.
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # Bounded transient storage, per docs/08. Nothing durable is written:
+      # max resident media is one video frame and about two seconds of audio.
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    # No GPU. This service decodes and relays; it runs no models, and docs/03
+    # grants device access only to services that perform inference.
+
+  # The trusted source of truth: it decides what the assistant may claim.
+  # SQLite rather than a database container -- docs/08 permits combining
+  # logical services "when hackathon simplicity or latency justifies it", and
+  # dropping the container removes a volume, credentials, and a readiness
+  # dependency from day one on the GN100. Swapping to Postgres is a URL change.
+  application-memory:
+    build:
+      # Repository root, because this service depends on
+      # packages/memory-contract by relative path.
+      context: .
+      dockerfile: services/application-memory/Dockerfile
+    image: vma/application-memory:${VMA_IMAGE_TAG:-dev}
+    environment:
+      VMA_ENVIRONMENT: deploy
+      VMA_DATABASE_URL: sqlite+pysqlite:////var/lib/memory/memory.db
+      VMA_EVIDENCE_DIR: /var/lib/evidence
+      VMA_INTERNAL_API_TOKEN: "${VMA_INTERNAL_API_TOKEN:?set VMA_INTERNAL_API_TOKEN}"
+      VMA_DEVICE_ID_ALLOWLIST: "${VMA_DEVICE_ID_ALLOWLIST:?set VMA_DEVICE_ID_ALLOWLIST}"
+      # docs/07: evidence and event metadata are session-scoped and deleted
+      # after 24 hours by default.
+      VMA_RETENTION_HOURS: "24"
+    ports:
+      # The query API. Vision and Speech reach it over the internal network.
+      - "${VMA_BIND_ADDR:-127.0.0.1}:8081:8081"
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8081/health/ready", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      # The database and evidence outlive the container, and both are in
+      # deletion and backup scope per docs/07.
+      - memory-data:/var/lib/memory
+      - evidence:/var/lib/evidence
+    # No GPU: this service runs no models.
+
+  # Consumes ws://media-worker:8080/v1/stream/video, resets all per-track
+  # state on every epoch_started, and posts confirmed candidates to
+  # application-memory. Owner: Person 1.
+  #
+  # No GPU reservation here, deliberately: this entry runs
+  # VMA_DETECTOR_KIND=fixture, which needs none, and a hard `deploy.
+  # resources.reservations.devices` entry would fail `docker compose up` for
+  # every teammate and CI run without an nvidia-docker runtime configured.
+  #
+  # For the real thing -- YOLOE, the VLM verifier, a GPU and a model cache:
+  #
+  #   docker compose -f compose.yaml -f compose.gpu.yaml up -d
+  #
+  # `compose.gpu.yaml` is the other half of this entry and documents what it
+  # needs. Note what the two profiles mean: this one is a fully wired pipeline
+  # that cannot recognise anything, which is exactly what makes it useful for
+  # testing the wiring.
+  vision:
+    build:
+      # Repository root: this service depends on packages/media-contract,
+      # packages/memory-contract, and packages/vision-contract by relative
+      # path.
+      context: .
+      dockerfile: services/vision-worker/Dockerfile
+    image: vma/vision-worker:${VMA_IMAGE_TAG:-dev}
+    environment:
+      VMA_ENVIRONMENT: deploy
+      # How this container reaches the relay it consumes.
+      VMA_GATEWAY_VIDEO_URL: ws://media-worker:8080/v1/stream/video
+      VMA_MEMORY_BASE_URL: http://application-memory:8081
+      VMA_INTERNAL_API_TOKEN: "${VMA_INTERNAL_API_TOKEN:?set VMA_INTERNAL_API_TOKEN}"
+      VMA_DETECTOR_KIND: fixture
+      # Must be the rate media-worker actually relays at, above -- the same
+      # variable drives both. Every stability threshold is a duration
+      # converted into a frame count at this rate. /v1/status reports the
+      # measured rate alongside this one; they should agree.
+      VMA_SOURCE_FPS: "${VMA_SAMPLE_FPS:-8}"
+    ports:
+      # Operator overlay/status API. The laptop-hosted GN100 console proxies
+      # this trusted-LAN port; inference consumers still use the private
+      # Compose network. Authentication remains mandatory.
+      - "${VMA_BIND_ADDR:-127.0.0.1}:8082:8082"
+    networks:
+      - internal
+    depends_on:
+      media-worker:
+        condition: service_healthy
+      application-memory:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8082/health/ready", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Readiness reports whether the relay task is alive, never whether an
+    # object happens to be in view -- matching media-worker's own readiness
+    # reasoning for the same reason.
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # Bounded transient storage, per docs/08. No durable state: evidence
+      # is uploaded to application-memory, never written to disk here.
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+
+  # Speech consumes the gateway relay. The base image intentionally contains
+  # stub backends so CPU CI and ordinary Compose validate all wiring without a
+  # model download; the physical GN100 speech profile remains a release gate.
+  speech:
+    build:
+      context: .
+      dockerfile: services/speech/Dockerfile
+    image: vma/speech:${VMA_IMAGE_TAG:-dev}
+    environment:
+      VMA_GATEWAY_AUDIO_URL: ws://media-worker:8080/v1/stream/audio
+    ports:
+      # The workstation console uses STT and synthesis. Loopback remains the
+      # default; publishing it to a trusted LAN is deliberate through VMA_BIND_ADDR.
+      - "${VMA_BIND_ADDR:-127.0.0.1}:8085:8080"
+    networks:
+      - internal
+    depends_on:
+      media-worker:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8080/health/ready", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+
+  # Query orchestration and the hands-free loop. The base release topology uses
+  # the deterministic backend: it proves Memory → guard → Speech → return audio
+  # with no unexpected egress. A measured local model profile can override
+  # VMA_AGENT_BACKEND and its endpoint without changing the service contract.
+  agent:
+    build:
+      context: .
+      dockerfile: services/agent/Dockerfile
+    image: vma/agent:${VMA_IMAGE_TAG:-dev}
+    environment:
+      VMA_ENVIRONMENT: deploy
+      VMA_AGENT_BACKEND: "${VMA_AGENT_BACKEND:-stub}"
+      VMA_LLM_BASE_URL: "${VMA_LLM_BASE_URL:-http://127.0.0.1:11434/v1}"
+      VMA_LLM_MODEL: "${VMA_LLM_MODEL:-openai/qwen3:4b}"
+      VMA_LLM_API_KEY: "${VMA_LLM_API_KEY:-}"
+      VMA_ALLOW_EXTERNAL_LLM: "${VMA_ALLOW_EXTERNAL_LLM:-false}"
+      VMA_LLM_TIMEOUT_S: "${VMA_LLM_TIMEOUT_S:-30}"
+      VMA_REQUEST_TIMEOUT_S: "${VMA_REQUEST_TIMEOUT_S:-30}"
+      VMA_MEMORY_BASE_URL: http://application-memory:8081
+      VMA_MEMORY_API_TOKEN: "${VMA_INTERNAL_API_TOKEN:?set VMA_INTERNAL_API_TOKEN}"
+      VMA_GATEWAY_BASE_URL: http://media-worker:8080
+      VMA_SPEECH_BASE_URL: http://speech:8080
+      VMA_INTERNAL_API_TOKEN: "${VMA_INTERNAL_API_TOKEN:?set VMA_INTERNAL_API_TOKEN}"
+      VMA_HANDS_FREE_ENABLED: "true"
+      VMA_WAKE_PREFIX: "${VMA_WAKE_PREFIX:-hey memory}"
+      VMA_WAKE_PREFIX_VARIANTS: "${VMA_WAKE_PREFIX_VARIANTS:-hay memory,he memory,hey memories,hey mammary}"
+    ports:
+      - "${VMA_BIND_ADDR:-127.0.0.1}:8086:8086"
+    networks:
+      - internal
+    depends_on:
+      media-worker:
+        condition: service_healthy
+      application-memory:
+        condition: service_healthy
+      speech:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen(
+              "http://127.0.0.1:8086/health/ready", timeout=3).status == 200 else 1)
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+
+  # A separate database container remains deferred; application-memory owns
+  # SQLite in this hackathon topology, as documented above.
+
+networks:
+  # Signaling and RTC. Published to the trusted LAN so the glasses can reach it.
+  media:
+    driver: bridge
+  # Private service-to-service traffic: the relay, memory writes, and internal
+  # APIs. Never published.
+  internal:
+    driver: bridge
+    internal: true
+volumes:
+  memory-data:
+  evidence:
+# Declared when the services that use them land:
+#   model-cache:

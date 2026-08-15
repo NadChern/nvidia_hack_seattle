@@ -1,0 +1,9 @@
+[service]
+name = "agent"
+kind = "application"
+owner = "Alex"
+port = 8086
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"

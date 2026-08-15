@@ -1,0 +1,40 @@
+# Secrets: never commit. Commit .env.example placeholders instead.
+.env
+.env.*
+!.env.example
+
+# Downloaded dev tooling (LiveKit server binaries, etc.)
+.tools/
+**/.tools/
+
+# Local media fixtures used by the virtual-glasses publisher
+clips/
+*.mp4
+*.mkv
+*.mov
+
+.venv/
+**/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Downloaded model checkpoints (YOLOE, MobileCLIP, etc.) -- large binaries
+# fetched on demand by ultralytics/torch, never committed. Pre-caching them
+# for deploy is docs/08's model-cache volume, not git.
+*.pt
+*.pth
+# TorchScript exports (mobileclip_blt.ts, mobileclip2_b.ts), scoped to the
+# services that download them. Repo-wide, `*.ts` silently swallows every
+# TypeScript file in apps/console -- the files are simply never added, and
+# nothing reports it.
+services/**/*.ts
+
+# Per-service logs written by scripts/dev_stack.sh
+logs/
+
+# Console (apps/console) build output and dependencies
+node_modules/
+**/node_modules/
+apps/console/dist/

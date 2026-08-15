@@ -1,0 +1,12 @@
+port: 7880
+bind_addresses:
+  - "127.0.0.1"
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  enable_loopback_candidate: true
+keys:
+  visual-memory-spike: "visual-memory-spike-secret-with-at-least-32-characters"
+logging:
+  level: info

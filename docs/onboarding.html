@@ -1,0 +1,718 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Media Gateway — what it does and how to build on it</title>
+<style>
+  :root {
+    --paper:      #f5f6f4;
+    --surface:    #ffffff;
+    --ink:        #131a18;
+    --muted:      #5b6663;
+    --hairline:   #d9ded9;
+    --accent:     #0e6a61;
+    --accent-dim: #e2efec;
+    --signal:     #9c5518;
+    --signal-dim: #f7ece2;
+    --ok:         #2f6b3a;
+
+    --measure: 66ch;
+    --step--1: clamp(0.82rem, 0.8rem + 0.1vw, 0.88rem);
+    --step-0:  clamp(1rem, 0.97rem + 0.15vw, 1.09rem);
+    --step-1:  clamp(1.2rem, 1.1rem + 0.4vw, 1.4rem);
+    --step-2:  clamp(1.55rem, 1.35rem + 0.9vw, 2.1rem);
+    --step-3:  clamp(2.1rem, 1.6rem + 2.2vw, 3.4rem);
+
+    --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0d1211; --surface: #151c1a; --ink: #e6ebe8; --muted: #98a5a1;
+      --hairline: #26302d; --accent: #45b0a4; --accent-dim: #16302d;
+      --signal: #d08a45; --signal-dim: #2e2318; --ok: #6bbd7b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0d1211; --surface: #151c1a; --ink: #e6ebe8; --muted: #98a5a1;
+    --hairline: #26302d; --accent: #45b0a4; --accent-dim: #16302d;
+    --signal: #d08a45; --signal-dim: #2e2318; --ok: #6bbd7b;
+  }
+  :root[data-theme="light"] {
+    --paper: #f5f6f4; --surface: #ffffff; --ink: #131a18; --muted: #5b6663;
+    --hairline: #d9ded9; --accent: #0e6a61; --accent-dim: #e2efec;
+    --signal: #9c5518; --signal-dim: #f7ece2; --ok: #2f6b3a;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font-family: var(--sans); font-size: var(--step-0); line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 1180px; margin: 0 auto;
+    padding: clamp(1.75rem, 4vw, 4.5rem) clamp(1.15rem, 4vw, 2.5rem) 6rem;
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+  @media (min-width: 1100px) {
+    .shell { grid-template-columns: 13rem minmax(0, 1fr); column-gap: 3.5rem; }
+    .rail { display: block; }
+  }
+
+  .rail { display: none; position: sticky; top: 2.5rem; align-self: start; }
+  .rail h2 {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); font-weight: 500; margin: 0 0 1rem;
+  }
+  .rail ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.1rem; }
+  .rail a {
+    display: grid; grid-template-columns: 2.1rem 1fr; align-items: baseline;
+    padding: 0.34rem 0; color: var(--muted); text-decoration: none;
+    font-size: 0.86rem; line-height: 1.35; border-radius: 3px;
+  }
+  .rail a .n { font-family: var(--mono); font-size: 0.72rem; opacity: 0.75; }
+  .rail a:hover, .rail a:focus-visible { color: var(--accent); }
+
+  main { min-width: 0; display: flex; flex-direction: column; gap: 4.5rem; }
+  section { scroll-margin-top: 2rem; display: flex; flex-direction: column; gap: 1.15rem; }
+  section > * { max-width: var(--measure); }
+  section > .wide, section > figure, section > .grid, section > .frame, section > .table-wrap { max-width: none; }
+
+  h1, h2, h3 { text-wrap: balance; margin: 0; font-weight: 700; letter-spacing: -0.03em; line-height: 1.08; }
+  h1 { font-size: var(--step-3); }
+  h2 { font-size: var(--step-2); }
+  h3 { font-size: var(--step-1); letter-spacing: -0.02em; line-height: 1.25; }
+  p { margin: 0; }
+  a { color: var(--accent); text-underline-offset: 0.18em; }
+  strong { font-weight: 650; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--accent); font-weight: 500;
+  }
+  .lede { font-size: var(--step-1); line-height: 1.45; letter-spacing: -0.011em; }
+  .muted { color: var(--muted); }
+  .small { font-size: var(--step--1); }
+
+  .hero { gap: 1.5rem; padding-bottom: 0.5rem; }
+  .rec {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-family: var(--mono); font-size: 0.7rem; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .rec::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--ok); flex: none; animation: pulse 2.6s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+  @media (prefers-reduced-motion: reduce) { .rec::before { animation: none; } }
+
+  .frame {
+    position: relative; background: var(--surface); border: 1px solid var(--hairline);
+    padding: 1.15rem 1.25rem; display: flex; flex-direction: column; gap: 0.7rem;
+  }
+  .frame::before, .frame::after {
+    content: ""; position: absolute; width: 9px; height: 9px;
+    border: 1.5px solid var(--accent); pointer-events: none;
+  }
+  .frame::before { top: -1px; left: -1px; border-right: 0; border-bottom: 0; }
+  .frame::after  { bottom: -1px; right: -1px; border-left: 0; border-top: 0; }
+  .frame > .label {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.13em;
+    text-transform: uppercase; color: var(--muted); font-weight: 500;
+  }
+  pre { margin: 0; padding: 0; overflow-x: auto; font-family: var(--mono); font-size: 0.845rem; line-height: 1.6; }
+  code { font-family: var(--mono); font-size: 0.88em; }
+  p code, li code, td code, dd code {
+    background: var(--accent-dim); padding: 0.08em 0.34em; border-radius: 3px;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .diagram { background: var(--surface); border: 1px solid var(--hairline); padding: clamp(1.1rem, 3vw, 2rem); overflow-x: auto; }
+  .flow { display: flex; flex-direction: column; align-items: center; gap: 0; min-width: 300px; }
+  .node {
+    border: 1px solid var(--hairline); background: var(--paper);
+    padding: 0.6rem 1rem; text-align: center; border-radius: 2px;
+    font-size: 0.9rem; line-height: 1.35; max-width: 30rem;
+  }
+  .node.key { border-color: var(--accent); border-width: 1.5px; background: var(--accent-dim); }
+  .node .who {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--muted); display: block;
+  }
+  .arrow { width: 1px; height: 1.7rem; background: var(--hairline); position: relative; }
+  .arrow::after {
+    content: ""; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+    border-left: 4px solid transparent; border-right: 4px solid transparent;
+    border-top: 5px solid var(--hairline);
+  }
+  .arrow span {
+    position: absolute; left: 0.7rem; top: 50%; transform: translateY(-50%);
+    font-family: var(--mono); font-size: 0.66rem; color: var(--muted); white-space: nowrap;
+  }
+  .split { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+  figcaption { font-size: var(--step--1); color: var(--muted); max-width: var(--measure); }
+
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.93rem; min-width: 32rem; }
+  th, td { text-align: left; padding: 0.62rem 0.9rem 0.62rem 0; border-bottom: 1px solid var(--hairline); vertical-align: top; }
+  th {
+    font-family: var(--mono); font-weight: 500; font-size: 0.68rem;
+    letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted);
+    border-bottom-color: var(--ink);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.mono, .mono { font-family: var(--mono); font-size: 0.85rem; }
+
+  .grid { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .term {
+    background: var(--surface); border: 1px solid var(--hairline);
+    border-left: 2px solid var(--accent); padding: 0.85rem 1rem;
+    display: flex; flex-direction: column; gap: 0.3rem;
+  }
+  .term dt { font-family: var(--mono); font-size: 0.8rem; font-weight: 600; }
+  .term dd { margin: 0; font-size: 0.89rem; line-height: 1.5; color: var(--muted); }
+
+  .note {
+    border-left: 2px solid var(--accent); background: var(--accent-dim);
+    padding: 0.85rem 1.1rem; display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.94rem;
+  }
+  .note.warn { border-left-color: var(--signal); background: var(--signal-dim); }
+  .note .h {
+    font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.13em;
+    text-transform: uppercase; font-weight: 600; color: var(--accent);
+  }
+  .note.warn .h { color: var(--signal); }
+  .note ul { margin: 0; }
+
+  .path-head { display: flex; align-items: baseline; gap: 0.9rem; flex-wrap: wrap; }
+  .path-n {
+    font-family: var(--mono); font-size: 0.78rem; font-weight: 600; color: var(--accent);
+    border: 1px solid var(--accent); padding: 0.1rem 0.5rem; border-radius: 2px; flex: none;
+  }
+  .cost { font-family: var(--mono); font-size: 0.72rem; color: var(--muted); letter-spacing: 0.06em; }
+
+  .pill {
+    display: inline-block; font-family: var(--mono); font-size: 0.68rem;
+    letter-spacing: 0.08em; text-transform: uppercase; padding: 0.1rem 0.45rem;
+    border-radius: 2px; border: 1px solid currentColor; white-space: nowrap;
+  }
+  .pill.done { color: var(--ok); }
+  .pill.open { color: var(--signal); }
+
+  ul, ol.steps { margin: 0; padding-left: 1.15rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  li { padding-left: 0.15rem; }
+
+  details { border-left: 2px solid var(--hairline); padding-left: 1rem; }
+  summary { cursor: pointer; padding: 0.2rem 0; }
+  summary:hover { color: var(--accent); }
+  .steps-detail { display: flex; flex-direction: column; gap: 0.8rem; padding-top: 0.8rem; }
+
+  hr { border: 0; border-top: 1px solid var(--hairline); margin: 0; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+  footer { color: var(--muted); font-size: var(--step--1); display: flex; flex-direction: column; gap: 0.6rem; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <nav class="rail" aria-label="Contents">
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#what"><span class="n">01</span><span>What it does</span></a></li>
+      <li><a href="#why"><span class="n">02</span><span>Why it exists</span></a></li>
+      <li><a href="#gives"><span class="n">03</span><span>What you get</span></a></li>
+      <li><a href="#terms"><span class="n">04</span><span>Terms</span></a></li>
+      <li><a href="#path-a"><span class="n">A</span><span>Your camera</span></a></li>
+      <li><a href="#path-b"><span class="n">B</span><span>Use recordings</span></a></li>
+      <li><a href="#path-c"><span class="n">C</span><span>Synthetic video</span></a></li>
+      <li><a href="#scaffold"><span class="n">05</span><span>Create your service</span></a></li>
+      <li><a href="#rules"><span class="n">!!</span><span>Rules to follow</span></a></li>
+      <li><a href="#status"><span class="n">06</span><span>What's verified</span></a></li>
+      <li><a href="#next"><span class="n">07</span><span>Your next task</span></a></li>
+      <li><a href="#stuck"><span class="n">??</span><span>When stuck</span></a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <header class="hero">
+      <span class="rec">Media Gateway · merged and running</span>
+      <h1>Every frame and every sample your service processes arrives through here.</h1>
+      <p class="lede">The Media Gateway takes the live audio and video coming off the glasses and hands it to Vision and Speech as ordinary Python objects — images as arrays, audio as PCM. This page covers what it does, why it's built this way, and how to build your service on top of it.</p>
+      <p class="muted">Want to see it work first? <a href="#path-a">Path A</a> is one command and puts your own camera through the pipeline. Writing code straight away instead? <a href="#path-b">Path B</a> needs nothing running at all.</p>
+    </header>
+
+    <hr>
+
+    <section id="what">
+      <span class="eyebrow">01 — What it does</span>
+      <h2>One component between the glasses and everything else</h2>
+      <p>Smart glasses stream first-person audio and video to a workstation. That stream is continuous, high-rate, and lossy — it drops out when someone walks past the microwave, and it reconnects on its own.</p>
+      <p>The gateway sits directly on that stream and does five things:</p>
+      <ul>
+        <li><strong>Subscribes</strong> to the live audio and video — the only component in the system that does.</li>
+        <li><strong>Decodes</strong> compressed video into raw pixels and audio into raw samples.</li>
+        <li><strong>Samples</strong> video down to 2 frames per second, because running detection on 30 fps is waste, not accuracy.</li>
+        <li><strong>Filters</strong> frames that aren't the size they should be — real streams emit malformed 8×8 frames during reconnects, and one of those reaching a detector is a silent correctness bug.</li>
+        <li><strong>Relays</strong> the result to Vision and Speech over a plain WebSocket, and carries synthesized speech back to the wearer.</li>
+      </ul>
+
+      <figure>
+        <div class="diagram">
+          <div class="flow">
+            <div class="node">Glasses — camera and microphone<span class="who">or your laptop webcam, today</span></div>
+            <div class="arrow"><span>live A/V over WebRTC</span></div>
+            <div class="node">LiveKit — routes the live streams</div>
+            <div class="arrow"><span>the only subscription in the system</span></div>
+            <div class="node key">Media Gateway<span class="who">decode · sample · filter · relay</span></div>
+            <div class="arrow"><span>plain WebSocket, ordinary objects</span></div>
+            <div class="split">
+              <div class="node">Vision<span class="who">person 1</span></div>
+              <div class="node">Speech<span class="who">person 2</span></div>
+            </div>
+            <div class="arrow"></div>
+            <div class="node">Memory — what the system will claim it knows<span class="who">person 3</span></div>
+          </div>
+        </div>
+        <figcaption>Everything above the gateway is live-media machinery. Everything below it is a normal <code>async for</code> loop over normal data.</figcaption>
+      </figure>
+    </section>
+
+    <section id="why">
+      <span class="eyebrow">02 — Why it exists</span>
+      <h2>The alternative was three copies of the same hard problem</h2>
+      <p>Vision and Speech could each have subscribed to the glasses directly. That's the obvious design, and it's worse in four specific ways.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>If everyone subscribed</th><th>With one gateway</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Every service decodes the same video separately — the most expensive thing in the pipeline, done twice.</td>
+              <td>Decoded once. The same immutable bytes are handed to every consumer.</td>
+            </tr>
+            <tr>
+              <td>Every service implements reconnect handling, jitter buffering, and frame sampling. Three implementations, three sets of bugs, and they disagree under load.</td>
+              <td>One implementation, tested once. Everyone gets identical behaviour.</td>
+            </tr>
+            <tr>
+              <td>Every service holds credentials for the media server, widening what an attacker gets from any one of them.</td>
+              <td>One component holds credentials. Consumers hold none.</td>
+            </tr>
+            <tr>
+              <td>Swapping the transport later means rewriting three services.</td>
+              <td>Consumers depend on a WebSocket and Python objects. The transport underneath can change without touching them.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The boundary is drawn deliberately: <strong>all live-media concerns stay above the gateway</strong> — codecs, network negotiation, jitter, reconnects, audio return. Below it, nothing knows those exist.</p>
+
+      <div class="note">
+        <span class="h">Where this came from</span>
+        <p>This isn't speculative design. A dedicated experiment ran first, three full cycles with deliberate disconnects, and it produced the sampling policy, the frame filter, and the reconnect rule you'll read about below. The findings are in <a href="spikes/livekit-media-gateway/RESULTS.md">the spike results</a>.</p>
+      </div>
+    </section>
+
+    <section id="gives">
+      <span class="eyebrow">03 — What you get</span>
+      <h2>The interface, and what it guarantees</h2>
+      <p>Two WebSocket endpoints, one per media kind. Connect and iterate.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Endpoint</th><th>You receive</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">/v1/stream/video</td><td>JPEG frames at 2 fps, decoded for you as <code>frame.rgb</code> — a height × width × 3 numpy array</td></tr>
+            <tr><td class="mono">/v1/stream/audio</td><td>Raw PCM, 48 kHz mono, in 100 ms chunks as <code>chunk.pcm</code></td></tr>
+            <tr><td class="mono">/v1/return-audio/{id}</td><td>Send PCM <em>in</em> and it plays out of the wearer's earpiece</td></tr>
+            <tr><td class="mono">/v1/status</td><td>Everything the gateway currently believes, as JSON</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Guarantees you can build on</h3>
+      <ul>
+        <li><strong>Video never blocks the stream.</strong> If your detector is slow, you get the newest frame and older ones are discarded — the gateway tells you how many, so you can measure your own gaps. A slow consumer degrades itself and nothing else.</li>
+        <li><strong>Audio is never dropped.</strong> Silently losing audio corrupts a transcript invisibly. If a consumer falls too far behind, its connection is closed with an explicit reason instead. Loud failure over quiet corruption.</li>
+        <li><strong>Control messages are ordered with media.</strong> You can never receive a frame before the message announcing the stretch of video it belongs to. That ordering is what makes the reset rule below implementable at all.</li>
+        <li><strong>Reconnects are handled for you.</strong> Drop your connection and the client reconnects with backoff, then re-announces anything still in progress so you resynchronise correctly.</li>
+      </ul>
+
+      <p>Message types you'll see, in the order they typically arrive:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Message</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">stream_hello</td><td>First on every connection. Tells you what's already in flight.</td></tr>
+            <tr><td class="mono">session_started</td><td>A device connected.</td></tr>
+            <tr><td class="mono">epoch_started</td><td><strong>Reset your per-track state now.</strong> See <a href="#rules">the rules</a>.</td></tr>
+            <tr><td class="mono">video_frame · audio_chunk</td><td>The media itself.</td></tr>
+            <tr><td class="mono">epoch_ended</td><td>That stretch of video ended, with a reason.</td></tr>
+            <tr><td class="mono">session_ended</td><td>The device went away.</td></tr>
+            <tr><td class="mono">keepalive</td><td>Sent while idle, so silence is distinguishable from a dead socket.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted small">Full specification: <a href="12-Media-Relay-Contract.md">Media Relay Contract</a>.</p>
+    </section>
+
+    <section id="terms">
+      <span class="eyebrow">04 — Terms</span>
+      <h2>Vocabulary used in the code and the other docs</h2>
+      <div class="grid">
+        <dl class="term">
+          <dt>WebRTC</dt>
+          <dd>The technology behind a video call — live audio and video with minimal delay. Built for “right now”: it degrades quality rather than falling behind. It's what the glasses speak.</dd>
+        </dl>
+        <dl class="term">
+          <dt>LiveKit</dt>
+          <dd>The server that receives those streams and routes them to whoever should get them. We run our own copy locally; nothing goes to a cloud service.</dd>
+        </dl>
+        <dl class="term">
+          <dt>Track</dt>
+          <dd>One stream from one source. The camera is one track, the microphone another. They travel independently — which is why video and audio are handled separately throughout.</dd>
+        </dl>
+        <dl class="term">
+          <dt>Session</dt>
+          <dd>One continuous period of a device being connected, identified as <code>sess_01JAB…</code>. Video and audio from the same wearer share it, so it's how you correlate them.</dd>
+        </dl>
+        <dl class="term">
+          <dt>Epoch</dt>
+          <dd>An uninterrupted stretch of video from one track. It ends whenever the connection drops, even briefly. <strong>The concept most likely to cost you a day</strong> — see <a href="#rules">the rules</a>.</dd>
+        </dl>
+        <dl class="term">
+          <dt>Frame rate</dt>
+          <dd>We relay 2 frames per second, not 30. Enough to see what happened, cheap enough to run real models on every one of them.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="path-a">
+      <div class="path-head"><span class="path-n">Path A</span><h2>See it working with your own camera</h2></div>
+      <p class="cost">One command · needs Docker · start here</p>
+      <p>The fastest way to understand what this service does is to watch your own face go through it. This brings up the media server and the gateway together, and prints a URL that turns your laptop into a stand-in for the glasses.</p>
+
+      <div class="frame">
+        <span class="label">everything, in one command</span>
+        <pre><code>cd services/media-gateway &amp;&amp; ./scripts/dev_up.sh</code></pre>
+      </div>
+      <p>It generates credentials on first run and reuses them afterwards, starts the media server, verifies what that server is listening on, launches the gateway, and waits until it is genuinely ready. Ctrl-C stops everything it started.</p>
+
+      <p>That is the gateway alone. To put a real camera through it you also need the console, so <code>./scripts/dev_stack.sh</code> from the repository root is usually what you want — it starts LiveKit, all four services and the console together.</p>
+
+      <p><strong>Open <code>http://localhost:5173</code></strong> and press Publish. On WSL2, open it in your <em>Windows</em> browser; that is where the camera physically is.</p>
+
+      <div class="frame">
+        <span class="label">in a second terminal — watch your camera arrive as frames</span>
+        <pre><code>cd services/media-gateway &amp;&amp; uv run python -m visual_memory_media_contract.tap ws://127.0.0.1:8080/v1/stream/video</code></pre>
+      </div>
+
+      <p>Three things to try, watching that output as you go:</p>
+      <ul>
+        <li><strong>Speak</strong> — a tone plays from your speakers. That is the return path the assistant will eventually talk through, working end to end with no Speech service present.</li>
+        <li><strong>Disconnect, then Rejoin</strong> — the camera track SID changes while the session and identity stay put. That is a Wi-Fi blip, reproduced on demand, and it is the case <a href="#rules">the rule below</a> exists for.</li>
+        <li><strong>Inspect what the gateway believes:</strong></li>
+      </ul>
+      <div class="frame">
+        <span class="label">the gateway's own view of the world</span>
+        <pre><code>curl -fsS localhost:8080/v1/status | python3 -m json.tool</code></pre>
+      </div>
+      <p>Look at <code>guard.dimensions</code> first — a tally of every frame size that arrived, counted before anything is filtered. It separates “nothing is connected” from “something is connected but every frame is being rejected,” which are otherwise indistinguishable from outside.</p>
+
+      <div class="note">
+        <span class="h">Useful flags</span>
+        <ul>
+          <li><code>--scripted</code> — skip the media server entirely and run on synthetic video. That is <a href="#path-c">Path C</a> in one command.</li>
+          <li><code>--port 9000</code> — if 8080 is taken.</li>
+          <li><code>--keep-livekit</code> — leave the server up when you stop the gateway, so restarting is fast.</li>
+        </ul>
+      </div>
+
+      <details>
+        <summary class="muted small">What the script is doing, if you would rather run the steps yourself</summary>
+        <div class="steps-detail">
+          <p class="small">Credentials must match between the media server and the gateway. A mismatch fails in a way that looks like a network problem rather than a configuration one, which is the main reason this is a script and not three lines in a README.</p>
+          <div class="frame">
+            <span class="label">the long way</span>
+            <pre><code>export VMA_LIVEKIT_API_KEY=vma-dev
+export VMA_LIVEKIT_API_SECRET=$(openssl rand -hex 24)
+
+docker compose -f compose.dev.yaml up -d livekit
+python3 tools/dev-livekit/check_listeners.py
+
+cd services/media-gateway
+VMA_MEDIA_SOURCE=livekit VMA_DIMENSION_GUARD_MODE=first_frame_wins \
+  uv run uvicorn media_gateway.main:app --port 8080</code></pre>
+          </div>
+          <p class="small">The listener check is not ceremony. During the spike the media ports turned out to be listening on <em>every</em> network interface while everything appeared correctly bound to localhost.</p>
+          <p class="small"><code>first_frame_wins</code> matters too: the frame filter defaults to expecting 320×180 and rejecting everything else, and your webcam is probably 1280×720 — so every frame would be correctly discarded and nothing would arrive.</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="path-b">
+      <div class="path-head"><span class="path-n">Path B</span><h2>Build your service against recorded sessions</h2></div>
+      <p class="cost">Nothing running · where Vision and Speech will spend their time</p>
+      <p>Real sessions were recorded and shipped as files, so you can develop and test your whole service with no gateway, no media server, no camera, and no network. This is the loop you want on a plane.</p>
+
+      <div class="frame">
+        <span class="label">once</span>
+        <pre><code>cd packages/media-contract &amp;&amp; uv sync --frozen --all-groups &amp;&amp; uv run pytest</code></pre>
+      </div>
+      <div class="frame">
+        <span class="label">in your own tests</span>
+        <pre><code>from visual_memory_media_contract import MediaClient
+from visual_memory_media_contract.testing import assert_matches_fixture, replay_server
+
+async with replay_server("video_session_basic") as url:
+    received = [message async for message in MediaClient(url, reconnect=False)]
+
+assert_matches_fixture(received, "video_session_basic")</code></pre>
+      </div>
+
+      <p>Both recordings contain deliberate trouble, because that is what makes them worth testing against:</p>
+      <ul>
+        <li><code>video_session_basic</code> — a session that <strong>drops and reconnects partway through</strong>, plus a dropped frame and a clean shutdown. Handle this file correctly and you handle a real Wi-Fi hiccup.</li>
+        <li><code>audio_session_basic</code> — three seconds of audio with a <strong>deliberate half-second hole</strong>. Code that counts messages will never see it. Code that reads the sample counter will. That is the entire purpose of the file.</li>
+      </ul>
+      <p class="muted small">Also available: <code>flaky_replay_server</code>, which severs the first connection mid-stream to exercise recovery.</p>
+      <p>Your tests and the gateway's tests assert against the same files. If a change to the gateway would break your service, both sides go red — that is the point.</p>
+    </section>
+
+    <section id="path-c">
+      <div class="path-head"><span class="path-n">Path C</span><h2>Run the gateway on synthetic video</h2></div>
+      <p class="cost">One command · no camera, no media server, no Docker</p>
+      <p>Between the other two: the real service and the real network path, driven by video the gateway generates itself. Useful when you want to test against a live socket but do not want to be on camera.</p>
+
+      <div class="frame">
+        <span class="label">terminal 1 — the gateway</span>
+        <pre><code>cd services/media-gateway &amp;&amp; ./scripts/dev_up.sh --scripted</code></pre>
+      </div>
+      <div class="note warn">
+        <span class="h">The mistake everyone makes once</span>
+        <p>Run <code>uv</code> from inside <code>services/media-gateway</code>. From the repository root it resolves a different environment and fails with <code>ModuleNotFoundError: No module named 'media_gateway'</code>.</p>
+      </div>
+      <div class="frame">
+        <span class="label">terminal 2 — watch the messages</span>
+        <pre><code>cd services/media-gateway &amp;&amp; uv run python -m visual_memory_media_contract.tap ws://127.0.0.1:8080/v1/stream/video</code></pre>
+      </div>
+      <div class="frame">
+        <span class="label">expected output</span>
+        <pre><code>stream_hello   active_epochs=[{'epoch_id': 'TR_VCscripted30', ...}]
+epoch_started  epoch_id='TR_VCscripted30' identity='scripted-glasses' 320x180
+video_frame    seq=0 320x180 jpeg 8586B sha=f64ac9482b3f dropped=4
+epoch_ended    epoch_id='TR_VCscripted30' reason='track_unsubscribed'
+epoch_started  epoch_id='TR_VCscripted31' identity='scripted-glasses' 320x180
+video_frame    seq=0 320x180 jpeg 8586B sha=f64ac9482b3f dropped=4</code></pre>
+      </div>
+      <p>Three things in that output matter:</p>
+      <ul>
+        <li><code>epoch_id</code> changed while <code>identity</code> stayed the same — a reconnect. Same wearer, new stretch of video.</li>
+        <li><code>seq</code> restarted at <code>0</code>. Counters do not carry across a reconnect.</li>
+        <li><code>dropped=4</code> is the sampler shedding frames to keep up. Expected — you are seeing 2 of every 30.</li>
+      </ul>
+    </section>
+
+    <hr>
+
+    <section id="scaffold">
+      <span class="eyebrow">05 — Create your service</span>
+      <h2>Scaffolding, and the one dependency line that is easy to get wrong</h2>
+      <p>Once you can consume the stream you need somewhere to put that code. Services are generated, not hand-written — the generator produces the layout, Dockerfile, config, health endpoints, and lockfile that the repository validator requires.</p>
+
+      <div class="frame">
+        <span class="label">from the repository root</span>
+        <pre><code>python3 .agents/skills/visual-memory-repo-standards/scripts/new_service.py vision \
+  --kind worker --owner "Person 1"</code></pre>
+      </div>
+      <p class="muted small"><code>--kind</code> is <code>application</code>, <code>worker</code>, or <code>inference</code>. Vision and Speech are workers. Use <code>inference</code> only if you need platform-specific model packages — it carries extra deployment obligations.</p>
+
+      <h3>Depending on the media contract</h3>
+      <p>Your service consumes the relay through <code>packages/media-contract</code>. It is a local package, not something on PyPI, so it needs a source mapping. Add both pieces to your <code>pyproject.toml</code>:</p>
+
+      <div class="frame">
+        <span class="label">pyproject.toml</span>
+        <pre><code>[project]
+dependencies = [
+    # ...whatever the generator gave you...
+    "visual-memory-media-contract",
+]
+
+[tool.uv.sources]
+visual-memory-media-contract = { path = "../../packages/media-contract", editable = true }</code></pre>
+      </div>
+
+      <div class="note warn">
+        <span class="h">editable = true is load-bearing</span>
+        <p>Leave it out and uv <em>copies</em> the package into your environment. <code>uv sync --frozen</code> then reports everything as satisfied, so nothing looks wrong — but your service keeps running a stale snapshot of the contract, and every fix to the shared package silently passes you by. It presents as “the gateway is sending me the wrong thing.”</p>
+        <p>This cost real debugging time on the gateway itself. It is one word, and it is the difference between a package that tracks the repository and a copy that quietly rots.</p>
+      </div>
+
+      <div class="frame">
+        <span class="label">then, from your service directory</span>
+        <pre><code>uv lock &amp;&amp; uv sync --frozen --all-groups</code></pre>
+      </div>
+
+      <p>Verify it resolved the way you want — this should print a path inside <code>packages/media-contract</code>, not one inside <code>.venv/lib</code>:</p>
+      <div class="frame">
+        <span class="label">confirm the wiring</span>
+        <pre><code>uv run python -c "import visual_memory_media_contract as m; print(m.__file__)"</code></pre>
+      </div>
+
+      <p class="muted small">One consequence worth knowing: the lockfile records the local package's <em>resolved dependencies</em>, not its source. If someone adds a dependency to <code>media-contract</code>, every consuming service needs to re-run <code>uv lock</code>.</p>
+
+      <div class="frame">
+        <span class="label">before you push</span>
+        <pre><code>python3 .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py</code></pre>
+      </div>
+    </section>
+
+    <hr>
+
+    <section id="rules">
+      <span class="eyebrow">!! — Required of every consumer</span>
+      <h2>The rule that will cost you a day if you skip it</h2>
+      <p class="lede">When you receive <code>epoch_started</code>, discard everything you were tracking.</p>
+
+      <div class="frame">
+        <span class="label">the shape of every consumer</span>
+        <pre><code>async for message in MediaClient("ws://localhost:8080/v1/stream/video"):
+    match message:
+        case EpochStarted():
+            tracker.reset(message.epoch_id)      # ← this line
+        case VideoFrame():
+            tracker.step(message.rgb, message.captured_at)
+        case EpochEnded():
+            tracker.finalize(message.reason)</code></pre>
+      </div>
+
+      <h3>Why</h3>
+      <p>Object trackers assign numbers: <em>object 42</em> is the keys. Those numbers only mean anything within one continuous stretch of video.</p>
+      <p>The wearer walks past the microwave. Wi-Fi stutters for two seconds. The connection re-establishes on its own and the person never notices — but your tracker started counting from scratch, so <em>object 42</em> is now the cat.</p>
+      <p><strong>Nothing about this resembles an error.</strong> Both readings are confident, both internally consistent. The system ends up certain the keys are somewhere they have never been, and no confidence score anywhere is low, because nothing failed. The gateway can detect the discontinuity and tell you; it cannot reset your tracker for you.</p>
+
+      <div class="note">
+        <span class="h">Four consequences</span>
+        <ul>
+          <li>A reconnect on <em>your</em> side counts too. The client re-announces anything still running, so handling that one message covers both cases.</li>
+          <li>Video and audio carry <em>different</em> epoch ids — separate tracks. Correlate them with <code>session_id</code>.</li>
+          <li>For audio, trust <code>pts_samples</code> rather than how many messages arrived. It's the only way a gap becomes visible.</li>
+          <li>Ignore header fields you don't recognise. New optional fields will be added and must not break you.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="status">
+      <span class="eyebrow">06 — Status</span>
+      <h2>What's verified, and what isn't</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Area</th><th>State</th></tr></thead>
+          <tbody>
+            <tr><td>Video and audio relay, sampling, frame filtering</td><td><span class="pill done">verified</span></td></tr>
+            <tr><td>Reconnect and epoch handling, across real disconnect cycles</td><td><span class="pill done">verified</span></td></tr>
+            <tr><td>Return audio to the wearer</td><td><span class="pill done">verified</span></td></tr>
+            <tr><td>Real camera and microphone through a browser</td><td><span class="pill done">verified</span></td></tr>
+            <tr><td>Deployment topology — health, auth, isolation</td><td><span class="pill done">verified</span></td></tr>
+            <tr><td>Signals telling Memory a track was lost</td><td><span class="pill open">needs sign-off</span></td></tr>
+            <tr><td>A device publishing from another machine over a real network</td><td><span class="pill open">needs hardware</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="note warn">
+        <span class="h">Open decision — Memory</span>
+        <p>The gateway can report that a track disappeared, but it has no idea which objects were being tracked, so it can't name them. Who fans that out to individual objects, and on which endpoint, needs a decision. Three specific questions are written up in <a href="06-Data-Contract.md#lifecycle-signals">the Data Contract</a>. Until that's settled these signals appear on the relay only and nothing is sent to Memory — so don't build against that shape yet.</p>
+      </div>
+      <div class="frame">
+        <span class="label">check your own machine end to end · ~90 seconds</span>
+        <pre><code>cd services/media-gateway &amp;&amp; ./scripts/verify_local.sh</code></pre>
+      </div>
+      <p class="muted small">Standards, both test suites, a live round trip, and the privacy assertions. <code>--quick</code> skips the live portion; <code>--docker</code> also builds the deployment image.</p>
+    </section>
+
+    <section id="next">
+      <span class="eyebrow">07 — Your next task</span>
+      <h2>Where to pick up</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>You're building</th><th>Start by</th><th>Then read</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>Vision</strong><br><span class="muted small">person 1</span></td>
+              <td>Running <a href="#path-b">Path B</a> against <code>video_session_basic</code> and getting a tracker to reset correctly on the reconnect it contains.</td>
+              <td><a href="06-Data-Contract.md">Data Contract</a> — the shape of an observation you'll produce</td>
+            </tr>
+            <tr>
+              <td><strong>Speech</strong><br><span class="muted small">person 2</span></td>
+              <td>Running <a href="#path-b">Path B</a> against <code>audio_session_basic</code> and detecting the deliberate gap from <code>pts_samples</code>.</td>
+              <td><a href="12-Media-Relay-Contract.md">Relay Contract</a> — the return-audio path for spoken replies</td>
+            </tr>
+            <tr>
+              <td><strong>Memory</strong><br><span class="muted small">person 3</span></td>
+              <td>Answering the three questions in <a href="06-Data-Contract.md#lifecycle-signals">the lifecycle section</a> — the gateway is blocked on it.</td>
+              <td><a href="06-Data-Contract.md">Data Contract</a> in full — you own it</td>
+            </tr>
+            <tr>
+              <td><strong>Media &amp; release</strong><br><span class="muted small">person 4</span></td>
+              <td>Getting a real device publishing in over the network.</td>
+              <td><a href="08-Development-and-Deployment.md">Deployment</a> — the release topology</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="stuck">
+      <span class="eyebrow">?? — When stuck</span>
+      <h2>Things that have actually gone wrong</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>What you see</th><th>What it is</th></tr></thead>
+          <tbody>
+            <tr><td><code>ModuleNotFoundError:<br>No module named 'media_gateway'</code></td><td>You ran <code>uv</code> from the repo root. <code>cd services/media-gateway</code> first.</td></tr>
+            <tr><td>Everything connects, no video ever arrives <span class="muted small">(WSL2)</span></td><td>Windows forwards some traffic into WSL2 but not the kind live video needs. Our config already works around it — if you edited that config, restore it.</td></tr>
+            <tr><td>Frames are 320×180 from a 720p webcam</td><td>Cameras offer several quality levels and the server serves the lowest by default. Our publishers send exactly one level. If you wrote your own, do the same.</td></tr>
+            <tr><td>Nothing arrives and nothing errors</td><td>Check <code>guard.dimensions</code> in <code>/v1/status</code>. Frames counted with <code>admitted=0</code> means the size filter is rejecting all of them — use <code>first_frame_wins</code>.</td></tr>
+            <tr><td>Tests pass for everyone but you</td><td>Leftover <code>VMA_*</code> variables in your shell. Use a clean terminal.</td></tr>
+            <tr><td><code>Bind for 127.0.0.1:7880 failed</code></td><td>Two stacks competing for a port. <code>compose.dev.yaml</code> and <code>compose.yaml</code> cannot run simultaneously.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <span class="eyebrow">House rules</span>
+      <h2>Four things that will fail review</h2>
+      <ul>
+        <li><strong>Secrets in the repository.</strong> Not in code, logs, images, or compose files.</li>
+        <li><strong>Anything leaving the machine.</strong> No cloud speech, hosted model APIs, or tunnels on the default path. A test watches for connections to non-local addresses and fails on any — this is the promise the product makes to the person wearing the glasses.</li>
+        <li><strong>Logging raw media, transcripts, or tokens.</strong> Log a size and a digest instead.</li>
+        <li><strong>Adding <code>requirements.txt</code>, Poetry, or a second Python version.</strong> Every service owns a <code>uv.lock</code>, and Python is 3.11 — a dependency dropped 3.11 in its newest release, so the lockfiles hold it back deliberately.</li>
+      </ul>
+      <div class="frame">
+        <span class="label">check before you push</span>
+        <pre><code>python3 .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py</code></pre>
+      </div>
+    </section>
+
+    <footer>
+      <hr>
+      <p><strong>Deeper:</strong> <a href="12-Media-Relay-Contract.md">Media Relay Contract</a> — the full message format · <a href="06-Data-Contract.md">Data Contract</a> — what counts as a memory · <a href="07-Privacy-and-Security.md">Privacy and Security</a> — the trust boundary · <a href="05-Team-Split.md">Team Split</a> — ownership and sign-offs · <a href="spikes/livekit-media-gateway/RESULTS.md">Spike results</a> — the measurements behind the design.</p>
+      <p>Working with a coding agent? Point it at <a href="13-Dev-Onboarding.md"><code>docs/13-Dev-Onboarding.md</code></a> — the same material, written for machines.</p>
+    </footer>
+
+  </main>
+</div>
+</body>
+</html>

@@ -1,0 +1,62 @@
+# Primary model: the text-prompt YOLOE detector (detect/yoloe.py). The
+# prompt-free companion checkpoint shares the same source/revision --
+# yoloe-26l-seg-pf.pt, downloaded on demand the same way -- and is not
+# broken out as a second logical_model since the validator's schema is
+# one entry per service, not per checkpoint.
+#
+# Selected by measurement, not by generation number. Detection rate at the
+# verifier's own confidence threshold, over the recorded clips in
+# media/clips (see docs/spikes/tracker-benchmark/RESULTS.md for method):
+#
+#   yoloe-11s   0% on every clip -- cannot see the target at all
+#   yoloe-11m   27% / 11% / 26%
+#   yoloe-26m   10% /  0% / 23%   <- worse than 11m; the generation alone
+#                                    is not the win
+#   yoloe-26l   51% / 10% / 41%   <- adopted
+#
+# Clip 2 stays low for all of them because its target is occluded by a hand
+# and motion-blurred, which is a tracking problem rather than a detector one.
+logical_model = "yoloe-26l-seg"
+# Fetched by ultralytics' own asset resolver (ultralytics.utils.downloads),
+# not pinned by us to a URL; sha256 below is what dev-wsl-cuda actually
+# loaded, so a re-download can be checked against it.
+source = "https://github.com/ultralytics/assets"
+revision = "v8.4.0"
+runtime = "torch==2.6.0+cu126 (x86_64) or torch==2.15.0.dev20260813+cu130 (GN100 ARM64) / ultralytics==8.4.115"
+precision = "fp32"
+# AGPL-3.0 (ultralytics' own license, confirmed against the installed
+# package's METADATA) -- copyleft implications for a served product are
+# unreviewed; revisit before this leaves hackathon scope.
+license = "review-required"
+
+[dev_wsl_cuda]
+sha256 = "a612d2d505f24e14d87ec82d688b823b6cb600646664f16125ce6c84ce360da9"
+device = "RTX 4070 Laptop GPU (8188 MiB)"
+latency = "22ms/frame at 1280x720, batch 1 (vs 20ms for yoloe-11m)"
+
+# Second model: the depth adapter (depth/moge.py). Not the schema's
+# `logical_model` -- the validator's schema is one pinned identity per
+# service, already spent on the primary detector above -- but recorded here
+# for the same reason: reproducibility, not just a passing check.
+[moge]
+logical_model = "moge-2-vitl-normal"
+source = "https://huggingface.co/Ruicheng/moge-2-vitl-normal"
+runtime = "torch==2.6.0+cu126 (x86_64) or torch==2.15.0.dev20260813+cu130 (GN100 ARM64) / moge==2.0.0"
+precision = "fp32"
+# MIT (MoGe's own license, per its pyproject.toml) -- permissive, no review
+# needed, unlike YOLOE/ultralytics' AGPL-3.0 above.
+license = "MIT"
+verified_on = "dev-wsl-cuda: real inference, real 8GB-class GPU (see above)"
+
+# Constrained-laptop overlay depth (depth/yolo.py). Chosen to coexist with
+# YOLOE, Parakeet, and Kokoro on the 8 GB development GPU; MoGe remains the
+# higher-quality geometry adapter for a deployment with sufficient headroom.
+[yolo_depth]
+logical_model = "yolo26m-depth"
+source = "https://github.com/ultralytics/assets"
+revision = "v8.4.0"
+sha256 = "c0ff310571f0f159436e95a2a4fa3f8c40e1fbf36fac66a211347bd189990165"
+runtime = "torch==2.6.0+cu126 (x86_64) or torch==2.15.0.dev20260813+cu130 (GN100 ARM64) / ultralytics==8.4.115"
+precision = "fp32"
+license = "review-required"
+verified_on = "dev-wsl-cuda: 38.4ms mean live depth inference beside YOLOE and Speech"

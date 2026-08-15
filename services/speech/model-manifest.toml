@@ -1,0 +1,44 @@
+# validate_repo.py currently reads ONE flat set of top-level fields
+# (logical_model/source/revision/runtime/precision), so those describe the
+# PRIMARY model (Parakeet STT) and keep the validator green. Speech ships a
+# second model (Kokoro TTS), recorded under [tts_model] below. This layout is
+# PROVISIONAL, pending Alex finalizing a multi-model manifest format
+# (e.g. a [[model]] array + a validate_repo update) — raised on Telegram.
+
+# --- Primary model: STT (validated) ---
+logical_model = "parakeet-tdt-0.6b-v3"
+source        = "hf:mlx-community/parakeet-tdt-0.6b-v3"
+revision      = "ed2b7e8c15f9aaa0b5772e2efb986255eaef7e15"
+runtime       = "mlx"
+precision     = "fp32"
+license       = "cc-by-4.0"
+
+# --- Second model: TTS (recorded, not yet validator-checked — pending format) ---
+[tts_model]
+logical_model = "kokoro-82m"
+source        = "hf:mlx-community/Kokoro-82M-bf16"
+revision      = "a71e4d38b236d968966a2002c4c895dbd12b1c3c"
+runtime       = "mlx"
+precision     = "bf16"
+license       = "apache-2.0"   # confirm on the HF card
+size_on_disk  = "339MB"
+
+# Linux ARM64/CUDA artifacts used by Dockerfile.cuda. These are the original
+# publisher checkpoints corresponding to the MLX conversions above. The
+# current validator checks only the primary flat entry, but recording exact
+# revisions here keeps offline cache seeding reproducible.
+[cuda_stt_model]
+logical_model = "parakeet-tdt-0.6b-v3"
+source        = "hf:nvidia/parakeet-tdt-0.6b-v3"
+revision      = "541d1f99c6b0c3cd0b11a95167540bb8edefd82b"
+runtime       = "transformers>=5.6,<6 / torch==2.6.0+cu126 (x86_64) or torch==2.15.0.dev20260813+cu130 (GN100 ARM64)"
+precision     = "bf16"
+license       = "cc-by-4.0"
+
+[cuda_tts_model]
+logical_model = "kokoro-82m"
+source        = "hf:hexgrad/Kokoro-82M"
+revision      = "f3ff3571791e39611d31c381e3a41a3af07b4987"
+runtime       = "kokoro>=0.9.4,<0.10 / torch==2.6.0+cu126 (x86_64) or torch==2.15.0.dev20260813+cu130 (GN100 ARM64)"
+precision     = "fp32"
+license       = "apache-2.0"

@@ -1,0 +1,144 @@
+# The vision worker with the models actually installed.
+#
+# Build context is the REPOSITORY ROOT, not this directory:
+#   docker build -f services/vision-worker/Dockerfile.cuda .
+# Or, the way it is meant to be used:
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d vision
+#
+# Separate from `Dockerfile` rather than replacing it, because the two images
+# are not interchangeable. This one is ~8GB and needs an nvidia container
+# runtime to start; the plain one is ~300MB and runs anywhere, which is what
+# lets a teammate with no GPU still bring the whole stack up. `compose.yaml`
+# builds the small one on purpose -- see the comment on its `vision` entry.
+#
+# What differs from `Dockerfile`:
+#   - a CUDA runtime base; uv.lock selects stable cu126 on x86_64 and the
+#     physically verified cu130 nightly (with its own runtime packages) on GN100 ARM64
+#   - `--extra models`, which installs torch, ultralytics and moge
+#   - a writable model cache, because ultralytics fetches checkpoints on first
+#     use and a read-only root would make that a startup crash
+#
+# Not included: the VLM. `verify/vlm.py` holds no weights and talks to an
+# Ollama-compatible endpoint over HTTP, so the model runs outside this
+# container -- see `VMA_VLM_BASE_URL` in compose.gpu.yaml.
+FROM ghcr.io/astral-sh/uv:0.12.0 AS uv
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    DEBIAN_FRONTEND=noninteractive \
+    # Every pyproject here is `>=3.11,<3.12`, and Ubuntu 22.04 ships 3.10 with
+    # no 3.11 in its repositories -- adding deadsnakes for one interpreter is
+    # more moving parts than letting uv fetch a standalone build it manages
+    # itself. This is also what keeps the interpreter identical to the one CI
+    # resolves against.
+    UV_PYTHON=3.11 \
+    UV_PYTHON_DOWNLOADS=automatic \
+    UV_PYTHON_INSTALL_DIR=/opt/python
+
+# ca-certificates so uv can fetch that interpreter over TLS.
+#
+# git because four of the `models` dependencies are git URLs, not PyPI
+# releases -- moge, ultralytics' CLIP fork, utils3d, and pipeline. uv shells
+# out to the real git binary for those, and without it the build fails on the
+# first one with "Git executable not found".
+#
+# libgl1 and libglib2.0-0 are opencv's runtime shared libraries: without them
+# `import cv2` fails at startup with a missing .so, an error that never
+# mentions opencv.
+#
+# build-essential and libgl1-mesa-dev are needed on Linux ARM64 because
+# `glcontext` has no aarch64 wheel. It arrives through MoGe -> utils3d ->
+# moderngl and must compile its X11/GL extension during `uv sync`; without
+# these packages the physical GN100 build fails first at a missing `c++`.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y \
+        build-essential ca-certificates git libgl1 libgl1-mesa-dev libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 appuser
+
+COPY --from=uv /uv /uvx /bin/
+
+# Each local path dependency must sit at the same relative offset as in
+# pyproject.toml: /app/services/vision-worker/../../packages/<name>.
+COPY packages/media-contract /app/packages/media-contract
+COPY packages/memory-contract /app/packages/memory-contract
+COPY packages/vision-contract /app/packages/vision-contract
+
+WORKDIR /app/services/vision-worker
+COPY services/vision-worker/pyproject.toml services/vision-worker/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project --extra models
+
+COPY services/vision-worker/src ./src
+RUN uv sync --frozen --no-dev --extra models
+
+# Ultralytics and torch.hub both write here on first use. Owned by appuser so
+# the container still runs unprivileged; mounted as a volume in compose.gpu.yaml
+# so the download survives a restart rather than repeating every boot.
+ENV YOLO_CONFIG_DIR=/var/cache/models/ultralytics \
+    TORCH_HOME=/var/cache/models/torch \
+    HF_HOME=/var/cache/models/huggingface
+# Each of the three must exist, not just their parent: ultralytics does not
+# create YOLO_CONFIG_DIR, it tests it and silently falls back to /tmp. A
+# fallback survives a container but not a restart, so the model cache volume
+# would look mounted and correct while every boot re-downloaded the checkpoint.
+#
+# Creating them here also decides the volume's ownership. Docker seeds a named
+# volume from the image's contents at that path, ownership included, so an
+# appuser-owned directory here is what lets an unprivileged container write to
+# the mounted volume in compose.gpu.yaml.
+RUN mkdir -p "$YOLO_CONFIG_DIR" "$TORCH_HOME" "$HF_HOME" \
+    && chown -R appuser:appuser /var/cache/models
+
+# compose.yaml's healthcheck runs `python -c ...`, and this image installs no
+# system python -- the interpreter lives in uv's download directory under a
+# versioned name. The healthcheck is inherited unchanged by compose.gpu.yaml,
+# so `python` has to mean something here or every container reports unhealthy
+# while serving traffic perfectly well.
+#
+# A wrapper, not a symlink. `.venv/bin/python` is itself a symlink to the
+# interpreter under /opt/python, and CPython locates its prefix by resolving
+# the executable it was invoked as: reached through a second symlink from
+# outside the venv it resolves all the way to the base interpreter, finds no
+# adjacent pyvenv.cfg, and starts with the venv's site-packages absent. It
+# looks like it works -- `import sys` is fine, and so is the stdlib-only
+# healthcheck -- right up until something imports torch. Exec'ing the venv
+# python as itself is what keeps sys.prefix pointing at the venv.
+RUN printf '#!/bin/sh\nexec /app/services/vision-worker/.venv/bin/python "$@"\n' \
+      > /usr/local/bin/python \
+    && chmod 0755 /usr/local/bin/python
+
+USER appuser
+
+# Ultralytics downloads checkpoints to the *working directory*, not to
+# YOLO_CONFIG_DIR -- that variable only moves its settings file. Left at
+# /app/services/vision-worker the download lands in a root-owned directory, and
+# an unprivileged container dies during `detector.initialize()` with
+# `PermissionError: 'yoloe-26l-seg.pt'` before it ever serves a request.
+#
+# Pointing the working directory at the cache volume fixes it for every asset
+# fetched this way, not just the two YOLOE checkpoints named in config.py --
+# the MobileCLIP text encoder the prompt path pulls in behaves identically, and
+# would have failed a few lines later. It also means those downloads survive a
+# restart instead of repeating on every boot.
+#
+# Safe to move: the CMD below is an absolute path and uvicorn resolves
+# `vision_worker.main:app` from the installed package, so nothing here reads a
+# path relative to the working directory.
+WORKDIR /var/cache/models
+
+EXPOSE 8082
+
+# --workers 1 is load-bearing for the same reason as in `Dockerfile`: Pipeline
+# holds one relay connection and one epoch's state as an in-process singleton.
+# With models loaded there is a second reason -- a second worker would load a
+# second copy of the detector onto the same GPU.
+#
+# --timeout-graceful-shutdown must stay above `VMA_SHUTDOWN_DRAIN_TIMEOUT_S`,
+# or shutdown kills the process while it is still finishing the verification it
+# waited for.
+CMD ["/app/services/vision-worker/.venv/bin/uvicorn", "vision_worker.main:app", \
+     "--host", "0.0.0.0", "--port", "8082", \
+     "--workers", "1", "--loop", "asyncio", "--timeout-graceful-shutdown", "20"]

@@ -1,0 +1,9 @@
+[service]
+name = "__SERVICE_NAME__"
+kind = "__SERVICE_KIND__"
+owner = "__SERVICE_OWNER__"
+port = 8080
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"

@@ -1,0 +1,87 @@
+name: Repository standards
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/console/package-lock.json
+      - name: Validate repository structure
+        run: python .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py
+      - name: Check repository skill scripts
+        run: |
+          uvx --from ruff==0.16.0 ruff format --check .agents/skills/visual-memory-repo-standards/scripts
+          uvx --from ruff==0.16.0 ruff check .agents/skills/visual-memory-repo-standards/scripts
+      - name: Test service scaffold
+        shell: bash
+        run: |
+          set -euo pipefail
+          test_root="$(mktemp -d)"
+          python .agents/skills/visual-memory-repo-standards/scripts/new_service.py \
+            contract-api \
+            --kind application \
+            --owner standards-ci \
+            --output-root "$test_root/services"
+          python .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py \
+            --repo-root "$test_root"
+          cd "$test_root/services/contract-api"
+          uv sync --frozen --all-groups
+          uv run ruff format --check .
+          uv run ruff check .
+          uv run pyright
+          uv run pytest
+      - name: Check console
+        working-directory: apps/console
+        run: |
+          npm ci --no-fund --no-audit
+          npm run test
+          npm run build
+          npm run lint
+      - name: Check Python services
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in services/*; do
+            if [[ ! -f "$service/pyproject.toml" ]]; then
+              continue
+            fi
+            (
+              cd "$service"
+              uv sync --frozen --all-groups
+              uv run ruff format --check .
+              uv run ruff check .
+              uv run pyright
+              uv run pytest
+            )
+          done
+
+  glasses-android:
+    name: Glasses Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+      - name: Test, lint, and assemble glasses client
+        working-directory: apps/glasses-x3
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug

@@ -1,0 +1,55 @@
+[project]
+name = "visual-memory-memory-contract"
+version = "0.1.0"
+description = "Canonical observation, lifecycle, and query contract for the Visual Memory Assistant"
+requires-python = ">=3.11,<3.12"
+# Deliberately light. Vision and Speech depend on this to *produce*
+# observations, and neither should inherit numpy, Pillow, or websockets just to
+# construct a JSON envelope -- which is why this is a separate package from
+# media-contract rather than a module inside it.
+dependencies = [
+    "pydantic>=2.10,<3",
+    "python-ulid>=4,<5",
+]
+
+[project.optional-dependencies]
+# Posting observations and running queries over HTTP. Optional so a producer
+# that only needs the models -- or that already has its own client -- does not
+# take an HTTP library.
+client = ["httpx>=0.28,<1"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28,<1",
+    "pytest>=8,<9",
+    "pyright>=1.1,<2",
+    "ruff>=0.9,<1",
+    "anyio>=4,<5",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/visual_memory_memory_contract"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["visual_memory_memory_contract"]

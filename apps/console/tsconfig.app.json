@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "esnext",
+    "types": ["vite/client"],
+    "allowArbitraryExtensions": true,
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+
+    /* What the registry's generated imports resolve against. */
+    "paths": { "@/*": ["./src/*"] },
+
+    /* Linting. `strict` is the point of using TypeScript here at all: the
+       whole maintainability argument for replacing publisher.html rests on
+       the compiler catching what a 447-line script could not. */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+    /* `noUncheckedIndexedAccess` is deliberately off. Registry components are
+       copied into src/components/ui and are not ours to maintain; enabling it
+       means patching vendored files by hand and re-patching them every time a
+       component is re-added. `strict` already carries the weight. */
+  },
+  "include": ["src"]
+}

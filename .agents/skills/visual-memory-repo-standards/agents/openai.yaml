@@ -1,0 +1,7 @@
+interface:
+  display_name: "Visual Memory Repo Standards"
+  short_description: "Enforce the repository Python service standard"
+  default_prompt: "Use $visual-memory-repo-standards to implement this repository change using the required service stack and checks."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,26 @@
+# Service images build from the repository root so that local path
+# dependencies under packages/ resolve. Everything below must stay out of the
+# build context; docs/spikes alone carries hundreds of MB of vendored
+# virtualenvs and downloaded Windows binaries.
+.git
+.github
+docs
+tools
+compose.dev.yaml
+
+**/.venv
+**/.tools
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.ruff_cache
+**/tests
+
+**/.env
+**/.env.*
+!**/.env.example
+
+*.mp4
+*.mkv
+*.mov
+*.wav

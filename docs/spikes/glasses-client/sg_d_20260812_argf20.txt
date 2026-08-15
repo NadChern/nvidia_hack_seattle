@@ -1,0 +1,175 @@
+
+=== identity ===
+manufacturer                       RayNeo
+model                              ARGF20
+device                             MercuryLiteXR
+build fingerprint                  RayNeo/RayNeoX3Pro/MercuryLiteXR:12/SKQ1.250204.001/3G2M:user/release-keys
+
+=== toolchain targets (minSdk, ABI splits) ===
+android release                    12
+sdk level                          32
+primary abi                        arm64-v8a
+supported abis                     arm64-v8a
+
+=== display (HUD safe area, monocular vs binocular) ===
+Physical size: 1280x480
+Physical density: 160
+displays                           1
+
+=== cameras (does CameraX see a world-facing camera normally?) ===
+    Facing: Back
+      android.lens.facing (80005): byte[1]
+    Facing: Back
+      android.lens.facing (80005): byte[1]
+camera ids                         unsupported
+
+=== audio routing (speaker for TTS, mic for wake word) ===
+input devices
+aec available                      0
+
+=== packages that suggest a vendor SDK or launcher we must coexist with ===
+package:com.android.internal.systemui.navbar.gestural_wide_back
+package:com.tcl.android.networkstack.rro
+package:com.RayNeo.OpenXRSLAMSample
+package:com.android.carrierconfig
+package:com.android.internal.systemui.navbar.threebutton
+package:com.rayneo.xr.runtime
+package:android.overlay.target
+package:com.android.internal.systemui.navbar.gestural_extra_wide_back
+package:com.android.sharedstoragebackup
+package:android.ext.shared
+package:com.rayneo.gallery
+package:com.android.wifi.resources.overlay.target
+package:com.android.carrierconfig.overlay.common
+package:com.rayneo.live.ai
+package:com.rayneo.record
+package:com.rayneo.airuntime
+package:com.android.providers.userdictionary
+package:com.android.internal.systemui.navbar.gestural
+package:com.qualcomm.qti.poweroffalarm
+package:com.android.hotwordenrollment.rayneo
+
+=== permissions model ===
+camera perm enforced               1
+
+=== touchpad and buttons -- INTERACTIVE ===
+Leaving getevent running for 15 seconds.
+
+  Tap the temple touchpad, then swipe forward, then swipe back.
+
+What matters: whether events arrive as an ordinary touchscreen device (so plain
+Compose gesture handling works) or as a vendor HID device with custom codes (so
+the trigger needs a vendor path).
+add device 1: /dev/input/event13
+  name:     "jbd4020_temp_protection"
+  events:
+    KEY (0001): 00fd
+  input props:
+    <none>
+add device 2: /dev/input/event12
+  name:     "CapSense Ch6"
+  events:
+    KEY (0001): KEY_SLEEP
+    ABS (0003): ABS_DISTANCE          : value 0, min 0, max 0, fuzz 0, flat 0, resolution 0
+  input props:
+    <none>
+add device 3: /dev/input/event11
+  name:     "CapSense Ch5"
+  events:
+    KEY (0001): KEY_WAKEUP
+    ABS (0003): ABS_DISTANCE          : value 0, min 0, max 0, fuzz 0, flat 0, resolution 0
+  input props:
+    <none>
+add device 4: /dev/input/event10
+  name:     "CapSense Ch4"
+  events:
+    ABS (0003): ABS_DISTANCE          : value 0, min 0, max 0, fuzz 0, flat 0, resolution 0
+  input props:
+    <none>
+add device 5: /dev/input/event9
+  name:     "CapSense Ch3"
+  events:
+    ABS (0003): ABS_DISTANCE          : value 0, min 0, max 0, fuzz 0, flat 0, resolution 0
+  input props:
+    <none>
+add device 6: /dev/input/event8
+  name:     "CapSense Ch2"
+  events:
+    ABS (0003): ABS_DISTANCE          : value 0, min 0, max 0, fuzz 0, flat 0, resolution 0
+  input props:
+    <none>
+add device 7: /dev/input/event7
+  name:     "CapSense Ch1"
+--- live events (15s) ---
+add device 1: /dev/input/event13
+  name:     "jbd4020_temp_protection"
+add device 2: /dev/input/event12
+  name:     "CapSense Ch6"
+add device 3: /dev/input/event11
+  name:     "CapSense Ch5"
+add device 4: /dev/input/event10
+  name:     "CapSense Ch4"
+add device 5: /dev/input/event9
+  name:     "CapSense Ch3"
+add device 6: /dev/input/event8
+  name:     "CapSense Ch2"
+add device 7: /dev/input/event7
+  name:     "CapSense Ch1"
+add device 8: /dev/input/event6
+  name:     "CapSense Ch0"
+add device 9: /dev/input/event5
+  name:     "cyttsp6_btn"
+add device 10: /dev/input/event4
+  name:     "cyttsp6_mt"
+add device 11: /dev/input/event3
+  name:     "cyttsp5_btn"
+add device 12: /dev/input/event2
+  name:     "cyttsp5_mt"
+add device 13: /dev/input/event0
+  name:     "gpio-keys"
+add device 14: /dev/input/event1
+  name:     "qpnp_pon"
+[     278.140296] /dev/input/event2: EV_ABS       ABS_MT_TRACKING_ID   0000002d
+[     278.140296] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000004
+[     278.140296] /dev/input/event2: EV_ABS       ABS_MT_POSITION_Y    00000078
+[     278.140296] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      0000001f
+[     278.140296] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.163494] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000023
+[     278.163494] /dev/input/event2: EV_ABS       ABS_MT_POSITION_Y    00000074
+[     278.163494] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      0000002c
+[     278.163494] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.172719] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    0000002e
+[     278.172719] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      0000002f
+[     278.172719] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.181474] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000038
+[     278.181474] /dev/input/event2: EV_ABS       ABS_MT_POSITION_Y    00000073
+[     278.181474] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      00000031
+[     278.181474] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.190461] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000042
+[     278.190461] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      00000033
+[     278.190461] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.199433] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    0000004b
+[     278.199433] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      00000034
+[     278.199433] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.208354] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000055
+[     278.208354] /dev/input/event2: EV_ABS       ABS_MT_PRESSURE      00000035
+[     278.208354] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.217329] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000063
+[     278.217329] /dev/input/event2: EV_ABS       ABS_MT_POSITION_Y    00000075
+[     278.217329] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.226415] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000074
+[     278.226415] /dev/input/event2: EV_ABS       ABS_MT_POSITION_Y    00000077
+[     278.226415] /dev/input/event2: EV_SYN       SYN_REPORT           00000000
+[     278.235283] /dev/input/event2: EV_ABS       ABS_MT_POSITION_X    00000087
+
+=== thermals baseline (compare against a 20-minute publish at G7) ===
+IsStatusOverride: false
+ThermalStatusListeners:
+Thermal Status: 0
+Cached temperatures:
+Current temperatures from HAL:
+Temperature static thresholds from HAL:
+battery level                        level: 100
+
+=== done ===
+Record answers in docs/spikes/glasses-client/RESULTS.md under SG-D.

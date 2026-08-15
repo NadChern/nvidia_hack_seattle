@@ -1,0 +1,9 @@
+[service]
+name = "vision-worker"
+kind = "inference"
+owner = "Person 1"
+port = 8082
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"

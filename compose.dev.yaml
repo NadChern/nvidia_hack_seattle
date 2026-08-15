@@ -1,0 +1,34 @@
+# Local development dependencies. Not the release topology; see compose.yaml
+# for that once it exists.
+#
+#   export VMA_LIVEKIT_API_KEY=vma-dev
+#   export VMA_LIVEKIT_API_SECRET=$(openssl rand -hex 24)
+#   docker compose -f compose.dev.yaml up -d livekit
+services:
+  livekit:
+    image: livekit/livekit-server:v1.13.4
+    command: ["--config", "/etc/livekit.yaml"]
+    environment:
+      # Server and gateway read the same pair from the shell, so they cannot
+      # drift, and nothing is baked into the image or this file.
+      LIVEKIT_KEYS: "${VMA_LIVEKIT_API_KEY:?set VMA_LIVEKIT_API_KEY}: ${VMA_LIVEKIT_API_SECRET:?set VMA_LIVEKIT_API_SECRET}"
+    volumes:
+      - ./tools/dev-livekit/livekit.dev.yaml:/etc/livekit.yaml:ro
+    # Explicit loopback publication rather than `network_mode: host`. Host
+    # networking for Linux containers on Docker Desktop is a separate opt-in
+    # that behaves unlike native Linux; explicit mappings work identically on
+    # WSL2, macOS, and Windows and satisfy the trusted-LAN port policy in
+    # docs/07-Privacy-and-Security.md by construction.
+    #
+    # The UDP mapping is easy to forget and ICE degrades silently without it.
+    #
+    # VMA_BIND_ADDR follows the same rule as the services in dev_stack.sh:
+    # loopback unless somebody opts in. Set it to 0.0.0.0 for trusted-LAN
+    # clients. Do not use this Docker service for real glasses under WSL2:
+    # mirrored networking plus the native binary is the proven media path, and
+    # a Windows portproxy cannot carry/re-originate WebRTC correctly.
+    ports:
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7880:7880"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7881:7881"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:7882:7882/udp"
+    restart: unless-stopped

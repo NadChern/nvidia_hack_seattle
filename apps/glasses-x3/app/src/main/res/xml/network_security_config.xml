@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The gateway is reached over plain HTTP/WS on a venue LAN at an address that
+  changes, so cleartext cannot be switched off outright and cannot be pinned to
+  a domain. Declaring it here rather than with a blanket
+  `android:usesCleartextTraffic` keeps the decision in one reviewable file and
+  lets a release build be tightened without touching the manifest.
+
+  What rides this transport: the device credential in an Authorization header,
+  transcripts, and reply text. On an untrusted network all three are readable.
+  docs/07-Privacy-and-Security.md records this as an accepted demo constraint,
+  not a property of the design; the credential TTL is what bounds it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

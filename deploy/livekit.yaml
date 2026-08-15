@@ -1,0 +1,30 @@
+# LiveKit configuration for the GN100 release topology.
+#
+# The dev twin is tools/dev-livekit/livekit.dev.yaml. The differences are
+# deliberate and small: this file has no loopback-candidate setting because
+# the GN100 and glasses are separate machines on a trusted LAN. UDP remains the
+# required media path. The container/off-box ICE route is still a physical S01
+# GN100 gate; this configuration alone is not proof that media is reachable.
+#
+# Like the dev config this carries no `keys:` block. Credentials arrive as
+# LIVEKIT_KEYS from the same environment the media-worker reads, so the pair
+# cannot drift and no secret is committed or baked into an image.
+# See docs/07-Privacy-and-Security.md.
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+
+  # No STUN lookup and no external address discovery: the glasses and the
+  # GN100 are on the same trusted LAN, and docs/07 keeps signaling, TURN, and
+  # telemetry inside that boundary.
+  use_external_ip: false
+
+  # rtc.node_ip.ipv4 arrives through LIVEKIT_RTC_NODE_IP_IPV4 in compose.yaml.
+  # It must be the GN100 trusted-LAN address, never the container's 172.x
+  # bridge address. This is deployment-only; WSL dev leaves node_ip unset so
+  # its local Chrome viewer can select loopback.
+
+logging:
+  level: info

@@ -1,0 +1,50 @@
+[project]
+name = "visual-memory-vision-contract"
+version = "0.1.0"
+description = "Candidate-event and verifier contract produced by the Vision Service"
+requires-python = ">=3.11,<3.12"
+# Deliberately light, matching memory-contract's rationale: Person 2's verifier
+# implementation depends on this package to consume candidates and it must not
+# inherit torch, numpy, or websockets just to read a JSON envelope. Detection,
+# Box3D, and DetectorRef are duplicated here rather than imported from
+# memory-contract for the same reason media-contract and memory-contract each
+# define LifecycleEnvelope independently -- coupling the packages would drag
+# one domain's dependencies into the other's producers.
+dependencies = [
+    "pydantic>=2.10,<3",
+    "python-ulid>=4,<5",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8,<9",
+    "pyright>=1.1,<2",
+    "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/visual_memory_vision_contract"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.11"
+typeCheckingMode = "strict"
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["visual_memory_vision_contract"]

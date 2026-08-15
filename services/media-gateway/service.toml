@@ -1,0 +1,9 @@
+[service]
+name = "media-gateway"
+kind = "worker"
+owner = "Person 4"
+port = 8080
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"

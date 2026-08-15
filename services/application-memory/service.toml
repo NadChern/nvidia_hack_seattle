@@ -1,0 +1,9 @@
+[service]
+name = "application-memory"
+kind = "application"
+owner = "Person 4"
+port = 8081
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"

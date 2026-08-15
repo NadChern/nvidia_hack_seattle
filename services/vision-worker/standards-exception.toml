@@ -1,0 +1,5 @@
+rules = []
+reason = "The GN100 GB10 is CUDA compute capability 12.1. The repository's stable Torch 2.6/cu126 ARM64 wheel imports but has no compatible kernels. Linux ARM64 therefore uses the exact Torch 2.15.0.dev20260813 and Torchvision 0.29.0.dev20260814 cu130 nightlies physically verified on the GN100; Linux x86_64 and macOS retain the stable Torch 2.6/Torchvision 0.21 pair. Python 3.11, uv locking, the FastAPI contract, tests, and health endpoints are unchanged."
+owner = "Visual Memory Assistant maintainers"
+approved_by = "Alex Kuznetsov (user approval on 2026-08-15)"
+expires = "2026-09-30"

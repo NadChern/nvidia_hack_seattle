@@ -1,0 +1,69 @@
+# CUDA Speech image for the physical Linux ARM64 GN100.
+#
+# Build context is the REPOSITORY ROOT, not this directory:
+#   docker build -f services/speech/Dockerfile.cuda .
+# Or use the hardware override:
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d speech
+#
+# The plain Dockerfile intentionally remains model-free for CPU development
+# and CI. This image installs the locked `cuda` dependency group: PyTorch,
+# Transformers/Parakeet, Kokoro, and its English G2P chain.
+FROM ghcr.io/astral-sh/uv:0.12.0 AS uv
+FROM nvidia/cuda:12.6.3-runtime-ubuntu22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    DEBIAN_FRONTEND=noninteractive \
+    UV_PYTHON=3.11 \
+    UV_PYTHON_DOWNLOADS=automatic \
+    UV_PYTHON_INSTALL_DIR=/opt/python
+
+# Ubuntu 22.04 does not provide the repository-standard Python 3.11, so uv
+# installs its pinned standalone interpreter. ca-certificates enables that
+# download. espeak-ng is Kokoro's pronunciation fallback for words outside
+# Misaki's dictionary.
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y ca-certificates espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --uid 10001 appuser
+COPY --from=uv /uv /uvx /bin/
+
+# Keep the local path dependency at the offset declared in pyproject.toml.
+COPY packages/media-contract /app/packages/media-contract
+
+WORKDIR /app/services/speech
+COPY services/speech/pyproject.toml services/speech/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project --group cuda
+
+COPY services/speech/src ./src
+RUN uv sync --frozen --no-dev --group cuda
+
+# Both Transformers and Kokoro resolve their Hugging Face artifacts here.
+# The named volume in compose.gpu.yaml can be seeded from an offline model
+# drive and survives container replacement. Offline mode prevents an already
+# complete cache from being delayed by an unreachable metadata request on the
+# stack's internal-only network.
+ENV HF_HOME=/var/cache/models/huggingface \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+RUN mkdir -p "$HF_HOME" \
+    && chown -R appuser:appuser /var/cache/models
+
+# The CUDA base has no system Python. The inherited Compose healthcheck invokes
+# `python`, so preserve the venv prefix by exec'ing its interpreter directly
+# rather than adding a second symlink to it.
+RUN printf '#!/bin/sh\nexec /app/services/speech/.venv/bin/python "$@"\n' \
+      > /usr/local/bin/python \
+    && chmod 0755 /usr/local/bin/python
+
+USER appuser
+WORKDIR /var/cache/models
+EXPOSE 8080
+
+# One worker is load-bearing: each process owns warm Parakeet and Kokoro model
+# instances, so a second worker would duplicate both on the shared GPU.
+CMD ["/app/services/speech/.venv/bin/uvicorn", "speech.main:app", \
+     "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--timeout-graceful-shutdown", "20"]

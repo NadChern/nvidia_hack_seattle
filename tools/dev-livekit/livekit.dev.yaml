@@ -1,0 +1,27 @@
+# Local development LiveKit server.
+#
+# Deliberately carries no `keys:` block. Credentials come from the LIVEKIT_KEYS
+# environment variable, so the same values reach the server and the gateway and
+# cannot drift, and no secret is committed. docs/07-Privacy-and-Security.md
+# forbids secrets in source, images, and compose files.
+port: 7880
+
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+
+  # No STUN lookup: everything here is loopback or trusted LAN.
+  use_external_ip: false
+  enable_loopback_candidate: true
+
+  # In WSL2 mirrored Wi-Fi mode, deliberately leave node_ip unset. LiveKit then
+  # advertises 10.0.0.4 to the glasses and 127.0.0.1 to Windows Chrome. Pinning
+  # either address restores one peer but makes the other fail ICE.
+  #
+  # Native LiveKit can carry UDP directly; Docker bridge NAT cannot. Chrome
+  # does not offer a usable ICE-TCP candidate here, so forcing TCP lets the
+  # glasses publish but leaves the console viewer without video.
+  force_tcp: false
+
+logging:
+  level: info

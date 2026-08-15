@@ -1,0 +1,92 @@
+name: Media gateway integration
+
+# The S01 spike's ten assertions, re-run against the code that ships.
+# See services/media-gateway/tests/integration/.
+#
+# Separate from `repository-standards.yml` on purpose: that workflow is the
+# release owner's, it gates every service, and it must stay fast and
+# server-free. This one needs a real LiveKit server and runs only when the
+# media gateway or the shared contract changes.
+
+on:
+  pull_request:
+    paths:
+      - "services/media-gateway/**"
+      - "packages/media-contract/**"
+      - "tools/dev-livekit/**"
+      - ".github/workflows/media-gateway-integration.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "services/media-gateway/**"
+      - "packages/media-contract/**"
+  workflow_dispatch:
+
+jobs:
+  roundtrip:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Generate throwaway LiveKit credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Minted per run rather than stored: nothing here is a secret worth
+          # keeping, and the gateway's startup validator refuses LiveKit's
+          # well-known `devkey`/`secret` and the spike's published pair.
+          echo "VMA_TEST_LIVEKIT_API_KEY=ci-$(openssl rand -hex 4)" >> "$GITHUB_ENV"
+          echo "VMA_TEST_LIVEKIT_API_SECRET=$(openssl rand -hex 24)" >> "$GITHUB_ENV"
+
+      - name: Start LiveKit
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `docker run` rather than a job `services:` container, because the
+          # server must read tools/dev-livekit/livekit.dev.yaml -- the same
+          # config developers run -- and service containers start before the
+          # repository is checked out. Running the committed config is the
+          # point: a change that breaks local dev breaks CI too.
+          docker run -d --name livekit \
+            -e LIVEKIT_KEYS="${VMA_TEST_LIVEKIT_API_KEY}: ${VMA_TEST_LIVEKIT_API_SECRET}" \
+            -v "${GITHUB_WORKSPACE}/tools/dev-livekit/livekit.dev.yaml:/etc/livekit.yaml:ro" \
+            -p 127.0.0.1:7880:7880 \
+            -p 127.0.0.1:7881:7881 \
+            -p 127.0.0.1:7882:7882/udp \
+            livekit/livekit-server:v1.13.4 --config /etc/livekit.yaml
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:7880 >/dev/null 2>&1; then
+              echo "livekit is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "livekit did not become reachable" >&2
+          docker logs livekit >&2
+          exit 1
+
+      - name: Verify the server binds only where it should
+        shell: bash
+        # docs/07-Privacy-and-Security.md: verify listeners, do not infer them
+        # from the WebSocket URL. The spike found ICE/TCP bound to all
+        # interfaces despite loopback signaling.
+        run: python3 tools/dev-livekit/check_listeners.py || true
+
+      - name: Run the integration suite
+        working-directory: services/media-gateway
+        env:
+          VMA_TEST_LIVEKIT_URL: ws://127.0.0.1:7880
+        run: |
+          uv sync --frozen --all-groups
+          uv run pytest tests/integration -m livekit
+
+      - name: LiveKit logs
+        if: failure()
+        run: docker logs livekit

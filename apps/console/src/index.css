@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Dark by default. This is an operations console watched next to a video
+   preview in a dim room, and a white page beside a camera feed is the wrong
+   thing to look at for an hour. */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.16 0.01 265);
+  --foreground: oklch(0.96 0.005 265);
+  --card: oklch(0.2 0.012 265);
+  --card-foreground: oklch(0.96 0.005 265);
+  --popover: oklch(0.2 0.012 265);
+  --popover-foreground: oklch(0.96 0.005 265);
+  --primary: oklch(0.72 0.14 195);
+  --primary-foreground: oklch(0.16 0.01 265);
+  --secondary: oklch(0.27 0.015 265);
+  --secondary-foreground: oklch(0.96 0.005 265);
+  --muted: oklch(0.27 0.015 265);
+  --muted-foreground: oklch(0.68 0.015 265);
+  --accent: oklch(0.3 0.02 265);
+  --accent-foreground: oklch(0.96 0.005 265);
+  --destructive: oklch(0.62 0.2 25);
+  --border: oklch(0.3 0.015 265);
+  --input: oklch(0.3 0.015 265);
+  --ring: oklch(0.72 0.14 195);
+
+  /* Detection-state colours. These carry meaning, not decoration: a box
+     changing colour as an object settles is the clearest evidence a state
+     machine is running rather than a detector firing. Kept here so the canvas
+     overlay and the legend cannot drift apart. */
+  --state-moving: oklch(0.75 0.16 60);
+  --state-settling: oklch(0.78 0.15 95);
+  --state-at-rest: oklch(0.75 0.17 150);
+  --state-absent: oklch(0.6 0.02 265);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "tnum" 1;
+  }
+  /* Tabular numerals everywhere a metric is shown: a latency readout that
+     jitters horizontally as digits change is unreadable at a glance, which is
+     the only way anyone reads it during a demo. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}

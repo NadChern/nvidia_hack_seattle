@@ -1,0 +1,121 @@
+# Vision and Speech with their real models, on a machine with a GPU.
+#
+#   docker compose -f compose.yaml -f compose.gpu.yaml up -d
+#
+# An override rather than an edit to compose.yaml, because everything here has
+# a hard hardware requirement. A `deploy.resources.reservations.devices` entry
+# in the base file would make `docker compose up` fail outright for every
+# teammate and every CI runner without an nvidia container runtime configured
+# -- see the comment on compose.yaml's `vision` entry, which this file is the
+# other half of.
+#
+# What this changes, relative to compose.yaml:
+#   - builds each inference service's Dockerfile.cuda
+#   - reserves a GPU for Vision and Speech
+#   - runs YOLOE and the CUDA Parakeet/Kokoro backends instead of fixtures/stubs
+#   - mounts model caches so checkpoints survive a restart and can be seeded
+#     from an offline model drive
+#
+# Prerequisites, in the order they bite:
+#   1. nvidia-container-toolkit installed and the runtime configured, or the
+#      container will not start at all.
+#   2. Seed `model-cache` and `speech-model-cache` with the pinned artifacts;
+#      the inference network intentionally has no internet egress.
+#   3. For `VMA_VERIFIER_KIND=vlm`, an Ollama serving `VMA_VLM_MODEL` must be
+#      reachable at `VMA_VLM_BASE_URL`. Use `rules` when no VLM is installed.
+services:
+  vision:
+    build:
+      context: .
+      dockerfile: services/vision-worker/Dockerfile.cuda
+    image: vma/vision-worker:${VMA_IMAGE_TAG:-dev}-cuda
+    environment:
+      # --- What actually looks at the video ---------------------------------
+      VMA_DETECTOR_KIND: yoloe
+      # Open vocabulary, so wording matters more than checkpoint size: "a
+      # keychain with a colorful fob" finds what "keys" misses. Overridable
+      # per demo without rebuilding anything.
+      VMA_DETECTION_LABELS: "${VMA_DETECTION_LABELS:-a set of keys,a keychain with a colorful fob}"
+
+      # --- What decides whether it happened ---------------------------------
+      # The whole point of the GPU profile. `rules` cannot answer a `vanished`
+      # candidate at all -- it has no way to look at the frames -- so a stack
+      # running the real detector against the rule verifier would detect the
+      # keys and still be unable to say they were picked up.
+      VMA_VERIFIER_KIND: "${VMA_VERIFIER_KIND:-vlm}"
+      # The model runs on the host, not in this stack. Two reasons: Ollama
+      # already holds the pulled weights there, and giving it its own container
+      # would mean a second copy of a multi-gigabyte model in a fresh volume.
+      # `host-gateway` below is what makes this name resolve from inside the
+      # container on Linux.
+      VMA_VLM_BASE_URL: "${VMA_VLM_BASE_URL:-http://host.docker.internal:11434}"
+      VMA_VLM_MODEL: "${VMA_VLM_MODEL:-qwen3-vl:4b}"
+
+      # --- What keeps a slow verifier off the frame loop --------------------
+      # A VLM call is ~20s. Verification runs on a worker task (verify/
+      # pending.py); these bound the queue in front of it. Watch
+      # `verification.pending` and `verification.dropped` at /v1/status --
+      # dropped must be zero, and each one is a real event never recorded.
+      VMA_VERIFICATION_QUEUE_DEPTH: "${VMA_VERIFICATION_QUEUE_DEPTH:-8}"
+      VMA_VERIFICATION_CONCURRENCY: "${VMA_VERIFICATION_CONCURRENCY:-1}"
+
+      # --- Tuned against the recorded clips ---------------------------------
+      # Phone footage is handheld, so the image-space residual that decides
+      # "still moving" needs to sit above the camera's own shake. This is the
+      # value clip 2 was verified at.
+      VMA_IMAGE_RESIDUAL_THRESHOLD: "${VMA_IMAGE_RESIDUAL_THRESHOLD:-0.05}"
+
+      # The deploy network is intentionally internal-only. A pre-seeded cache
+      # must be used as-is rather than pausing startup for metadata egress.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    extra_hosts:
+      # Linux does not provide host.docker.internal by default. Without this
+      # the VLM verifier fails every call with a DNS error, and every candidate
+      # comes back `unverified` -- which looks exactly like a model that cannot
+      # make up its mind.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # Checkpoints are fetched on first use and are large. Without this the
+      # download repeats on every restart, and a read-only root would turn it
+      # into a crash loop instead.
+      - model-cache:/var/cache/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      # Loading YOLOE takes far longer than the fixture detector the base
+      # file's 15s start_period was written for.
+      start_period: 180s
+
+  speech:
+    build:
+      context: .
+      dockerfile: services/speech/Dockerfile.cuda
+    image: vma/speech:${VMA_IMAGE_TAG:-dev}-cuda
+    environment:
+      # Explicit here as well as in the image so `docker compose config`
+      # exposes the no-egress runtime contract to an operator.
+      HF_HOME: /var/cache/models/huggingface
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    volumes:
+      - speech-model-cache:/var/cache/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      # Importing the CUDA runtime is slower than selecting the base stubs.
+      start_period: 60s
+
+volumes:
+  model-cache:
+  speech-model-cache:

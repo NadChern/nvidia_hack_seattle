@@ -1,0 +1,9 @@
+[service]
+name = "speech"
+kind = "inference"
+owner = "SY"
+port = 8080
+
+[health]
+liveness = "/health/live"
+readiness = "/health/ready"
