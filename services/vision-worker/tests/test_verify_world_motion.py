@@ -29,6 +29,7 @@ from visual_memory_vision_contract.protocol import (
     EvidenceWindow,
     Point2D,
     TrackSample,
+    VerifierResult,
 )
 
 from vision_worker.domain.geometry import CameraIntrinsics, CapturePose, Quaternion
@@ -191,6 +192,44 @@ async def test_a_real_pickup_survives() -> None:
 
     assert result.outcome == "confirmed"
     assert result.reason_code == WORLD_AGREES
+
+
+async def test_wrapper_preserves_the_inner_verifiers_resolved_fields() -> None:
+    """A world-motion relabel must not erase the VLM's corrected action or description."""
+
+    class RichVerifier:
+        async def verify(
+            self,
+            candidate: CandidateEvent,
+            *,
+            frames: Sequence[bytes],
+            samples: Sequence[TrackSample] = (),
+            decoded: Sequence[NDArray[np.uint8]] = (),
+        ) -> VerifierResult:
+            del frames, samples, decoded
+            return VerifierResult(
+                candidate_id=candidate.candidate_id,
+                outcome="confirmed",
+                reason_code="vlm_confirmed",
+                latency_ms=10.0,
+                verifier=DetectorRef(name="fixture-vlm", checkpoint="n/a", revision="v1"),
+                occurred_at=T0,
+                resolved_action="carried",
+                description="beside the laptop",
+            )
+
+    verifier = WorldMotionVerifier(
+        RichVerifier(), ScriptedWindowPose([0.0, 0.1, 0.25, CARRIED_DRIFT])
+    )
+
+    result = await verifier.verify(
+        a_candidate("picked_up"), frames=some_frames(), samples=some_samples(), decoded=decoded()
+    )
+
+    assert result.outcome == "confirmed"
+    assert result.reason_code == WORLD_AGREES
+    assert result.resolved_action == "carried"
+    assert result.description == "beside the laptop"
 
 
 async def test_a_placement_still_travelling_at_the_end_is_rejected() -> None:

@@ -254,16 +254,19 @@ def _relabel(inner: VerifierResult, reason_code: str, started: float) -> Verifie
 def _with(
     inner: VerifierResult, *, outcome: str, reason_code: str, started: float
 ) -> VerifierResult:
-    return VerifierResult(
-        candidate_id=inner.candidate_id,
-        outcome=outcome,  # type: ignore[arg-type]
-        reason_code=reason_code,
-        # The inner verifier's own cost plus the reconstruction's, which is
-        # the number that matters for "how long does verification take".
-        latency_ms=inner.latency_ms + (time.perf_counter() - started) * 1000.0,
-        verifier=DetectorRef(name="world-motion", checkpoint="da3", revision="v1"),
-        prompt_version=inner.prompt_version,
-        occurred_at=dt.datetime.now(dt.UTC),
+    # This is a wrapper, not a second verifier response. Copying preserves
+    # additive inner-verifier fields such as `resolved_action` and
+    # `description`; rebuilding this model used to silently discard both.
+    return inner.model_copy(
+        update={
+            "outcome": outcome,
+            "reason_code": reason_code,
+            # The inner verifier's own cost plus the reconstruction's, which
+            # is the number that matters for "how long does verification take".
+            "latency_ms": inner.latency_ms + (time.perf_counter() - started) * 1000.0,
+            "verifier": DetectorRef(name="world-motion", checkpoint="da3", revision="v1"),
+            "occurred_at": dt.datetime.now(dt.UTC),
+        }
     )
 
 
