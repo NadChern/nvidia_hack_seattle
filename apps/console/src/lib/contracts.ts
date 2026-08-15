@@ -11,7 +11,7 @@
  */
 
 /** The `packages/vision-contract` version this file was written against. */
-export const OVERLAY_SCHEMA = "1.3"
+export const OVERLAY_SCHEMA = "1.4"
 
 export type MotionState = "absent" | "moving" | "settling" | "at_rest"
 
@@ -20,6 +20,15 @@ export interface BoundingBox {
   y_min: number
   x_max: number
   y_max: number
+}
+
+export interface IdentityMatch {
+  object_id: string | null
+  best_score: number | null
+  margin: number | null
+  runner_up_object_id: string | null
+  reason_code: string
+  escalated: boolean
 }
 
 export interface OverlayTrack {
@@ -36,6 +45,7 @@ export interface OverlayTrack {
    * live when it is seconds stale is worse than showing none.
    */
   depth_age_s: number | null
+  identity?: IdentityMatch | null
 }
 
 export interface OverlayFrame {
@@ -85,6 +95,15 @@ export interface VisionStatus {
     detector: { ready?: boolean; device?: string; [key: string]: unknown }
     depth: { ready?: boolean; device?: string; [key: string]: unknown }
   }
+  identity?: {
+    gallery_objects: number
+    gallery_views: number
+    resolved: number
+    ambiguous: number
+    unmatched: number
+    escalated: number
+  }
+  registration?: { attempts: number; succeeded: number; failed: number; active: number }
   verifier: string
   verification: {
     queue_depth: number
@@ -224,8 +243,41 @@ export interface AgentAnswer {
   reply: string
   answer_status: AgentAnswerStatus | null
   object_id: string | null
-  guard: "passed" | `vetoed:${number}`
+  guard: "passed" | `vetoed:${number}` | `registration:${"prompt" | "succeeded" | "failed"}`
   latency_ms: number
+}
+
+export interface EnrolledObject {
+  object_id: string
+  label: string
+  registry_version: number
+}
+
+export type EnrollmentState = "capturing" | "extracting" | "succeeded" | "failed"
+
+export interface EnrollmentProgress {
+  object_id: string
+  label: string
+  state: EnrollmentState
+  frames_total: number
+  detections: number
+  quality_passed: number
+  selected_views: number
+  reason_code: string | null
+  message: string | null
+}
+
+export interface ObjectGalleryView {
+  view_id: string
+  object_id: string
+  view_index: number
+  crop_reference: string
+}
+
+export interface ObjectGallery {
+  registry_version: number
+  objects: EnrolledObject[]
+  views: ObjectGalleryView[]
 }
 
 export interface AgentStatus {

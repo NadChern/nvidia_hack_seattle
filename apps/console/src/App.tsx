@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { AgentPanel } from "@/features/agent/AgentPanel"
+import { EnrollmentPanel } from "@/features/enrollment/EnrollmentPanel"
 import { GlassesPanel } from "@/features/glasses/GlassesPanel"
 import { MemoryPanel } from "@/features/memory/MemoryPanel"
 import { SpeechPanel } from "@/features/speech/SpeechPanel"
@@ -62,6 +63,7 @@ export default function App() {
                     <TabsTrigger value="memory">Memory</TabsTrigger>
                     <TabsTrigger value="speech">Speech</TabsTrigger>
                     <TabsTrigger value="assistant">Assistant</TabsTrigger>
+                    <TabsTrigger value="enroll">Enroll</TabsTrigger>
                   </TabsList>
                   <TabsContent
                     value="glasses"
@@ -89,6 +91,9 @@ export default function App() {
                     className="min-h-0 flex-1 data-[state=inactive]:hidden"
                   >
                     <AgentPanel />
+                  </TabsContent>
+                  <TabsContent value="enroll" className="min-h-0 flex-1">
+                    <EnrollmentPanel />
                   </TabsContent>
                 </Tabs>
               </TranscriptProvider>

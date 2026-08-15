@@ -2,7 +2,7 @@
 
 The page you drive the system from: publish a camera into the gateway, watch
 detections land on it in real time, ask memory a question, exercise speech,
-and run the guarded push-to-talk assistant.
+run the guarded push-to-talk assistant, and review personal-object enrollment.
 
 Replaced `services/media-gateway/src/media_gateway/static/publisher.html`, which
 had grown to 447 lines of inline HTML, CSS and JavaScript served as a Python
@@ -11,7 +11,7 @@ string. That page is gone — see *What it replaced* below.
 ## Run it
 
 ```bash
-cd apps/console && npm install && npm run dev
+cd apps/console && npm ci && npm run dev
 ```
 
 Then <http://localhost:5173>. Nothing else is required: every panel reports its
@@ -27,6 +27,7 @@ The services it talks to, and what each panel needs:
 | Memory | application-memory | `http://127.0.0.1:8081` |
 | Speech | speech | `http://127.0.0.1:8085` |
 | Assistant | agent | `http://127.0.0.1:8086` |
+| Enroll | vision-worker + application-memory | `http://127.0.0.1:8082`, `:8081` |
 
 Override with `VMA_GATEWAY_URL`, `VMA_VISION_URL`, `VMA_MEMORY_URL`,
 `VMA_SPEECH_URL`, or `VMA_AGENT_URL` when starting the dev server. For glasses
@@ -67,6 +68,15 @@ The panel always renders `answer_status` and the guard verdict. An external
 Agent backend gets a prominent warning because transcript text then crosses the
 local trust boundary. See [Agent Laptop Testing](../../docs/14-Agent-Laptop-Testing.md)
 for the MiniCPM and OpenRouter free-model profiles.
+
+## Enrollment review
+
+The Enroll tab uses Vision's configured detector labels as its picklist. With a published video
+session, **Start registration** creates a Memory object, arms Vision's bounded EvidenceRing
+capture, and polls capture/extraction progress. On success, selected reference crops are fetched
+through the authenticated Memory proxy and shown for review. **Confirm** keeps the durable object;
+**Discard** deletes the object, vectors, and reference crops. Raw enrollment video is never sent to
+the console or persisted by this workflow.
 
 ## The boxes
 
