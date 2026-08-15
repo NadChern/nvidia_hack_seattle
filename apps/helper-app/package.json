@@ -11,7 +11,6 @@
     "expo-camera": "~57.0.3",
     "expo-crypto": "~57.0.1",
     "expo-dev-client": "~57.0.12",
-    "expo-notifications": "~57.0.11",
     "expo-secure-store": "~57.0.1",
     "expo-status-bar": "~57.0.1",
     "livekit-client": "^2.21.0",

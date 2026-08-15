@@ -5,6 +5,7 @@ import { api } from "../api";
 import type { AssistRequest } from "../api/contract";
 import { connectAssistEvents } from "../api/events";
 import { GatewayRequestError } from "../api/client";
+import { clearPairingCredential } from "../storage/credentials";
 
 // Kept as a fallback even with the events WebSocket wired up below: a missed
 // or delayed event (a reconnect still in backoff, a dropped frame) would
@@ -13,6 +14,7 @@ const POLL_INTERVAL_MS = 3000;
 
 interface Props {
   onAccepted: (sessionId: string, serverUrl: string, token: string) => void;
+  onUnpaired: () => void;
 }
 
 // A 409 from /accept ("someone else got there first") or a 404/409 from
@@ -44,19 +46,32 @@ function relativeTime(iso: string): string {
   return `${diffH}h ago`;
 }
 
-export function RequestListScreen({ onAccepted }: Props) {
+export function RequestListScreen({ onAccepted, onUnpaired }: Props) {
   const [requests, setRequests] = useState<AssistRequest[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const list = await api.listRequests();
-    const sorted = [...list].sort(
-      (a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime(),
-    );
-    setRequests(sorted);
-  }, []);
+    try {
+      const list = await api.listRequests();
+      const sorted = [...list].sort(
+        (a, b) => new Date(b.requested_at).getTime() - new Date(a.requested_at).getTime(),
+      );
+      setRequests(sorted);
+    } catch (e) {
+      // The gateway's device-credential store is in-memory: any gateway
+      // restart invalidates every previously paired device, and the phone
+      // has no other way to find out except a 401 on its next poll. Treat
+      // that specific failure as "go pair again," not a transient error.
+      if (e instanceof GatewayRequestError && e.status === 401) {
+        await clearPairingCredential();
+        onUnpaired();
+        return;
+      }
+      setError(e instanceof Error ? e.message : "Could not load requests");
+    }
+  }, [onUnpaired]);
 
   useEffect(() => {
     load();
@@ -116,7 +131,9 @@ export function RequestListScreen({ onAccepted }: Props) {
         renderItem={({ item }) => (
           <View style={styles.row}>
             <View style={styles.rowText}>
-              <Text style={styles.sessionId}>{item.session_id}</Text>
+              <Text style={styles.sessionId} numberOfLines={1} ellipsizeMode="middle">
+                {item.session_id}
+              </Text>
               <Text style={styles.time}>{relativeTime(item.requested_at)}</Text>
             </View>
             <Pressable
@@ -152,7 +169,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: "#ccc",
   },
-  rowText: { gap: 4 },
+  rowText: { flex: 1, minWidth: 0, marginRight: 12, gap: 4 },
   sessionId: { fontSize: 16, fontWeight: "500" },
   time: { fontSize: 13, color: "#666" },
   acceptButton: {
@@ -162,6 +179,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     minWidth: 72,
     alignItems: "center",
+    flexShrink: 0,
   },
   acceptText: { color: "white", fontWeight: "600" },
 });

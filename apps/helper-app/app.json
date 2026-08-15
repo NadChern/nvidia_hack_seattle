@@ -41,12 +41,6 @@
         {
           "cameraPermission": "Helper needs the camera to scan the pairing QR code."
         }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png"
-        }
       ]
     ],
     "extra": {

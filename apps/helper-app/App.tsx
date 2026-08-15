@@ -44,7 +44,9 @@ export default function App() {
         <>
           {screen === "loading" && <ActivityIndicator />}
           {screen === "pairing" && <PairingScreen onPaired={checkPairing} />}
-          {screen === "requests" && <RequestListScreen onAccepted={handleAccepted} />}
+          {screen === "requests" && (
+            <RequestListScreen onAccepted={handleAccepted} onUnpaired={checkPairing} />
+          )}
         </>
       )}
       <StatusBar style="auto" />

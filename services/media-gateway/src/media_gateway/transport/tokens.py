@@ -30,14 +30,18 @@ from media_gateway.errors import UnavailableError
 #: dimension guard depends on (SG-C's simulcast-collapse finding).
 GrantRole = Literal["publisher", "viewer", "worker", "helper"]
 
-#: LiveKit's own vocabulary for what a participant may publish -- confirmed
-#: against the installed `livekit-server-sdk` by minting a token and decoding
-#: it: `can_publish_sources=[api.TrackSource.MICROPHONE]` encodes as
-#: `canPublishSources: [2]` in the signed grant. Restricting a `helper` grant
-#: to this one source, rather than `can_publish=True` with no further limit,
-#: is what keeps a compromised or buggy helper client from ever being able to
-#: publish video -- the grant forbids it at the server, not client discipline.
-HELPER_PUBLISH_SOURCES = [api.TrackSource.MICROPHONE]
+#: LiveKit's own vocabulary for what a participant may publish. `VideoGrants
+#: .can_publish_sources` is typed `List[str]` and `AccessToken.to_jwt()`
+#: serializes it verbatim -- passing the raw `api.TrackSource.MICROPHONE`
+#: enum (which is just the bare int `2`) encodes as `canPublishSources: [2]`,
+#: which the LiveKit Go server then rejects as a malformed token ("cannot
+#: unmarshal number into ... of type string"), confirmed against a live
+#: server. The proto enum's *name* is the string LiveKit actually wants.
+#: Restricting a `helper` grant to this one source, rather than
+#: `can_publish=True` with no further limit, is what keeps a compromised or
+#: buggy helper client from ever being able to publish video -- the grant
+#: forbids it at the server, not client discipline.
+HELPER_PUBLISH_SOURCES = [api.TrackSource.Name(api.TrackSource.MICROPHONE)]
 
 
 class MintedToken:
@@ -99,10 +103,7 @@ def mint_access_token(
         # phone or browser tab could otherwise be handed a camera-publish
         # grant into a room whose entire relay topology assumes one video
         # publisher (docs/12).
-        # livekit-api's stub types this List[str]; the enum is what's
-        # actually verified above to encode correctly on the wire, so the
-        # fix is the annotation, not the value passed.
-        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,  # type: ignore[arg-type]
+        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,
     )
 
     token = (
