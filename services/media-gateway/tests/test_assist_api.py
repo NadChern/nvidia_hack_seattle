@@ -229,7 +229,9 @@ async def test_a_paired_helper_device_receives_request_and_accept_events() -> No
             helper_credential = await pair_device(http, device_id="helper-01")
 
             url = f"ws://{host}/v1/assist/events"
-            async with websockets.connect(url, additional_headers=auth(helper_credential)) as socket:
+            async with websockets.connect(
+                url, additional_headers=auth(helper_credential)
+            ) as socket:
                 hello = json.loads(await asyncio.wait_for(socket.recv(), timeout=5))
 
                 requested = await http.post(
