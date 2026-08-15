@@ -393,11 +393,31 @@ def resolve_identity(db: DbSession, observation: protocol.Observation) -> str:
 
 
 def find_objects_by_label(db: DbSession, label: str, *, session_id: str | None = None) -> list[str]:
-    """Every object matching a label, so the caller can detect ambiguity."""
-    query = select(models.ObjectStateRow.object_id).where(models.ObjectStateRow.label == label)
+    """Every object matching a label, so the caller can detect ambiguity.
+
+    Matches loosely so a spoken label ("keys") reaches an object the detector
+    stored under a longer prompt ("a set of keys"): exact (whitespace/case
+    normalized) matches win, and only when there are none does it fall back to
+    substring containment in either direction. Small-N scan in Python -- fine
+    at demo scale; revisit with SQL LIKE if the object count grows large.
+    """
+
+    def _norm(value: str | None) -> str:
+        return " ".join((value or "").casefold().split())
+
+    wanted = _norm(label)
+    stmt = select(models.ObjectStateRow.object_id, models.ObjectStateRow.label)
     if session_id is not None:
-        query = query.where(models.ObjectStateRow.session_id == session_id)
-    return list(db.scalars(query))
+        stmt = stmt.where(models.ObjectStateRow.session_id == session_id)
+    rows = list(db.execute(stmt))
+    exact = [object_id for object_id, stored in rows if _norm(stored) == wanted]
+    if exact or not wanted:
+        return exact
+    return [
+        object_id
+        for object_id, stored in rows
+        if wanted in _norm(stored) or _norm(stored) in wanted
+    ]
 
 
 def timeline_for(db: DbSession, object_id: str) -> list[TimelineEntry]:
