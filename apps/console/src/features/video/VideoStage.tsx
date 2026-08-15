@@ -58,7 +58,9 @@ export function VideoStage() {
   const [mode, setMode] = useState<ViewMode>("boxes")
   const attachPreview = useGlasses((s) => s.attachPreview)
   const sessionId = useGlasses((s) => s.session?.session_id ?? null)
-  const mediaLive = useGlasses((s) => s.state === "publishing" || s.state === "viewing")
+  const mediaLive = useGlasses(
+    (s) => s.state === "publishing" || s.state === "viewing" || s.state === "helping",
+  )
 
   // Only subscribe while boxes are actually being shown. A viewer that is not
   // drawing anything still occupies one of the vision worker's overlay slots.
