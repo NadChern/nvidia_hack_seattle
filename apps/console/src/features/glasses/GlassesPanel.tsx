@@ -236,8 +236,8 @@ export function GlassesPanel() {
             size="sm"
             variant="outline"
             onClick={() => void askForHelp()}
-            disabled={!publishing}
-            title="Granny, without glasses: raise a remote-assist request for this session"
+            disabled={!publishing && state !== "viewing"}
+            title="Raise a remote-assist request for the current session (this machine's virtual glasses, or real glasses selected above via Watch)"
           >
             <LifeBuoy /> Ask for help
           </Button>

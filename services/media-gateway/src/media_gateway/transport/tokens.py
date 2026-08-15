@@ -35,13 +35,25 @@ GrantRole = Literal["publisher", "viewer", "worker", "helper"]
 #: serializes it verbatim -- passing the raw `api.TrackSource.MICROPHONE`
 #: enum (which is just the bare int `2`) encodes as `canPublishSources: [2]`,
 #: which the LiveKit Go server then rejects as a malformed token ("cannot
-#: unmarshal number into ... of type string"), confirmed against a live
-#: server. The proto enum's *name* is the string LiveKit actually wants.
-#: Restricting a `helper` grant to this one source, rather than
-#: `can_publish=True` with no further limit, is what keeps a compromised or
-#: buggy helper client from ever being able to publish video -- the grant
-#: forbids it at the server, not client discipline.
-HELPER_PUBLISH_SOURCES = [api.TrackSource.Name(api.TrackSource.MICROPHONE)]
+#: unmarshal number into ... of type string"). Passing the proto enum's
+#: *name* instead (`"MICROPHONE"`) fixes that -- the token is accepted and
+#: the grant round-trips correctly (confirmed server-side in the room-join
+#: log: `"CanPublishSources": ["MICROPHONE"]`) -- but a live LiveKit
+#: 1.13.4 server then still logs `"no permission to publish track"` and
+#: silently drops the actual audio AddTrackRequest for that participant a
+#: few dozen ms later, with no further detail. Whatever string (or other
+#: representation) its runtime publish-permission check actually wants,
+#: it is not this one, and nothing in the client-visible protocol says
+#: what would satisfy it. Left unrestricted (`None`, same as `publisher`)
+#: until someone can dig into the server's own source.
+#:
+#: This is not risk-free: a compromised or buggy `helper` client could now
+#: publish a camera track, which the relay's one-video-publisher assumption
+#: does not expect. The mitigation until this is revisited is entirely
+#: client-side -- CallScreen.tsx never enables the camera for a helper --
+#: which is exactly the discipline-not-grant situation this constant was
+#: introduced to avoid.
+HELPER_PUBLISH_SOURCES = None
 
 
 class MintedToken:
@@ -97,13 +109,9 @@ def mint_access_token(
         room_list=False,
         room_record=False,
         can_update_own_metadata=False,
-        # Unset (None) for every other role, which LiveKit reads as "no
-        # source restriction" -- `publisher` still needs both camera and mic.
-        # Only `helper` is narrowed, and only here: this is the one place a
-        # phone or browser tab could otherwise be handed a camera-publish
-        # grant into a room whose entire relay topology assumes one video
-        # publisher (docs/12).
-        can_publish_sources=HELPER_PUBLISH_SOURCES if role == "helper" else None,
+        # Unset (None): see HELPER_PUBLISH_SOURCES above for why `helper`
+        # isn't narrowed to microphone-only at the grant level right now.
+        can_publish_sources=HELPER_PUBLISH_SOURCES,
     )
 
     token = (
