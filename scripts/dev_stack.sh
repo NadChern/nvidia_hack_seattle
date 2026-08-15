@@ -494,8 +494,8 @@ fi
 
 livekit_up() {
   local url="${VMA_LIVEKIT_URL:-ws://127.0.0.1:7880}"
-  url="${url/ws:\/\//http:\/\/}"
-  url="${url/wss:\/\//https:\/\/}"
+  url="${url/ws:\/\//http://}"
+  url="${url/wss:\/\//https://}"
   curl -fs --max-time 2 "$url" >/dev/null 2>&1
 }
 
