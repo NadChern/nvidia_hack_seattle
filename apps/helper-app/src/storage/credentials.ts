@@ -4,8 +4,8 @@ import * as Crypto from "expo-crypto";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
-const CREDENTIAL_KEY = "helper.pairing_credential.pr1test";
-const DEVICE_ID_KEY = "helper.device_id.pr1test";
+const CREDENTIAL_KEY = "helper.pairing_credential";
+const DEVICE_ID_KEY = "helper.device_id";
 
 interface KeyValueStore {
   getItemAsync(key: string): Promise<string | null>;
