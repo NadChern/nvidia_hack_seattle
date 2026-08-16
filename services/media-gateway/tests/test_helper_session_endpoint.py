@@ -76,7 +76,10 @@ async def test_the_two_tab_flow_request_accept_then_helper_token() -> None:
     assert body["session_id"] == session_id
     assert body["identity"] == f"helper-{session_id}"
     grants = jwt.decode(body["token"], SECRET, algorithms=["HS256"])["video"]
-    assert grants["canPublishSources"] == [2]  # TrackSource.MICROPHONE
+    # Not scoped to microphone-only at the grant level right now -- see
+    # HELPER_PUBLISH_SOURCES in tokens.py for why, and test_helper_token.py
+    # for the xfail tracking a proper fix.
+    assert "canPublishSources" not in grants
     assert viewer.status_code == 200
 
 
