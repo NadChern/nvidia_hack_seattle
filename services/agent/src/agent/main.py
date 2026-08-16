@@ -78,7 +78,10 @@ def _select_backend(
     from agent.agent import create_agent
     from agent.runner import AdkRunnerBackend
 
-    return AdkRunnerBackend(settings, create_agent(settings, memory, registration)), registration
+    return (
+        AdkRunnerBackend(settings, create_agent(settings, memory, registration), memory),
+        registration,
+    )
 
 
 def create_app(

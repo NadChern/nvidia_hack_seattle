@@ -5,9 +5,12 @@ question, calls the deterministic Memory query API, and supervises any wording
 before returning it. Port: **8086**.
 
 The default backend is a Google ADK 2.6 `Runner` with one `LlmAgent`, one
-LiteLLM model, and two bounded tools: `where_is` and `start_registration`. `StubLlm` remains available for deterministic,
-fully offline development; it recognizes bounded “where” questions and returns
-Memory's `spoken_answer` unchanged.
+LiteLLM model, and two bounded tools: `where_is` and `start_registration`. If the
+model omits `where_is` for a deterministically recognized location question, the
+runner performs that same bounded Memory call and uses Memory's canonical answer;
+unsupported conversation still cannot reach Memory. `StubLlm` remains available
+for deterministic, fully offline development; it recognizes bounded “where”
+questions and returns Memory's `spoken_answer` unchanged.
 
 ## What it refuses to do
 
@@ -23,7 +26,9 @@ Memory's `spoken_answer` unchanged.
 
 A model rewrite is untrusted. Rules run in order:
 
-1. No Memory tool call produces a fixed unknown response.
+1. No Memory result produces a fixed unknown response. A recognized location
+   question whose model-selected tool call was omitted first receives the bounded
+   deterministic Memory fallback described above.
 2. An unknown Memory answer may name no place.
 3. `last_confirmed_only` must preserve an explicit uncertainty marker.
 4. `ambiguous_object` must name every candidate and preserve ambiguity.
