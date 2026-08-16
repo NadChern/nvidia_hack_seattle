@@ -34,6 +34,12 @@ function request(overrides: Partial<Parameters<typeof mockListRequests>[0]> = {}
   };
 }
 
+function renderScreen(overrides: Partial<Parameters<typeof RequestListScreen>[0]> = {}) {
+  return render(
+    <RequestListScreen onAccepted={jest.fn()} onUnpaired={jest.fn()} {...overrides} />,
+  );
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
   jest.clearAllMocks();
@@ -46,26 +52,28 @@ afterEach(() => {
 });
 
 describe("RequestListScreen", () => {
-  test("loads and renders requests sorted newest-requested-first", async () => {
+  test("shows the newest pending request as the single active call", async () => {
     mockListRequests.mockResolvedValue([
       request({ request_id: "req-old", session_id: "sess-old", requested_at: "2026-08-16T00:00:00Z" }),
       request({ request_id: "req-new", session_id: "sess-new", requested_at: "2026-08-16T00:05:00Z" }),
     ]);
 
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
 
-    const rendered = screen.getAllByText(/sess-(old|new)/).map((node) => node.props.children);
-    expect(rendered).toEqual(["sess-new", "sess-old"]);
+    // Only the newest request is shown -- this is a one-at-a-time "incoming
+    // call" screen, not a list of everything pending.
+    expect(screen.getByText("sess-new")).toBeTruthy();
+    expect(screen.queryByText("sess-old")).toBeNull();
   });
 
   test("shows the empty state when there are no pending requests", async () => {
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
 
     expect(screen.getByText("No one needs help right now.")).toBeTruthy();
   });
 
   test("polls every 3 seconds", async () => {
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
     expect(mockListRequests).toHaveBeenCalledTimes(1);
 
     await act(() => jest.advanceTimersByTimeAsync(3000));
@@ -76,7 +84,7 @@ describe("RequestListScreen", () => {
   });
 
   test("stops polling after unmount", async () => {
-    const { unmount } = await render(<RequestListScreen onAccepted={jest.fn()} />);
+    const { unmount } = await renderScreen();
     expect(mockListRequests).toHaveBeenCalledTimes(1);
 
     await unmount();
@@ -86,7 +94,7 @@ describe("RequestListScreen", () => {
   });
 
   test("pull-to-refresh triggers an immediate reload", async () => {
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
     expect(mockListRequests).toHaveBeenCalledTimes(1);
 
     await act(async () => {
@@ -97,7 +105,7 @@ describe("RequestListScreen", () => {
   });
 
   test("an assist event from the WebSocket triggers an immediate reload", async () => {
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
     expect(mockListRequests).toHaveBeenCalledTimes(1);
     const { onEvent } = mockConnectAssistEvents.mock.calls[0][0];
 
@@ -117,11 +125,28 @@ describe("RequestListScreen", () => {
   test("closes the events connection on unmount", async () => {
     const close = jest.fn();
     mockConnectAssistEvents.mockReturnValue({ close });
-    const { unmount } = await render(<RequestListScreen onAccepted={jest.fn()} />);
+    const { unmount } = await renderScreen();
 
     await unmount();
 
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  test("declining hides the request and lets the next one take over", async () => {
+    mockListRequests.mockResolvedValue([
+      request({ request_id: "req-old", session_id: "sess-old", requested_at: "2026-08-16T00:00:00Z" }),
+      request({ request_id: "req-new", session_id: "sess-new", requested_at: "2026-08-16T00:05:00Z" }),
+    ]);
+
+    await renderScreen();
+    expect(screen.getByText("sess-new")).toBeTruthy();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId("decline-sess-new"));
+    });
+
+    expect(screen.getByText("sess-old")).toBeTruthy();
+    expect(screen.queryByText("sess-new")).toBeNull();
   });
 
   test("accept -> helper-token -> onAccepted happens in order on success", async () => {
@@ -137,7 +162,7 @@ describe("RequestListScreen", () => {
       expires_at: "2026-08-16T00:05:00Z",
     });
     const onAccepted = jest.fn();
-    await render(<RequestListScreen onAccepted={onAccepted} />);
+    await renderScreen({ onAccepted });
 
     await fireEvent.press(screen.getByText("Accept"));
 
@@ -146,14 +171,11 @@ describe("RequestListScreen", () => {
     expect(onAccepted).toHaveBeenCalledWith("sess-1", "wss://lk.example", "lk-token");
   });
 
-  test("while accepting, pressing another row's Accept button does nothing", async () => {
-    mockListRequests.mockResolvedValue([
-      request({ request_id: "req-1", session_id: "sess-1" }),
-      request({ request_id: "req-2", session_id: "sess-2" }),
-    ]);
+  test("while accepting, pressing Accept again does nothing", async () => {
+    mockListRequests.mockResolvedValue([request()]);
     let resolveAccept!: (value: unknown) => void;
     mockAcceptRequest.mockReturnValue(new Promise((resolve) => (resolveAccept = resolve)));
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
 
     await act(async () => {
       fireEvent.press(screen.getByTestId("accept-sess-1"));
@@ -161,11 +183,31 @@ describe("RequestListScreen", () => {
     // The Pressable's disabled prop should make this a no-op; either way,
     // what actually matters is that a second accept never fires.
     await act(async () => {
-      fireEvent.press(screen.getByTestId("accept-sess-2"));
+      fireEvent.press(screen.getByTestId("accept-sess-1"));
     });
 
     expect(mockAcceptRequest).toHaveBeenCalledTimes(1);
-    expect(mockAcceptRequest).toHaveBeenCalledWith("sess-1");
+
+    await act(async () => {
+      resolveAccept({ state: "accepted", helper_identity: "helper-sess-1" });
+    });
+  });
+
+  test("while accepting, Decline is disabled too", async () => {
+    mockListRequests.mockResolvedValue([request()]);
+    let resolveAccept!: (value: unknown) => void;
+    mockAcceptRequest.mockReturnValue(new Promise((resolve) => (resolveAccept = resolve)));
+    await renderScreen();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId("accept-sess-1"));
+    });
+    await act(async () => {
+      fireEvent.press(screen.getByTestId("decline-sess-1"));
+    });
+
+    // Still showing the same request -- decline did not go through mid-accept.
+    expect(screen.getByText("sess-1")).toBeTruthy();
 
     await act(async () => {
       resolveAccept({ state: "accepted", helper_identity: "helper-sess-1" });
@@ -175,7 +217,7 @@ describe("RequestListScreen", () => {
   test("a 409 (conflict) from accept shows a specific message and reloads the list", async () => {
     mockListRequests.mockResolvedValue([request()]);
     mockAcceptRequest.mockRejectedValue(new GatewayRequestError("failed", 409, "conflict"));
-    await render(<RequestListScreen onAccepted={jest.fn()} />);
+    await renderScreen();
     expect(mockListRequests).toHaveBeenCalledTimes(1);
 
     await fireEvent.press(screen.getByText("Accept"));
@@ -190,7 +232,7 @@ describe("RequestListScreen", () => {
     mockAcceptRequest.mockResolvedValue({ state: "accepted", helper_identity: "helper-sess-1" });
     mockGetHelperToken.mockRejectedValue(new GatewayRequestError("failed", 404, "not_found"));
     const onAccepted = jest.fn();
-    await render(<RequestListScreen onAccepted={onAccepted} />);
+    await renderScreen({ onAccepted });
 
     await fireEvent.press(screen.getByText("Accept"));
 
@@ -198,5 +240,15 @@ describe("RequestListScreen", () => {
     expect(onAccepted).not.toHaveBeenCalled();
     // Not stuck: the button is interactive again, not permanently spinning.
     expect(screen.getByText("Accept")).toBeTruthy();
+  });
+
+  test("shows the pairing screen again on a 401 (stale credential after a gateway restart)", async () => {
+    mockListRequests.mockRejectedValue(
+      new GatewayRequestError("failed", 401, "unauthorized"),
+    );
+    const onUnpaired = jest.fn();
+    await renderScreen({ onUnpaired });
+
+    await waitFor(() => expect(onUnpaired).toHaveBeenCalledTimes(1));
   });
 });

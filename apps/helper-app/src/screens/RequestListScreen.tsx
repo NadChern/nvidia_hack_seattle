@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  Vibration,
+  View,
+} from "react-native";
 
 import { api } from "../api";
 import type { AssistRequest } from "../api/contract";
@@ -9,8 +18,13 @@ import { clearPairingCredential } from "../storage/credentials";
 
 // Kept as a fallback even with the events WebSocket wired up below: a missed
 // or delayed event (a reconnect still in backoff, a dropped frame) would
-// otherwise leave the list stale with no other signal telling us so.
+// otherwise leave the screen stale with no other signal telling us so.
 const POLL_INTERVAL_MS = 3000;
+
+// A short double-buzz, like a call notification, rather than one long
+// continuous vibration -- this fires once per newly-seen request, not on
+// every poll tick, so it should never feel like the phone is stuck buzzing.
+const RING_VIBRATION_PATTERN = [0, 400, 250, 400];
 
 interface Props {
   onAccepted: (sessionId: string, serverUrl: string, token: string) => void;
@@ -48,9 +62,12 @@ function relativeTime(iso: string): string {
 
 export function RequestListScreen({ onAccepted, onUnpaired }: Props) {
   const [requests, setRequests] = useState<AssistRequest[]>([]);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
-  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ringingForId = useRef<string | null>(null);
+  const pulse = useRef(new Animated.Value(1)).current;
 
   const load = useCallback(async () => {
     try {
@@ -87,6 +104,36 @@ export function RequestListScreen({ onAccepted, onUnpaired }: Props) {
     return () => connection.close();
   }, [load]);
 
+  // The newest request that hasn't been declined on this device -- shown as
+  // a single full-screen "incoming call," not a list. Declining is local
+  // only (there's no reject endpoint yet): it hides the card here so the
+  // next request, if any, can take over, but the request stays "pending"
+  // server-side until someone else accepts it or it expires.
+  const active = requests.find((r) => !dismissedIds.has(r.request_id)) ?? null;
+
+  useEffect(() => {
+    if (active && active.request_id !== ringingForId.current) {
+      ringingForId.current = active.request_id;
+      Vibration.vibrate(RING_VIBRATION_PATTERN);
+    } else if (!active) {
+      ringingForId.current = null;
+    }
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) {
+      return;
+    }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 1.12, duration: 650, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 1, duration: 650, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [active, pulse]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await load();
@@ -95,14 +142,14 @@ export function RequestListScreen({ onAccepted, onUnpaired }: Props) {
 
   const onAccept = useCallback(
     async (sessionId: string) => {
-      setAcceptingId(sessionId);
+      setAccepting(true);
       setError(null);
       try {
         await api.acceptRequest(sessionId);
       } catch (e) {
         setError(describeAcceptError(e));
-        setAcceptingId(null);
-        await load(); // A 409 here means someone else took it -- refresh so it drops off the list.
+        setAccepting(false);
+        await load(); // A 409 here means someone else took it -- refresh so it drops off.
         return;
       }
       try {
@@ -110,76 +157,105 @@ export function RequestListScreen({ onAccepted, onUnpaired }: Props) {
         onAccepted(sessionId, helperToken.livekit_url, helperToken.token);
       } catch (e) {
         setError(describeAcceptError(e));
-        setAcceptingId(null);
+        setAccepting(false);
       }
     },
     [load, onAccepted],
   );
 
+  const onDecline = useCallback(() => {
+    if (!active) {
+      return;
+    }
+    const { request_id } = active;
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      next.add(request_id);
+      return next;
+    });
+  }, [active]);
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.header}>Pending requests</Text>
-      {error && <Text style={styles.error}>{error}</Text>}
-      <FlatList
-        testID="request-list"
-        data={requests}
-        keyExtractor={(item) => item.request_id}
-        refreshing={refreshing}
-        onRefresh={onRefresh}
-        contentContainerStyle={requests.length === 0 ? styles.emptyContainer : undefined}
-        ListEmptyComponent={<Text style={styles.empty}>No one needs help right now.</Text>}
-        renderItem={({ item }) => (
-          <View style={styles.row}>
-            <View style={styles.rowText}>
-              <Text style={styles.sessionId} numberOfLines={1} ellipsizeMode="middle">
-                {item.session_id}
-              </Text>
-              <Text style={styles.time}>{relativeTime(item.requested_at)}</Text>
-            </View>
+    <FlatList
+      testID="request-list"
+      data={active ? [active] : []}
+      keyExtractor={(item) => item.request_id}
+      refreshing={refreshing}
+      onRefresh={onRefresh}
+      contentContainerStyle={styles.container}
+      ListHeaderComponent={error ? <Text style={styles.error}>{error}</Text> : null}
+      ListEmptyComponent={
+        <View style={styles.emptyContainer}>
+          <Text style={styles.empty}>No one needs help right now.</Text>
+        </View>
+      }
+      renderItem={({ item }) => (
+        <View style={styles.callCard}>
+          <Animated.View style={[styles.ringBadge, { transform: [{ scale: pulse }] }]}>
+            <Text style={styles.ringBadgeText}>📞</Text>
+          </Animated.View>
+          <Text style={styles.callTitle}>Your Parent Needs Help</Text>
+          <Text style={styles.callSubtitle} numberOfLines={1} ellipsizeMode="middle">
+            {item.session_id}
+          </Text>
+          <Text style={styles.callTime}>Requested {relativeTime(item.requested_at)}</Text>
+          <View style={styles.actionsRow}>
+            <Pressable
+              testID={`decline-${item.session_id}`}
+              style={[styles.actionButton, styles.declineButton]}
+              disabled={accepting}
+              onPress={onDecline}
+            >
+              <Text style={styles.declineText}>Decline</Text>
+            </Pressable>
             <Pressable
               testID={`accept-${item.session_id}`}
-              style={styles.acceptButton}
-              disabled={acceptingId !== null}
+              style={[styles.actionButton, styles.acceptButton]}
+              disabled={accepting}
               onPress={() => onAccept(item.session_id)}
             >
-              {acceptingId === item.session_id ? (
+              {accepting ? (
                 <ActivityIndicator color="white" />
               ) : (
                 <Text style={styles.acceptText}>Accept</Text>
               )}
             </Pressable>
           </View>
-        )}
-      />
-    </View>
+        </View>
+      )}
+    />
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: 64, paddingHorizontal: 16 },
-  header: { fontSize: 22, fontWeight: "600", marginBottom: 16 },
-  error: { color: "#d93025", marginBottom: 12 },
-  emptyContainer: { flex: 1, alignItems: "center", justifyContent: "center" },
-  empty: { color: "#666" },
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 14,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: "#ccc",
-  },
-  rowText: { flex: 1, minWidth: 0, marginRight: 12, gap: 4 },
-  sessionId: { fontSize: 16, fontWeight: "500" },
-  time: { fontSize: 13, color: "#666" },
-  acceptButton: {
+  container: { flexGrow: 1, padding: 24, justifyContent: "center" },
+  error: { color: "#d93025", marginBottom: 16, textAlign: "center" },
+  emptyContainer: { alignItems: "center", justifyContent: "center", paddingVertical: 80 },
+  empty: { color: "#666", fontSize: 16 },
+  callCard: { alignItems: "center", gap: 8 },
+  ringBadge: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     backgroundColor: "#1a73e8",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
-    minWidth: 72,
     alignItems: "center",
-    flexShrink: 0,
+    justifyContent: "center",
+    marginBottom: 8,
   },
-  acceptText: { color: "white", fontWeight: "600" },
+  ringBadgeText: { fontSize: 44 },
+  callTitle: { fontSize: 26, fontWeight: "700", textAlign: "center" },
+  callSubtitle: { fontSize: 15, color: "#666", maxWidth: "90%" },
+  callTime: { fontSize: 13, color: "#999", marginBottom: 24 },
+  actionsRow: { flexDirection: "row", gap: 16, width: "100%", paddingHorizontal: 24 },
+  actionButton: {
+    flex: 1,
+    paddingVertical: 18,
+    borderRadius: 32,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  acceptButton: { backgroundColor: "#1e8e3e" },
+  declineButton: { backgroundColor: "#fce8e6", borderWidth: 1, borderColor: "#d93025" },
+  acceptText: { color: "white", fontWeight: "700", fontSize: 18 },
+  declineText: { color: "#d93025", fontWeight: "700", fontSize: 18 },
 });
