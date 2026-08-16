@@ -176,6 +176,18 @@ async def list_objects(request: Request) -> dict[str, Any]:
     return gallery.model_dump(mode="json")
 
 
+@router.delete("/{object_id}")
+async def delete_object(object_id: str, request: Request) -> dict[str, str]:
+    """Delete registry evidence and immediately invalidate Vision's gallery."""
+    authorize_request(request)
+    try:
+        await asyncio.to_thread(_memory(request).delete_object, object_id)
+    except MemoryError_ as exc:
+        raise _translate_memory_error(exc) from exc
+    await request.app.state.gallery.refresh(force=True)
+    return {"object_id": object_id}
+
+
 @router.get("/{object_id}/status")
 def registration_status(object_id: str, request: Request) -> dict[str, object]:
     authorize_request(request)

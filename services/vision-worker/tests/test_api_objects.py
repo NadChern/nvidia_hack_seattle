@@ -23,6 +23,15 @@ class ActivePipeline:
     current_session_id: str | None = "sess_1"
 
 
+class RecordingGallery:
+    def __init__(self) -> None:
+        self.refreshes = 0
+
+    async def refresh(self, *, force: bool = False) -> bool:
+        self.refreshes += 1
+        return True
+
+
 class RecordingManager:
     def __init__(self) -> None:
         self.progress: EnrollmentProgress | None = None
@@ -93,6 +102,8 @@ def memory_handler(request: httpx.Request) -> httpx.Response:
                 "registry_version": 1,
             },
         )
+    if request.method == "DELETE" and request.url.path == "/v1/objects/object_keys":
+        return httpx.Response(200, json={"object_id": "object_keys"})
     if request.method == "GET" and request.url.path == "/v1/objects":
         return httpx.Response(
             200,
@@ -113,6 +124,7 @@ def app_for() -> tuple[FastAPI, RecordingManager, ActivePipeline]:
     pipeline = ActivePipeline()
     app.state.enrollment_manager = manager
     app.state.pipeline = pipeline
+    app.state.gallery = RecordingGallery()
     app.state.memory_client = MemoryClient(transport=httpx.MockTransport(memory_handler))
     return app, manager, pipeline
 
@@ -159,6 +171,16 @@ async def test_manual_enrollment_rejects_invalid_base64() -> None:
 
     assert response.status_code == 400
     assert response.json()["code"] == "invalid_request"
+
+
+async def test_delete_invalidates_the_vision_gallery_immediately() -> None:
+    app, _, _ = app_for()
+    gallery = app.state.gallery
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.delete("/v1/objects/object_keys")
+
+    assert response.status_code == 200
+    assert gallery.refreshes == 1
 
 
 async def test_untrackable_label_is_rejected_before_promising_registration() -> None:

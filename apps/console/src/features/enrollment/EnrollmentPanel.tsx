@@ -193,7 +193,7 @@ export function EnrollmentPanel() {
       }
       toast.success(`${label} registration stored from ${completed.selected_views} approved views.`)
     } catch (caught) {
-      if (objectId) await delChecked("memory", `/v1/objects/${objectId}`).catch(() => undefined)
+      if (objectId) await delChecked("vision", `/v1/objects/${objectId}`).catch(() => undefined)
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setSubmitting(false)

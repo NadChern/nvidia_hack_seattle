@@ -429,7 +429,9 @@ previews, adds, or removes views. On explicit confirmation it creates the object
 eight JPEG crops as `views_base64` to `POST /v1/objects/{object_id}/manual`. Vision checks image
 quality, embeds and diversity-ranks the crops with C-RADIO, and persists at least two or rolls back
 the new object. Cosmos neither chooses nor vetoes manual crops, and no pending crop is an active
-identity reference before confirmation.
+identity reference before confirmation. Console rollback uses Vision's
+`DELETE /v1/objects/{object_id}` proxy so Memory deletion and forced gallery invalidation happen as
+one service operation rather than leaving a deleted identity active in Vision's cache.
 
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through

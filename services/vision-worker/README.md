@@ -97,6 +97,7 @@ hard-coded menu.
 | `POST /v1/objects` · `GET /v1/objects` | Create/list personal objects through Memory's registry |
 | `POST /v1/objects/{id}/capture` | Start bounded automatic registration capture |
 | `POST /v1/objects/{id}/manual` | Validate and persist 2–8 explicitly confirmed operator crops |
+| `DELETE /v1/objects/{id}` | Delete registry evidence and immediately invalidate the Vision gallery |
 | `GET /v1/objects/{id}/status` | Poll automatic or manual quality and selected-view progress |
 
 There is no public video-upload or Memory-query API here. Ordinary frames arrive only through the
