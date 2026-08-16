@@ -336,9 +336,10 @@ async def test_a_carried_wake_expires() -> None:
 async def test_manual_trigger_survives_a_leading_disfluency() -> None:
     """The press already established intent; a stray "um" must not waste it.
 
-    SG-A measured that anchoring the question shape to the start of an
-    utterance loses most real questions. This is the fallback for when the wake
-    word fails, so it cannot fail the same way.
+    The press path no longer pre-filters by shape -- it forwards the whole held
+    utterance to the LLM router, which handles the leading disfluency. So a
+    press followed by "um, where are my keys" still reaches the backend, just
+    without the listener stripping to a shape match first.
     """
     backend = FakeBackend()
     listener = HandsFreeListener(
@@ -348,27 +349,45 @@ async def test_manual_trigger_survives_a_leading_disfluency() -> None:
     handled = await listener.process(transcript("um, where are my keys"))
 
     assert handled
-    assert backend.calls == [("where are my keys", "sess_01")]
+    assert backend.calls == [("um, where are my keys", "sess_01")]
 
 
-async def test_manual_trigger_still_refuses_an_unsupported_question() -> None:
-    """Scanning is not permission to answer anything that follows a press."""
+async def test_manual_trigger_forwards_any_utterance_to_the_router() -> None:
+    """The press is the intent signal; the LLM router (not a regex) decides.
+
+    A deliberate press means the wearer wants an action, so the press path
+    forwards whatever followed it -- find, register, or neither -- and lets the
+    agent's router no-op on the rest. This is what makes natural registration
+    phrasings ("remember these keys", "save this mug") reachable by voice
+    without maintaining a shape whitelist. The wake-word path keeps its shape
+    gate, where always-on ambient audio still needs a cheap pre-filter.
+    """
     backend = FakeBackend()
     events = FakeEvents(manual_trigger=True)
     listener = HandsFreeListener(Settings(environment="ci"), backend, FakeReply(), events)
 
-    handled = await listener.process(transcript("what time is the keynote"))
+    handled = await listener.process(transcript("remember these keys"))
+
+    assert handled
+    assert backend.calls == [("remember these keys", "sess_01")]
+    # One press maps to exactly one held utterance, so the arm is now spent.
+    assert not events.manual_trigger
+
+
+async def test_wake_path_still_gates_ambient_speech() -> None:
+    """Without a press or a wake prefix, ordinary talk stays out of the model.
+
+    The relaxation is scoped to the press path; the always-on wake path must
+    still keep unrelated conversation (including register-shaped chatter that
+    was never addressed to the assistant) away from the router.
+    """
+    backend = FakeBackend()
+    listener = HandsFreeListener(Settings(environment="ci"), backend, FakeReply(), FakeEvents())
+
+    handled = await listener.process(transcript("i should remember these keys tomorrow"))
 
     assert not handled
     assert backend.calls == []
-    # The arm survives: an unrelated sentence must not spend the press, and
-    # asking the gateway about every non-question is a round-trip per utterance.
-    assert events.manual_trigger
-
-    answered = await listener.process(transcript("um, where are my keys"))
-
-    assert answered
-    assert backend.calls == [("where are my keys", "sess_01")]
 
 
 async def test_event_delivery_failure_never_blocks_the_guarded_audio_reply() -> None:

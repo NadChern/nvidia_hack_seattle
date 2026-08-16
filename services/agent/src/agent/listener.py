@@ -33,7 +33,9 @@ _QUESTION_ALTERNATION = (
 )
 
 _QUESTION_SHAPE = re.compile(rf"^{_QUESTION_ALTERNATION}")
-_REGISTRATION_ALTERNATION = r"(?:remember|scan|learn)\s+(?:my|our|the|this|these|those)\b"
+_REGISTRATION_ALTERNATION = (
+    r"(?:remember|register|scan|learn|save|memorize)\s+(?:my|our|the|this|these|those)\b"
+)
 _SUPPORTED_INTENT_SHAPE = re.compile(rf"^(?:{_QUESTION_ALTERNATION}|{_REGISTRATION_ALTERNATION})")
 
 #: The same supported shapes starting at any word boundary. Used only after a deliberate
@@ -241,24 +243,24 @@ class HandsFreeListener:
             )
 
     async def _manual_question(self, transcript: Transcript) -> str | None:
-        """Answer a bounded where-question that followed a deliberate press.
+        """Forward a whole utterance that followed a deliberate press.
 
-        Shape is checked *before* the arm is consumed, for two reasons. Most
-        utterances are not questions at all, and asking the gateway about every
-        one of them is a network round-trip per transcript on the hot path.
-        More importantly, consuming an arm and then discarding it because the
-        wearer said something else first would silently spend the press.
+        The press *is* the intent signal, so the press path does not pre-filter
+        by shape -- the agent's LLM router decides find vs. register vs. no
+        supported intent (a clean no-tool reply). This is what lets natural
+        phrasings like "remember these keys" or "save this mug" register by
+        voice. The wake-word path still gates by shape (`_SUPPORTED_INTENT_SHAPE`
+        / `_QUESTION_SHAPE_ANYWHERE`), where always-on ambient audio makes a
+        cheap pre-filter load-bearing.
 
-        Scan rather than anchor: SG-A measured that anchoring the shape to the
-        start of an utterance loses 6 of 10 realistic questions to a leading
-        "um" or to reply audio bleeding in. This is the fallback for when the
-        wake word fails, so it must not fail the same way.
+        The arm is consumed first now: with no shape filter there is nothing to
+        discard a consumed press against, so a press always results in a forward
+        and is never silently spent on a shape miss. Safe here because the UI
+        emits one transcript per hold ("a transcript appears only after you stop
+        speaking"), so the arm maps to exactly one complete utterance. The cost
+        is one gateway round-trip per non-wake transcript to check the arm --
+        acceptable, since only a real press returns armed.
         """
-        normalized = " ".join(transcript.text.casefold().split())
-        found = _QUESTION_SHAPE_ANYWHERE.search(normalized)
-        if found is None:
-            return None
-
         try:
             armed = await self._events.consume_manual_trigger(transcript.session_id)
         except Exception as exc:
@@ -270,7 +272,9 @@ class HandsFreeListener:
                 },
             )
             return None
-        return normalized[found.start() :] if armed else None
+        if not armed:
+            return None
+        return " ".join(transcript.text.casefold().split()) or None
 
     def _carried_over_question(self, transcript: Transcript) -> str | None:
         """Accept a bare question when the wake prefix was the previous utterance.
