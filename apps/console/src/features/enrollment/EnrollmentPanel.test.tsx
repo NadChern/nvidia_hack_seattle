@@ -52,7 +52,7 @@ describe("EnrollmentPanel", () => {
     })
     api.get.mockImplementation((_service: string, path: string) => {
       if (path === "/v1/status") {
-        return Promise.resolve({ config: { detection_labels: ["keys", "wallet"] } })
+        return Promise.resolve({ config: { registration_labels: ["keys", "wallet"] } })
       }
       if (path.endsWith("/status")) return Promise.resolve(progress)
       if (path === "/v1/objects") {

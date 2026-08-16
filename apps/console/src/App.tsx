@@ -40,7 +40,7 @@ export default function App() {
           <header className="flex items-center gap-3 border-b px-4 py-2.5">
             <h1 className="text-sm font-semibold">Visual Memory Assistant</h1>
             <span className="text-xs text-muted-foreground">
-              console — camera, detection, memory, speech, assistant
+              console — glasses POV, Cosmos, personal memory, speech, assistant
             </span>
           </header>
 

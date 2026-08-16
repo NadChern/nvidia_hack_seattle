@@ -57,6 +57,9 @@ def status(request: Request) -> dict[str, Any]:
             "registration_capture_seconds": settings.registration_capture_seconds,
             "registration_target_views": settings.registration_target_views,
             "registration_min_views": settings.registration_min_views,
+            # Console enrollment needs the same allowlist enforced by
+            # POST /v1/objects; exposing it here avoids a stale hard-coded menu.
+            "registration_labels": list(settings.detection_labels),
         },
         # The reasoner window and cadence in effect -- an evaluation run cites
         # this, not the code. Cosmos is slow per call, so window/interval are

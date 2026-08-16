@@ -83,57 +83,68 @@ export interface VisionStatus {
   ready: boolean
   not_ready_reason: string | null
   config: {
-    detector_kind: string
-    depth_kind: string
-    verifier_kind: string
-    detection_labels: string[]
-    max_detections_per_frame?: number
-    source_fps: number
+    reason_kind: string
+    identity_kind: string
+    registration_labels: string[]
+    registration_capture_seconds: number
+    registration_target_views: number
+    registration_min_views: number
   }
-  frame_rate: { configured_fps: number; observed_fps: number | null }
-  models?: {
-    detector: { ready?: boolean; device?: string; [key: string]: unknown }
-    depth: { ready?: boolean; device?: string; [key: string]: unknown }
+  reasoner: {
+    kind: string
+    model: string
+    window_seconds: number
+    interval_seconds: number
+    max_frames: number
+    event_cooldown_seconds: number
+    promote_motion_events: boolean
   }
-  identity?: {
-    gallery_objects: number
-    gallery_views: number
-    resolved: number
-    ambiguous: number
-    unmatched: number
-    escalated: number
+  identity: {
+    embedder: {
+      identity_embedder?: string
+      ready?: boolean
+      device?: string
+      model?: string
+      average_latency_ms?: number
+      [key: string]: unknown
+    }
+    min_cosine: number
+    gallery: {
+      registry_version: number
+      gallery_objects: number
+      gallery_views: number
+      gallery_stale: boolean
+      refresh_failures: number
+    }
   }
-  registration?: { attempts: number; succeeded: number; failed: number; active: number }
-  verifier: string
-  verification: {
-    queue_depth: number
-    concurrency: number
-    pending: number
-    dropped: number
-    failed: number
-  }
-  overlay: { enabled: boolean; viewers: number; max_viewers: number; dropped: number }
+  registration: { attempts: number; succeeded: number; failed: number; active: number }
+  analysis: { queue_depth: number; pending: number; dropped: number; failed: number }
+  ingest: { frames_dropped_stale: number; control_dropped: number }
   metrics: {
     frames_processed: number
-    candidates_proposed: number
-    candidates_confirmed: number
-    candidates_rejected: number
-    candidates_unverified: number
-    sightings_not_promoted: number
-    vanishings_questioned: number
+    windows_analyzed: number
+    events_detected: number
+    identity_matched: number
+    identity_skipped: number
+    motion_events_suppressed: number
+    events_deduped: number
+    observations_written: number
   }
 }
 
-export type PipelineOutcome = "confirmed" | "rejected" | "unverified" | "not_promoted"
+export type PipelineOutcome =
+  | "written"
+  | "skipped_no_identity"
+  | "suppressed_by_policy"
+  | "deduped"
 
 export interface VisionEvent {
   at: string
-  track_id: string
   label: string
   action: string
+  object_id: string | null
   outcome: PipelineOutcome
-  reason_code: string
-  confidence: number
+  score: number | null
 }
 
 export interface GatewayStatus {

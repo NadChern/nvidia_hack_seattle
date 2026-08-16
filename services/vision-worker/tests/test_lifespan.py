@@ -58,12 +58,13 @@ async def test_status_reports_configuration_and_the_reasoner() -> None:
     hello = encode_message(StreamHello(gateway_version="test-1", stream_kind="video"))
 
     async with replay_server([hello], close_after=False) as url:
-        app = create_app(_settings(url))
+        app = create_app(_settings(url, detection_labels=("keys", "wallet")))
         status_code, body = await get(app, "/v1/status")
 
     assert status_code == 200
     assert body["ready"] is True
     assert body["config"]["reason_kind"] == "fixture"
+    assert body["config"]["registration_labels"] == ["keys", "wallet"]
     # The reasoner window and the identity gate are reported so an evaluation
     # run can cite what was actually in effect, not what was merely configured.
     assert body["reasoner"]["window_seconds"] > 0

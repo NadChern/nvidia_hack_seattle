@@ -34,7 +34,7 @@ export function EnrollmentPanel() {
     refetchInterval: 10_000,
     retry: false,
   })
-  const labels = useMemo(() => vision.data?.config.detection_labels ?? [], [vision.data])
+  const labels = useMemo(() => vision.data?.config.registration_labels ?? [], [vision.data])
 
   useEffect(() => {
     if (!label && labels.length > 0) setLabel(labels[0] ?? "")
@@ -157,6 +157,10 @@ export function EnrollmentPanel() {
         >
           <Camera /> {starting ? "Starting…" : "Start registration"}
         </Button>
+        <p className="text-xs text-muted-foreground">
+          Cosmos localizes the object while you rotate it; C-RADIO stores only the
+          strongest diverse reference views.
+        </p>
 
         {progress ? (
           <div className="space-y-3 rounded-lg border p-3">

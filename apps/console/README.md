@@ -1,8 +1,9 @@
 # Console
 
-The page you drive the system from: publish a camera into the gateway, watch
-detections land on it in real time, ask memory a question, exercise speech,
-run the guarded push-to-talk assistant, and review personal-object enrollment.
+The page you drive and demonstrate the system from: publish or watch glasses
+video, follow Cosmos placement and C-RADIO identity receipts, ask Memory a
+question, exercise Speech and the guarded Agent, review personal-object
+enrollment, and operate Remote Assist.
 
 Replaced `services/media-gateway/src/media_gateway/static/publisher.html`, which
 had grown to 447 lines of inline HTML, CSS and JavaScript served as a Python
@@ -23,11 +24,12 @@ The services it talks to, and what each panel needs:
 | panel | service | default |
 |---|---|---|
 | Glasses, video | media-gateway | `http://127.0.0.1:8080` |
-| Vision, boxes | vision-worker | `http://127.0.0.1:8082` |
+| Vision receipts | vision-worker | `http://127.0.0.1:8082` |
 | Memory | application-memory | `http://127.0.0.1:8081` |
 | Speech | speech | `http://127.0.0.1:8085` |
 | Assistant | agent | `http://127.0.0.1:8086` |
 | Enroll | vision-worker + application-memory | `http://127.0.0.1:8082`, `:8081` |
+| Assist | media-gateway | `http://127.0.0.1:8080` |
 
 Override with `VMA_GATEWAY_URL`, `VMA_VISION_URL`, `VMA_MEMORY_URL`,
 `VMA_SPEECH_URL`, or `VMA_AGENT_URL` when starting the dev server. For glasses
@@ -71,38 +73,36 @@ for the MiniCPM and OpenRouter free-model profiles.
 
 ## Enrollment review
 
-The Enroll tab uses Vision's configured detector labels as its picklist. With a published video
-session, **Start registration** creates a Memory object, arms Vision's bounded EvidenceRing
-capture, and polls capture/extraction progress. On success, selected reference crops are fetched
-through the authenticated Memory proxy and shown for review. **Confirm** keeps the durable object;
-**Discard** deletes the object, vectors, and reference crops. Raw enrollment video is never sent to
-the console or persisted by this workflow.
+The Enroll tab uses Vision's configured registration allowlist as its picklist. With a published
+video session, **Start registration** creates a Memory object, arms Vision's bounded EvidenceRing
+capture, and polls capture/extraction progress. Cosmos localizes the selected object while the
+wearer rotates it; C-RADIO stores the strongest diverse reference crops. On success those crops
+are fetched through the authenticated Memory proxy and shown for review. **Confirm** keeps the
+durable object; **Discard** deletes the object, vectors, and reference crops. Raw enrollment video
+is never sent to the console or persisted by this workflow.
 
-## The boxes
+## Cosmos pipeline receipts
 
-`WS /v1/overlay?session_id=<selected-session>` sends coordinates, not pixels.
-The Console already has the selected glasses video, so the vision worker sends
-normalized boxes
-and the browser draws them on a `<canvas>` over its own `<video>`. Kilobytes per
-second instead of megabits, no second encode, crisp at any zoom.
+The current Vision pipeline deliberately has no per-frame detector/tracker, motion-state boxes, or
+live overlay. The left stage shows the raw first-person camera. The Vision tab polls the current
+`/v1/status` and `/v1/events` surfaces and presents the proof chain the demo audience needs:
 
-It also means the latency is **real and visible**, which is the point. The
-`latency` readout is `emitted_at - relayed_at`, both stamped inside the vision
-worker, so it measures the pipeline rather than the gap between two machines'
-clocks. A re-encoded annotated video track would look perfectly synchronised and
-prove nothing.
+```text
+registered gallery → Cosmos window event → C-RADIO identity → durable Memory write
+```
 
-Box colour is the object's `motion_state`, not decoration: watching a box go
-amber → yellow → green as something is set down is the clearest evidence that a
-state machine is running rather than a detector firing once per frame.
+It reports gallery object/view counts, windows analyzed, memory-worthy events, identity
+matches/skips, observations written, queue health, registration results, and an activity stream.
+Each activity row carries the action, label, stable object ID when resolved, identity cosine, and
+one explicit outcome:
 
-The session query is required by the Console even though the backend retains an
-unscoped diagnostic mode. This prevents detections from another publisher or a
-previous selection being drawn over the active glasses video.
+- `written`: placement and identity passed every write gate;
+- `skipped_no_identity`: no registered object matched strongly enough;
+- `suppressed_by_policy`: motion was diagnostic-only under placed-only promotion; or
+- `deduped`: the same object/action was recorded inside its cooldown.
 
-`missed` counts gaps in the frame sequence — overlays the pipeline produced that
-this browser was too slow to read. It costs nothing real (a stale overlay would
-not have been drawn) but it distinguishes a slow laptop from a slow pipeline.
+This replaces the old box UI with evidence that corresponds directly to the Cosmos window and
+Memory semantics actually deployed on the GN100.
 
 ## Components
 
@@ -148,16 +148,13 @@ is `virtual-glasses`, which the integration suite uses.
 
 ## Known gaps
 
-- **No scene depth map.** Depth reaches the console as a number per object,
-  drawn on the box with its age — a full map would need MoGe on every frame,
-  which is the cost the once-a-second cadence exists to avoid. Set
-  `VMA_DEPTH_KIND=moge` on the vision worker to see the numbers at all.
+- **No per-frame boxes or scene depth map.** Cosmos reasons over sparse windows and emits bounded
+  event receipts; it is not a continuous visual tracker.
 - **Transcripts need a published session and hands-free Agent listener.** The Agent opens
   Speech STT for publisher-present sessions and pushes completed segments to the Gateway.
   A line appears when you stop speaking; there is no interim result.
 - **Types are hand-written** (`src/lib/contracts.ts`), narrowed to the fields
   actually read. The intended end state is generation from each service's
-  `/openapi.json`. Until then the overlay `schema_version` is checked at runtime
-  and a mismatch is shown in the video panel.
-- **One bundle, ~946 kB** (268 kB gzipped), mostly `livekit-client`. Fine over a
+  `/openapi.json`.
+- **One bundle, ~970 kB** (275 kB gzipped), mostly `livekit-client`. Fine over a
   LAN; worth code-splitting if this is ever served over anything slower.
