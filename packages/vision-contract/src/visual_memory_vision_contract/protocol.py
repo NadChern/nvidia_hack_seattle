@@ -34,10 +34,12 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, PlainSerialize
 #: producer pinned to 1.0 keeps working because it simply never emits them.
 #: 1.2 added `OverlayTrack` and `OverlayFrame`, which are new shapes rather
 #: than changes to existing ones, so nothing pinned to 1.1 is affected. 1.3
-#: added `OverlayTrack.depth_age_s`, optional and defaulting to None.
+#: added `OverlayTrack.depth_age_s`, optional and defaulting to None. 1.4 adds
+#: optional per-track `IdentityMatch` annotations to TrackSample and
+#: CandidateEvent.
 #: Versioned independently of the memory-contract schema -- this is a different
 #: shape with a different producer and consumer.
-SCHEMA_VERSION = "1.3"
+SCHEMA_VERSION = "1.4"
 
 
 def _utc_iso(value: dt.datetime) -> str:
@@ -181,6 +183,22 @@ class Detection(_Frozen):
     box3d: Box3D | None = None
 
 
+class IdentityMatch(_Frozen):
+    """One per-track personal-identity decision.
+
+    `identity=None` on a track means the resolver did not run. This model with
+    `object_id=None` means it ran and deliberately abstained; the scores and
+    reason keep that distinction measurable.
+    """
+
+    object_id: str | None = None
+    best_score: Confidence | None = None
+    margin: float | None = None
+    runner_up_object_id: str | None = None
+    reason_code: str
+    escalated: bool = False
+
+
 class TrackSample(_Frozen):
     """One frame's sample of a tracked object -- the unit the stability state
     machine consumes, and the shape synthetic fixtures in `fixtures/` are
@@ -203,6 +221,8 @@ class TrackSample(_Frozen):
     #: the last, the `ImageMotionPose` fallback signal. `None` on the first
     #: frame of a track, or when the pose source is `DevicePose`.
     background_motion: Point2D | None = None
+    #: Cached for the lifetime of this track. None means identity did not run.
+    identity: IdentityMatch | None = None
 
 
 class HandCandidate(_Frozen):
@@ -277,6 +297,8 @@ class CandidateEvent(_Frozen):
     depth_model: DetectorRef | None = None
     state_machine_version: str
     pipeline_version: str
+    #: Per-track decision copied from the cache; never a verifier product.
+    identity: IdentityMatch | None = None
 
 
 class VerifierResult(_Frozen):
@@ -393,6 +415,7 @@ __all__ = [
     "DetectorRef",
     "EvidenceWindow",
     "HandCandidate",
+    "IdentityMatch",
     "MotionState",
     "OverlayFrame",
     "OverlayTrack",

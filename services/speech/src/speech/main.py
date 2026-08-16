@@ -12,6 +12,10 @@ against.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+from typing import Protocol, runtime_checkable
+
 from fastapi import FastAPI
 
 from speech import __version__
@@ -76,6 +80,28 @@ def _select_tts_backend() -> TextToSpeech:
     return StubTextToSpeech()
 
 
+@runtime_checkable
+class _Initializable(Protocol):
+    async def initialize(self) -> None: ...
+
+
+async def _warm_selected_backends(
+    *, enabled: bool, stt_backend: object, tts_backend: object
+) -> None:
+    """Warm real adapters sequentially before readiness is exposed.
+
+    Sequential loading avoids transiently holding two construction-time copies
+    of CUDA model state. Stub and adapters without an initializer remain no-op.
+    A selected real adapter that cannot load fails startup honestly instead of
+    dropping the first wearer's STT socket minutes later.
+    """
+    if not enabled:
+        return
+    for backend in (stt_backend, tts_backend):
+        if isinstance(backend, _Initializable):
+            await backend.initialize()
+
+
 def _select_stt_backend() -> SpeechToText:
     """Pick an ear, on the same rules as `_select_tts_backend`.
 
@@ -104,7 +130,19 @@ def _select_stt_backend() -> SpeechToText:
 
 settings = get_settings()
 configure_logging(level=settings.log_level, service=settings.service_name, version=__version__)
-app = FastAPI(title=settings.service_name)
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI) -> AsyncGenerator[None, None]:
+    await _warm_selected_backends(
+        enabled=application.state.settings.warm_models_on_startup,
+        stt_backend=application.state.stt_backend,
+        tts_backend=application.state.tts_backend,
+    )
+    yield
+
+
+app = FastAPI(title=settings.service_name, lifespan=lifespan)
 app.state.settings = settings
 app.state.tts_backend = _select_tts_backend()
 app.state.stt_backend = _select_stt_backend()

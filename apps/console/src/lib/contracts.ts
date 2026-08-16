@@ -11,7 +11,7 @@
  */
 
 /** The `packages/vision-contract` version this file was written against. */
-export const OVERLAY_SCHEMA = "1.3"
+export const OVERLAY_SCHEMA = "1.4"
 
 export type MotionState = "absent" | "moving" | "settling" | "at_rest"
 
@@ -20,6 +20,15 @@ export interface BoundingBox {
   y_min: number
   x_max: number
   y_max: number
+}
+
+export interface IdentityMatch {
+  object_id: string | null
+  best_score: number | null
+  margin: number | null
+  runner_up_object_id: string | null
+  reason_code: string
+  escalated: boolean
 }
 
 export interface OverlayTrack {
@@ -36,6 +45,7 @@ export interface OverlayTrack {
    * live when it is seconds stale is worse than showing none.
    */
   depth_age_s: number | null
+  identity?: IdentityMatch | null
 }
 
 export interface OverlayFrame {
@@ -73,48 +83,68 @@ export interface VisionStatus {
   ready: boolean
   not_ready_reason: string | null
   config: {
-    detector_kind: string
-    depth_kind: string
-    verifier_kind: string
-    detection_labels: string[]
-    max_detections_per_frame?: number
-    source_fps: number
+    reason_kind: string
+    identity_kind: string
+    registration_labels: string[]
+    registration_capture_seconds: number
+    registration_target_views: number
+    registration_min_views: number
   }
-  frame_rate: { configured_fps: number; observed_fps: number | null }
-  models?: {
-    detector: { ready?: boolean; device?: string; [key: string]: unknown }
-    depth: { ready?: boolean; device?: string; [key: string]: unknown }
+  reasoner: {
+    kind: string
+    model: string
+    window_seconds: number
+    interval_seconds: number
+    max_frames: number
+    event_cooldown_seconds: number
+    promote_motion_events: boolean
   }
-  verifier: string
-  verification: {
-    queue_depth: number
-    concurrency: number
-    pending: number
-    dropped: number
-    failed: number
+  identity: {
+    embedder: {
+      identity_embedder?: string
+      ready?: boolean
+      device?: string
+      model?: string
+      average_latency_ms?: number
+      [key: string]: unknown
+    }
+    min_cosine: number
+    gallery: {
+      registry_version: number
+      gallery_objects: number
+      gallery_views: number
+      gallery_stale: boolean
+      refresh_failures: number
+    }
   }
-  overlay: { enabled: boolean; viewers: number; max_viewers: number; dropped: number }
+  registration: { attempts: number; succeeded: number; failed: number; active: number }
+  analysis: { queue_depth: number; pending: number; dropped: number; failed: number }
+  ingest: { frames_dropped_stale: number; control_dropped: number }
   metrics: {
     frames_processed: number
-    candidates_proposed: number
-    candidates_confirmed: number
-    candidates_rejected: number
-    candidates_unverified: number
-    sightings_not_promoted: number
-    vanishings_questioned: number
+    windows_analyzed: number
+    events_detected: number
+    identity_matched: number
+    identity_skipped: number
+    motion_events_suppressed: number
+    events_deduped: number
+    observations_written: number
   }
 }
 
-export type PipelineOutcome = "confirmed" | "rejected" | "unverified" | "not_promoted"
+export type PipelineOutcome =
+  | "written"
+  | "skipped_no_identity"
+  | "suppressed_by_policy"
+  | "deduped"
 
 export interface VisionEvent {
   at: string
-  track_id: string
   label: string
   action: string
+  object_id: string | null
   outcome: PipelineOutcome
-  reason_code: string
-  confidence: number
+  score: number | null
 }
 
 export interface GatewayStatus {
@@ -148,6 +178,8 @@ export interface GatewaySessionSummary {
   created_at: string
   last_seen_at: string
   publisher_present: boolean
+  assist_active: boolean
+  assist_state: AssistRequestState | null
 }
 
 export interface GatewaySessionList {
@@ -161,7 +193,8 @@ export interface PairingCode {
 
 /**
  * Remote Assist: "she pressed the button" through accept and the resulting
- * microphone-only room grant. `state` matches the gateway's `AssistState` and
+ * helper room grant. The shipped client publishes microphone only, but the
+ * current server token does not enforce a source restriction. `state` matches the gateway's `AssistState` and
  * the HUD's `assist` device event one-for-one -- all three sides of docs/12's
  * assist contract must agree on the same three words.
  */
@@ -210,6 +243,7 @@ export interface QueryAnswer {
   evidence?: { url: string; media_type: string } | null
 }
 
+
 export interface SpeechBackend {
   name: string
   /**
@@ -250,8 +284,42 @@ export interface AgentAnswer {
   reply: string
   answer_status: AgentAnswerStatus | null
   object_id: string | null
-  guard: "passed" | `vetoed:${number}`
+  guard: "passed" | `vetoed:${number}` | `registration:${"prompt" | "succeeded" | "failed"}`
   latency_ms: number
+}
+
+export interface EnrolledObject {
+  object_id: string
+  label: string
+  created_at?: string
+  registry_version: number
+}
+
+export type EnrollmentState = "capturing" | "extracting" | "succeeded" | "failed"
+
+export interface EnrollmentProgress {
+  object_id: string
+  label: string
+  state: EnrollmentState
+  frames_total: number
+  detections: number
+  quality_passed: number
+  selected_views: number
+  reason_code: string | null
+  message: string | null
+}
+
+export interface ObjectGalleryView {
+  view_id: string
+  object_id: string
+  view_index: number
+  crop_reference: string
+}
+
+export interface ObjectGallery {
+  registry_version: number
+  objects: EnrolledObject[]
+  views: ObjectGalleryView[]
 }
 
 export interface AgentStatus {

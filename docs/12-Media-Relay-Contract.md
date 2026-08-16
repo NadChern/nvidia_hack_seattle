@@ -169,48 +169,49 @@ Fan-out queues are bounded per subscriber. A slow HUD is closed with
 `event_backpressure` rather than growing memory without limit. Events are session-scoped,
 not replayed, and no inference or audio path depends on a HUD subscriber being present.
 
-The owning device may also `POST /v1/device/{session_id}/manual-trigger`. This arms one
-consume-once, 15-second turn. The Agent consumes it when the next transcript arrives and
-still requires the same bounded where-question shape; it only bypasses the wake prefix.
-This gives the X3 touchpad/UI a deterministic room-noise fallback without granting the
-device access to the Agent or allowing arbitrary text injection.
+The owning device may also `POST /v1/device/{session_id}/manual-trigger`, retained as a
+UI convenience. The current hands-free listener does not require or consume that arm:
+every completed non-empty transcript is sent to Nemotron while the remote-assist and
+return-audio echo gates are open. Nemotron owns general-versus-tool intent selection.
 
 ## Remote assist
 
-A third grant role, `helper`, joins an existing room to see and be heard by the wearer — a
-grandson talking his grandmother through something over her glasses' camera, with no
-Kotlin involved on the demo path. It is not the media plane's viewer grant with a fig
-leaf: `helper` may publish, but the grant restricts it to `can_publish_sources:
-["microphone"]`, confirmed against the installed `livekit-server-sdk` by minting a token
-and decoding it. A helper can never publish a camera or the data channel; the room's
-video-publisher-of-one invariant that this document's Boundary section depends on is
-therefore unaffected by a helper joining.
+A third grant role, `helper`, joins an existing room to see the wearer's camera and speak
+to the wearer. The helper app publishes microphone audio and never enables its camera or
+data channel. The data channel remains forbidden by the token. A server-side
+`can_publish_sources=["MICROPHONE"]` restriction was tested but LiveKit 1.13.4 rejected
+the actual audio publish despite accepting the decoded grant. The current helper grant is
+therefore temporarily unrestricted by source. This is explicit security debt: a modified
+helper client could publish camera media even though the shipped app does not. The strict
+xfail in `tests/test_helper_token.py` tracks restoration of server-side enforcement.
 
 ```text
-POST /v1/assist/{session_id}/request   device credential (like manual-trigger), or operator token
-GET  /v1/assist/requests               operator token
-WS   /v1/assist/events                 operator token; fans out assist_requested/accepted/ended
-POST /v1/assist/{session_id}/accept    consume-once, like the manual trigger
-POST /v1/sessions/{session_id}/helper  same response shape as /viewer; requires an accepted request
+POST /v1/assist/{session_id}/request   owning device credential or internal operator token
+GET  /v1/assist/requests               any valid paired device or internal operator token
+WS   /v1/assist/events                 paired-device header or operator token; global event fan-out
+POST /v1/assist/{session_id}/accept    any valid paired device or internal operator token
+POST /v1/sessions/{session_id}/helper  same helper auth; requires an accepted request
 ```
 
-`state` is `requested | accepted | ended` everywhere it appears, including the `assist`
-event relayed on the existing `WS /v1/device/{session_id}/events` channel below — the
-request registry and the HUD event must agree on the same three words.
+`state` is `requested | accepted | ended` in request and HUD/event lifecycle messages.
+`GET /v1/sessions` additively exposes `assist_state=requested|accepted|null`; `ended` is an
+event, after which current state is null. The backward-compatible `assist_active` boolean
+is true only for `accepted`.
 
-The gateway's ingest path only admits tracks whose participant identity matches the
-session's own publisher (`device_id`). A helper's microphone is real media in the room but
-never reaches Vision, Speech, or the Agent through this relay; it is out-of-band to
-everything this document otherwise describes. The Agent additionally stops its hands-free
-listener for a session while its assist call is `accepted` (`assist_active` on `GET
-/v1/sessions`), so a live helper is never transcribed or replied to.
+Both `requested` and `accepted` close the Agent's audio gate. A successful
+`call_remote_assistant()` tool call closes a local latch immediately, allows only the fixed
+acknowledgement that a request was sent, and closes the session's STT socket. Gateway
+session polling keeps the gate closed until the helper leaves or the unanswered request
+expires; a polling failure never reopens it. When the authoritative state returns null, the
+Agent creates a fresh STT subscription.
 
-**Open, not settled here:** whether `WS /v1/assist/events`'s "operator token" should
-instead be a device-scoped credential from the pairing flow, and whether the event stream
-should be scoped to a specific paired helper rather than global across every ringing
-session. See `role-prompts/Jacky-Remote-Assist.md`.
+The Gateway's inference ingest admits tracks only from the session publisher identity
+(`device_id`). Helper microphone media is real LiveKit room media but never enters Vision,
+Speech, the Agent, or Application Memory. Closing the Agent's STT subscription additionally
+prevents the wearer's side of the human conversation from reaching the model.
 
-## Device HUD events
+Assist listing and events are currently global across all ringing sessions for any valid
+paired helper credential. Scoping a helper to one wearer is deferred security work.
 
 ## Related
 

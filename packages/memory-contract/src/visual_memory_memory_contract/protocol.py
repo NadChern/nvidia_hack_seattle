@@ -17,6 +17,7 @@ minor version keeps working when Memory starts accepting an additional one.
 from __future__ import annotations
 
 import datetime as dt
+import math
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import (
@@ -35,6 +36,11 @@ SCHEMA_VERSION = "1.2"
 #: Lifecycle envelopes version independently of observations: they are a
 #: different shape with a different producer.
 LIFECYCLE_SCHEMA_VERSION = "1.0"
+
+#: Registered personal objects are a separate contract family. ObjectRef was
+#: already nullable in the observation contract, so enrollment does not change
+#: or bump SCHEMA_VERSION.
+OBJECT_REGISTRY_SCHEMA_VERSION = "1.0"
 
 
 def _utc_iso(value: dt.datetime) -> str:
@@ -80,6 +86,98 @@ Confidence: TypeAlias = Annotated[float, Field(ge=0.0, le=1.0)]
 
 class _Frozen(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
+
+
+class ObjectViewQuality(_Frozen):
+    """Auditable frame-selection measurements for one enrolled view."""
+
+    detection_confidence: Confidence
+    box_area_fraction: Confidence
+    sharpness_score: float = Field(ge=0.0)
+    mask_box_ratio: Confidence
+    quality_score: float = Field(ge=0.0)
+    angular_velocity_rad_s: float | None = Field(default=None, ge=0.0)
+
+
+class ObjectViewUpload(_Frozen):
+    """One reference crop and its two pooled C-RADIO vectors.
+
+    The crop is base64 because this is a bounded control API, not a media
+    stream. Gallery responses return only a controlled crop URL; they never
+    echo the image bytes on every cache refresh.
+    """
+
+    schema_version: str = OBJECT_REGISTRY_SCHEMA_VERSION
+    view_index: int = Field(ge=0)
+    quality: ObjectViewQuality
+    embedder_id: str
+    pooling: str
+    dim: int = Field(gt=0)
+    summary: tuple[float, ...]
+    pooled_spatial: tuple[float, ...]
+    crop_sha256: str = Field(min_length=64, max_length=64)
+    crop_media_type: str = "image/jpeg"
+    crop_base64: str
+
+    @model_validator(mode="after")
+    def _vectors_match_declared_dimension(self) -> ObjectViewUpload:
+        if len(self.summary) != self.dim or len(self.pooled_spatial) != self.dim:
+            raise ValueError("summary and pooled_spatial must both match dim")
+        if not all(math.isfinite(value) for value in self.summary + self.pooled_spatial):
+            raise ValueError("embedding vectors must contain only finite values")
+        if any(character not in "0123456789abcdefABCDEF" for character in self.crop_sha256):
+            raise ValueError("crop_sha256 must be hexadecimal")
+        return self
+
+
+class EnrolledObject(_Frozen):
+    """A user-owned stable identity, independent of sessions and tracks."""
+
+    schema_version: str = OBJECT_REGISTRY_SCHEMA_VERSION
+    object_id: str
+    label: str
+    idempotency_key: str
+    created_at: UtcTimestamp
+    updated_at: UtcTimestamp
+    registry_version: int = Field(ge=1)
+
+
+class ObjectView(_Frozen):
+    """Gallery metadata and float32 vectors for one selected reference view."""
+
+    schema_version: str = OBJECT_REGISTRY_SCHEMA_VERSION
+    view_id: str
+    object_id: str
+    view_index: int = Field(ge=0)
+    quality: ObjectViewQuality
+    embedder_id: str
+    pooling: str
+    dim: int = Field(gt=0)
+    summary: tuple[float, ...]
+    pooled_spatial: tuple[float, ...]
+    crop_sha256: str = Field(min_length=64, max_length=64)
+    crop_media_type: str
+    crop_reference: str
+    created_at: UtcTimestamp
+    registry_version: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def _vectors_match_declared_dimension(self) -> ObjectView:
+        if len(self.summary) != self.dim or len(self.pooled_spatial) != self.dim:
+            raise ValueError("summary and pooled_spatial must both match dim")
+        if not all(math.isfinite(value) for value in self.summary + self.pooled_spatial):
+            raise ValueError("embedding vectors must contain only finite values")
+        return self
+
+
+class ObjectGallery(_Frozen):
+    """A versioned full gallery, or an empty unchanged response."""
+
+    schema_version: str = OBJECT_REGISTRY_SCHEMA_VERSION
+    registry_version: int = Field(ge=0)
+    unchanged: bool = False
+    objects: tuple[EnrolledObject, ...] = ()
+    views: tuple[ObjectView, ...] = ()
 
 
 class ObjectRef(BaseModel):
@@ -351,6 +449,7 @@ class QueryResponse(_Frozen):
 
 __all__ = [
     "LIFECYCLE_SCHEMA_VERSION",
+    "OBJECT_REGISTRY_SCHEMA_VERSION",
     "SCHEMA_VERSION",
     "AnswerStatus",
     "AnsweredPlacement",
@@ -369,8 +468,13 @@ __all__ = [
     "LifecycleScope",
     "Location",
     "LocationRelation",
+    "EnrolledObject",
+    "ObjectGallery",
     "ObjectRef",
     "ObjectState",
+    "ObjectView",
+    "ObjectViewQuality",
+    "ObjectViewUpload",
     "Observation",
     "ObservationConfidence",
     "Placement",

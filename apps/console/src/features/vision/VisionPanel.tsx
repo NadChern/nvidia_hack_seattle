@@ -1,4 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
+import type { ReactNode } from "react"
+import { BrainCircuit, Database, Fingerprint, Images } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -7,39 +9,80 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { get } from "@/lib/api"
 import type { PipelineOutcome, VisionEvent, VisionStatus } from "@/lib/contracts"
 
-const OUTCOME_VARIANT: Record<PipelineOutcome, "default" | "secondary" | "destructive" | "outline"> =
-  {
-    confirmed: "default",
-    rejected: "destructive",
-    unverified: "outline",
-    not_promoted: "secondary",
-  }
+type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
-/** Local wall-clock, to the second -- what you compare against a stopwatch. */
-function clockTime(iso: string): string {
-  const at = new Date(iso)
-  return Number.isNaN(at.getTime()) ? "--:--:--" : at.toLocaleTimeString(undefined, { hour12: false })
+const OUTCOME: Record<
+  PipelineOutcome,
+  { variant: BadgeVariant; label: string; explanation: string }
+> = {
+  written: {
+    variant: "default",
+    label: "memory written",
+    explanation: "Cosmos placement and personal identity passed every write gate.",
+  },
+  skipped_no_identity: {
+    variant: "destructive",
+    label: "identity skipped",
+    explanation: "The crop did not match a registered personal object strongly enough.",
+  },
+  suppressed_by_policy: {
+    variant: "outline",
+    label: "motion suppressed",
+    explanation: "Motion events are diagnostic-only in the placed-only demo policy.",
+  },
+  deduped: {
+    variant: "secondary",
+    label: "duplicate",
+    explanation: "A recent identical object/action was already recorded.",
+  },
 }
 
+function clockTime(iso: string): string {
+  const at = new Date(iso)
+  return Number.isNaN(at.getTime())
+    ? "--:--:--"
+    : at.toLocaleTimeString(undefined, { hour12: false })
+}
 
-function Stat({
-  label,
+function compactModel(model: string): string {
+  return model.split("/").at(-1) ?? model
+}
+
+function shortId(value: string | null): string | null {
+  if (!value) return null
+  return value.length > 18 ? `${value.slice(0, 10)}…${value.slice(-5)}` : value
+}
+
+function Receipt({
+  icon,
+  stage,
   value,
-  tone,
-  hint,
+  detail,
 }: {
-  label: string
-  value: string | number
-  tone?: "normal" | "warn" | "bad"
-  hint?: string
+  icon: ReactNode
+  stage: string
+  value: string
+  detail: string
 }) {
-  const color =
-    tone === "bad" ? "text-destructive" : tone === "warn" ? "text-amber-400" : "text-foreground"
   return (
-    <div className="rounded-lg border p-2.5">
+    <div className="rounded-lg border bg-muted/15 p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {stage}
+      </div>
+      <div className="tnum text-xl font-semibold">{value}</div>
+      <div className="mt-1 text-[11px] leading-tight text-muted-foreground">{detail}</div>
+    </div>
+  )
+}
+
+function Stat({ label, value, warn = false }: { label: string; value: number; warn?: boolean }) {
+  return (
+    <div className="rounded-md border px-2.5 py-2">
       <div className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className={`tnum text-lg font-semibold ${color}`}>{value}</div>
-      {hint && <div className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{hint}</div>}
+      <div className={`tnum text-base font-semibold ${warn ? "text-destructive" : ""}`}>
+        {value}
+      </div>
     </div>
   )
 }
@@ -60,23 +103,18 @@ export function VisionPanel() {
   })
 
   const data = status.data
-
-  // The rate the thresholds were built from, against the rate frames are
-  // really arriving. Every stability threshold is a frame count derived from
-  // the configured value, so a disagreement silently rescales all of them --
-  // this is the one place a person can see it.
-  const configured = data?.frame_rate.configured_fps
-  const observed = data?.frame_rate.observed_fps
-  const rateDisagrees =
-    configured !== undefined &&
-    observed !== null &&
-    observed !== undefined &&
-    Math.abs(observed - configured) / configured > 0.25
+  const recent = [...(events.data?.events ?? [])].reverse()
+  const embedder = data?.identity.embedder
 
   return (
     <Card className="flex h-full flex-col">
       <CardHeader className="flex-row items-center justify-between gap-3 space-y-0">
-        <CardTitle className="text-base">Vision</CardTitle>
+        <div>
+          <CardTitle className="text-base">Vision pipeline receipts</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Window reasoning → personal identity → structured Memory
+          </p>
+        </div>
         {status.isError ? (
           <Badge variant="destructive">unreachable</Badge>
         ) : data ? (
@@ -88,112 +126,124 @@ export function VisionPanel() {
         )}
       </CardHeader>
 
-      <CardContent className="flex flex-1 flex-col gap-3">
-        {status.isError && (
-          <p className="text-xs text-muted-foreground">
-            No vision worker on <code>/api/vision</code>. Everything else on this page
-            still works.
-          </p>
-        )}
+      <CardContent className="min-h-0 flex-1">
+        <ScrollArea className="h-full pr-3">
+          {status.isError && (
+            <p className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs">
+              Vision status is unavailable. The raw glasses preview can remain live even when
+              reasoning is not ready.
+            </p>
+          )}
 
-        {data && (
-          <>
-            <div className="flex flex-wrap gap-1.5 text-xs">
-              <Badge variant="outline">{data.config.detector_kind}</Badge>
-              <Badge variant="outline">{data.verifier}</Badge>
-              <Badge variant="outline">depth: {data.config.depth_kind}</Badge>
-            </div>
+          {data && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-1.5 text-xs">
+                <Badge variant="outline">{compactModel(data.reasoner.model)}</Badge>
+                <Badge variant="outline">
+                  {String(embedder?.identity_embedder ?? data.config.identity_kind)}
+                </Badge>
+                <Badge variant="outline">
+                  {data.reasoner.window_seconds}s window · every {data.reasoner.interval_seconds}s
+                </Badge>
+                <Badge variant={data.reasoner.promote_motion_events ? "destructive" : "secondary"}>
+                  {data.reasoner.promote_motion_events ? "motion promotion on" : "placed-only writes"}
+                </Badge>
+              </div>
 
-            {data.config.detection_labels.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                looking for{" "}
-                <span className="text-foreground">
-                  {data.config.detection_labels.join(", ")}
-                </span>
-              </p>
-            )}
+              <div className="grid grid-cols-2 gap-2">
+                <Receipt
+                  icon={<Images className="size-3.5" />}
+                  stage="Registered gallery"
+                  value={`${data.identity.gallery.gallery_objects} objects`}
+                  detail={`${data.identity.gallery.gallery_views} C-RADIO reference views`}
+                />
+                <Receipt
+                  icon={<BrainCircuit className="size-3.5" />}
+                  stage="Cosmos windows"
+                  value={String(data.metrics.windows_analyzed)}
+                  detail={`${data.metrics.events_detected} memory-worthy events reported`}
+                />
+                <Receipt
+                  icon={<Fingerprint className="size-3.5" />}
+                  stage="Personal identity"
+                  value={String(data.metrics.identity_matched)}
+                  detail={`${data.metrics.identity_skipped} events rejected by the identity gate`}
+                />
+                <Receipt
+                  icon={<Database className="size-3.5" />}
+                  stage="Durable Memory"
+                  value={String(data.metrics.observations_written)}
+                  detail="confirmed observations written with evidence"
+                />
+              </div>
 
-            <div className="grid grid-cols-3 gap-2">
-              <Stat label="frames" value={data.metrics.frames_processed} />
-              <Stat
-                label="fps"
-                value={observed === null || observed === undefined ? "—" : observed.toFixed(1)}
-                tone={rateDisagrees ? "bad" : "normal"}
-                hint={rateDisagrees ? `configured ${configured}` : undefined}
-              />
-              <Stat label="confirmed" value={data.metrics.candidates_confirmed} />
-              <Stat
-                label="questions"
-                value={data.metrics.vanishings_questioned}
-                hint="objects that vanished at rest"
-              />
-              <Stat
-                label="pending"
-                value={data.verification.pending}
-                tone={data.verification.pending > 0 ? "warn" : "normal"}
-                hint="awaiting a verifier"
-              />
-              <Stat
-                label="dropped"
-                value={data.verification.dropped}
-                tone={data.verification.dropped > 0 ? "bad" : "normal"}
-                hint="must be zero"
-              />
-            </div>
+              <div className="grid grid-cols-4 gap-2">
+                <Stat label="frames" value={data.metrics.frames_processed} />
+                <Stat label="pending" value={data.analysis.pending} warn={data.analysis.pending > 1} />
+                <Stat label="dropped" value={data.analysis.dropped} warn={data.analysis.dropped > 0} />
+                <Stat label="failed" value={data.analysis.failed} warn={data.analysis.failed > 0} />
+              </div>
 
-            {rateDisagrees && (
-              <p className="text-xs text-destructive">
-                The relay is delivering {observed?.toFixed(1)} fps but thresholds were
-                built for {configured}. Every dwell and settle window means a different
-                duration than intended.
-              </p>
-            )}
+              <div className="rounded-lg border p-3 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Registration:</span>{" "}
+                {data.registration.succeeded} succeeded, {data.registration.failed} failed,
+                {" "}{data.registration.active} active. Identity writes require at least{" "}
+                {(data.identity.min_cosine * 100).toFixed(0)}% cosine similarity.
+              </div>
 
-            {data.verification.dropped > 0 && (
-              <p className="text-xs text-destructive">
-                {data.verification.dropped} candidate
-                {data.verification.dropped === 1 ? "" : "s"} discarded because
-                verification could not keep up. Each one is a real event that was seen
-                and never recorded.
-              </p>
-            )}
-          </>
-        )}
-
-        <div className="flex-1">
-          <div className="mb-1.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            Activity
-          </div>
-          <ScrollArea className="h-48 rounded-lg border">
-            <div className="divide-y">
-              {(events.data?.events ?? []).length === 0 && (
-                <p className="p-3 text-xs text-muted-foreground">
-                  Nothing yet. Candidates appear here as the pipeline decides them.
-                </p>
-              )}
-              {[...(events.data?.events ?? [])].reverse().map((event, index) => (
-                <div
-                  key={`${event.at}-${event.track_id}-${index}`}
-                  className="flex items-center gap-2 px-3 py-2 text-xs"
-                >
-                  {/* When it happened, first. An activity log without times
-                      cannot answer "did that fire when I put the keys down?",
-                      which is the only question anyone asks of it. */}
-                  <span className="tnum shrink-0 text-muted-foreground" title={event.at}>
-                    {clockTime(event.at)}
-                  </span>
-                  <Badge variant={OUTCOME_VARIANT[event.outcome]} className="shrink-0">
-                    {event.action}
-                  </Badge>
-                  <span className="truncate font-medium">{event.label}</span>
-                  <span className="tnum ml-auto shrink-0 text-muted-foreground">
-                    {event.reason_code}
-                  </span>
+              <div>
+                <div className="mb-2 flex items-center justify-between">
+                  <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Cosmos and identity activity
+                  </div>
+                  <div className="text-[10px] text-muted-foreground">newest first</div>
                 </div>
-              ))}
+                <div className="overflow-hidden rounded-lg border">
+                  {events.isError ? (
+                    <p className="p-3 text-xs text-destructive">Activity feed unavailable.</p>
+                  ) : recent.length === 0 ? (
+                    <p className="p-4 text-xs leading-relaxed text-muted-foreground">
+                      No placement receipts yet. Register an object, place it in view, and leave
+                      it at rest through a complete Cosmos window.
+                    </p>
+                  ) : (
+                    <div className="divide-y">
+                      {recent.map((event, index) => {
+                        const outcome = OUTCOME[event.outcome]
+                        const objectId = shortId(event.object_id)
+                        return (
+                          <div key={`${event.at}-${event.label}-${index}`} className="p-3">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="tnum text-muted-foreground" title={event.at}>
+                                {clockTime(event.at)}
+                              </span>
+                              <Badge variant="outline" className="capitalize">
+                                {event.action.replaceAll("_", " ")}
+                              </Badge>
+                              <span className="font-semibold">{event.label}</span>
+                              {event.score !== null && (
+                                <Badge variant="secondary">
+                                  personal {(event.score * 100).toFixed(0)}%
+                                </Badge>
+                              )}
+                              <Badge variant={outcome.variant} className="ml-auto">
+                                {outcome.label}
+                              </Badge>
+                            </div>
+                            <div className="mt-1.5 flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+                              <span>{outcome.explanation}</span>
+                              {objectId && <code className="shrink-0">{objectId}</code>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
-          </ScrollArea>
-        </div>
+          )}
+        </ScrollArea>
       </CardContent>
     </Card>
   )

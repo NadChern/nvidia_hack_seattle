@@ -107,8 +107,9 @@ export function OverlayCanvas({ frame, videoRef, showLabels }: OverlayCanvasProp
         const boxWidth = (track.box.x_max - track.box.x_min) * media.width
         const boxHeight = (track.box.y_max - track.box.y_min) * media.height
 
-        context.lineWidth = 2
-        context.strokeStyle = color
+        const registered = track.identity?.object_id !== null && track.identity?.object_id !== undefined
+        context.lineWidth = registered ? 4 : 2
+        context.strokeStyle = registered ? "#f8fafc" : color
         context.strokeRect(x, y, boxWidth, boxHeight)
 
         if (!showLabels) continue
@@ -121,7 +122,11 @@ export function OverlayCanvas({ frame, videoRef, showLabels }: OverlayCanvasProp
           track.depth_m === null
             ? ""
             : `  ${track.depth_m.toFixed(2)}m${stale ? ` (${track.depth_age_s!.toFixed(0)}s ago)` : ""}`
-        const text = `${track.label}  ${(track.confidence * 100).toFixed(0)}%${depth}`
+        const identityScore = track.identity?.best_score
+        const identity = registered
+          ? `  personal${identityScore === null || identityScore === undefined ? "" : ` ${(identityScore * 100).toFixed(0)}%`}`
+          : ""
+        const text = `${track.label}  ${(track.confidence * 100).toFixed(0)}%${identity}${depth}`
         context.font =
           "500 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
         const metrics = context.measureText(text)

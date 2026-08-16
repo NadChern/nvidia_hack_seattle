@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 
 from application_memory import __version__
 from application_memory.deps import authorize_request, session_factory_of, settings_of
-from application_memory.store import models
+from application_memory.store import models, repository
 
 router = APIRouter(tags=["status"])
 
@@ -55,6 +55,9 @@ def status(request: Request) -> dict[str, Any]:
             "lifecycle_signals": count(models.LifecycleSignal),
             "objects": count(models.ObjectStateRow),
             "evidence": count(models.EvidenceRow),
+            "registered_objects": count(models.EnrolledObjectRow),
+            "registered_views": count(models.ObjectViewRow),
+            "registry_version": repository.registry_version(db),
         }
 
     return {
@@ -67,6 +70,9 @@ def status(request: Request) -> dict[str, Any]:
             "promote_min_event_confidence": settings.promote_min_event_confidence,
             "promote_min_identity_confidence": settings.promote_min_identity_confidence,
             "require_evidence_for_placement": settings.require_evidence_for_placement,
+            "registry_max_views_per_object": settings.registry_max_views_per_object,
+            "registry_max_embedding_dim": settings.registry_max_embedding_dim,
+            "max_registration_crop_bytes": settings.max_registration_crop_bytes,
             "retention_hours": settings.retention_hours,
             "database": "sqlite" if settings.is_sqlite else "external",
         },

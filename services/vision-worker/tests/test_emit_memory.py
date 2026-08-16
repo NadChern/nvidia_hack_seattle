@@ -24,6 +24,7 @@ from visual_memory_vision_contract.protocol import (
     Detection,
     DetectorRef,
     EvidenceWindow,
+    IdentityMatch,
     Point2D,
     VerifierResult,
 )
@@ -60,7 +61,12 @@ def a_jpeg_frame(
     )
 
 
-def a_candidate(*, action: str = "placed", confidence: float = 0.9) -> CandidateEvent:
+def a_candidate(
+    *,
+    action: str = "placed",
+    confidence: float = 0.9,
+    identity: IdentityMatch | None = None,
+) -> CandidateEvent:
     started = T0
     ended = T0 + dt.timedelta(seconds=3)
     return CandidateEvent(
@@ -82,6 +88,7 @@ def a_candidate(*, action: str = "placed", confidence: float = 0.9) -> Candidate
         tracker=_TRACKER,
         state_machine_version="vision-stability-v1",
         pipeline_version="vision-pipeline-v1",
+        identity=identity,
     )
 
 
@@ -305,3 +312,66 @@ async def test_the_verifier_description_becomes_the_place() -> None:
     body = json.loads(memory.observation_requests[0].content)
     assert body["location"]["surface"] == "a white desk next to a tablet"
     assert body["location"]["room"] is None
+
+
+async def test_registered_identity_maps_cosine_to_the_memory_policy_floor() -> None:
+    memory = RecordingMemory()
+    emitter = MemoryEmitter(
+        a_client(memory),
+        min_identity_cosine=0.8,
+        memory_min_identity_confidence=0.7,
+    )
+    candidate = a_candidate(
+        identity=IdentityMatch(
+            object_id="object_my_keys",
+            best_score=0.8,
+            margin=0.2,
+            reason_code="embedding_resolved",
+        )
+    )
+
+    await emitter.emit(candidate, a_confirmed_result(candidate), [a_jpeg_frame(0)])
+
+    body = json.loads(memory.observation_requests[0].content)
+    assert body["object"]["object_id"] == "object_my_keys"
+    assert body["confidence"]["identity"] == 0.7
+
+
+async def test_unregistered_identity_keeps_pre_feature_detection_confidence() -> None:
+    memory = RecordingMemory()
+    emitter = MemoryEmitter(a_client(memory), memory_min_identity_confidence=0.7)
+    candidate = a_candidate(
+        confidence=0.42,
+        identity=IdentityMatch(
+            object_id=None,
+            best_score=0.6,
+            reason_code="below_threshold",
+        ),
+    )
+
+    await emitter.emit(candidate, a_confirmed_result(candidate), [a_jpeg_frame(0)])
+
+    body = json.loads(memory.observation_requests[0].content)
+    assert body["object"]["object_id"] is None
+    assert body["confidence"]["identity"] == 0.42
+
+
+async def test_registered_track_end_writes_one_observed_still_without_a_clip() -> None:
+    memory = RecordingMemory()
+    emitter = MemoryEmitter(a_client(memory))
+    candidate = a_candidate(
+        action="observed",
+        identity=IdentityMatch(
+            object_id="object_my_keys",
+            best_score=0.9,
+            reason_code="embedding_resolved",
+        ),
+    )
+
+    await emitter.emit_last_seen(candidate, [a_jpeg_frame(0)])
+
+    body = json.loads(memory.observation_requests[0].content)
+    assert body["event"]["action"] == "observed"
+    assert body["object"]["object_id"] == "object_my_keys"
+    assert len(memory.evidence_requests) == 1
+    assert memory.evidence_requests[0].headers["content-type"] == "image/jpeg"

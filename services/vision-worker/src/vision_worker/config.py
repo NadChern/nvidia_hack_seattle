@@ -12,7 +12,7 @@ import os
 from functools import lru_cache
 from typing import Annotated, Literal
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 Environment = Literal["dev", "ci", "deploy"]
@@ -22,6 +22,10 @@ Environment = Literal["dev", "ci", "deploy"]
 #: real detector (`detect/yoloe.py`), requiring the `models` extra
 #: (`uv sync --extra models`) and a CUDA-capable device.
 DetectorKind = Literal["fixture", "yoloe"]
+#: Personal-object identity is optional and annotates tracks without vetoing
+#: detections or events. `fixture` is deterministic CPU CI; `radio` loads the
+#: pinned C-RADIOv4 adapter from the models extra.
+IdentityKind = Literal["none", "fixture", "radio"]
 #: `none` (the default) runs the pipeline with no depth adapter at all --
 #: the same image-space-only shape the service has always had, not a
 #: degraded state. `fixture` scripts a constant range for testing the
@@ -123,6 +127,81 @@ class Settings(BaseSettings):
     #: without a code edit on the platform this project cannot test.
     yoloe_device: str | None = None
 
+    # --- Personal-object identity -------------------------------------------
+    identity_kind: IdentityKind = "none"
+    identity_device: str | None = None
+    identity_gallery_ttl_s: float = Field(default=30.0, gt=0)
+    identity_track_frames: int = Field(default=3, ge=1, le=8)
+    identity_min_detection_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    identity_min_scale: float = Field(default=0.01, ge=0.0, le=1.0)
+    #: Keys-only Phase-0 probe starting values. Configurable and re-tuned once
+    #: masked enrollment crops replace the conservative full-image probe.
+    identity_min_cosine: float = Field(default=0.8334, ge=0.0, le=1.0)
+    identity_min_margin: float = Field(default=0.0440, ge=0.0, le=1.0)
+    identity_escalation_low: float = Field(default=0.8216, ge=0.0, le=1.0)
+    identity_summary_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    identity_vlm_escalation: bool = True
+    #: Promotion confidence is not raw cosine. Resolved matches are mapped to
+    #: this Memory policy floor or above; unresolved objects retain detection
+    #: confidence so identity cannot make the pre-existing world disappear.
+    memory_min_identity_confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+
+    # --- Registration capture ------------------------------------------------
+    registration_capture_seconds: float = Field(default=6.0, gt=0)
+    registration_max_capture_seconds: float = Field(default=15.0, gt=0)
+    #: Coarse temporal search scans evenly spaced frames in four-frame Cosmos
+    #: batches before the image pass. Original relay frames near a temporal hit
+    #: are then dynamically batched by vLLM for tight grounding.
+    registration_temporal_max_frames: int = Field(default=16, ge=4, le=64)
+    registration_temporal_batch_frames: int = Field(default=4, ge=2, le=8)
+    registration_candidate_interval_seconds: float = Field(default=0.75, gt=0.0, le=3.0)
+    registration_max_frames: int = Field(default=24, ge=2, le=240)
+    registration_target_views: int = Field(default=6, ge=2, le=8)
+    registration_min_views: int = Field(default=2, ge=2, le=8)
+    registration_dedup_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
+    registration_min_mask_box_ratio: float = Field(default=0.4, ge=0.0, le=1.0)
+    registration_max_mask_box_ratio: float = Field(default=1.0, ge=0.0, le=1.2)
+    registration_relative_sharpness_floor: float = Field(default=0.5, ge=0.0)
+    registration_max_angular_velocity_rad_s: float = Field(default=2.5, gt=0)
+
+    # --- Window reasoner (see reason/cosmos.py, pipeline.py) -----------------
+    #: The VLM that localizes objects and classifies events over a short video
+    #: window -- this replaces the old detect/track/stability/verify chain.
+    #: OpenAI-compatible (vLLM). The model runs wherever it runs; this service
+    #: holds no weights. On the GN100 this is Cosmos 3 Nano at :8001/v1.
+    #: `cosmos` is the real reasoner (`reason/cosmos.py`), needing a reachable
+    #: vLLM endpoint. `fixture` returns a scripted empty result -- the ci/no-GPU
+    #: shape that proves every other piece of plumbing works without a model.
+    reason_kind: Literal["cosmos", "fixture"] = "cosmos"
+    reason_base_url: str = "http://127.0.0.1:8001/v1"
+    reason_model: str = "nvidia/Cosmos3-Nano"
+    #: The rolling window handed to the reasoner, and how often a new one fires.
+    #: Cosmos is ~5s+/call warm, so windows are short (few frames) and roughly
+    #: non-overlapping -- the pipeline's event dedup tolerates a slow cadence.
+    #: One window is analyzed at a time (one GPU, one model server).
+    reason_window_seconds: float = Field(default=6.0, gt=0)
+    reason_interval_seconds: float = Field(default=7.0, gt=0)
+    reason_max_frames: int = Field(default=4, ge=1, le=16)
+    #: Cosmos gives no numeric score; the memory contract needs one for
+    #: `confidence.event`. Identity confidence is computed from the cosine.
+    reason_event_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+    reason_max_tokens: int = Field(default=320, ge=64)
+    reason_timeout_s: float = Field(default=120.0, gt=0)
+    #: How long the same (object, action) is suppressed after a write, so
+    #: overlapping windows do not re-report one placement many times.
+    event_cooldown_seconds: float = Field(default=20.0, gt=0)
+    #: Whether picked_up/carried are written to memory alongside placed. Off by
+    #: default: at ~1fps Cosmos hallucinates handling on a resting object, and a
+    #: single false pickup flips a confirmed placement to "moved afterward" -- so
+    #: only `placed` is promoted, and "where is it" always reflects the last
+    #: confirmed location. Turn on to record the full movement timeline once the
+    #: frame rate is high enough for motion classification to be reliable.
+    promote_motion_events: bool = False
+    #: Cosmos boxes run tight/noisy on small objects; the identity crop pads the
+    #: box by this fraction on each side before cropping (no segmenter -- SAM3
+    #: is gated), keeping the object inside the frame the embedder sees.
+    identity_box_padding: float = Field(default=0.12, ge=0.0, le=1.0)
+
     # --- Depth ---------------------------------------------------------------
     depth_kind: DepthKind = "none"
     moge_model_id: str = "Ruicheng/moge-2-vitl-normal"
@@ -140,10 +219,11 @@ class Settings(BaseSettings):
     fixture_depth_range_m: float = Field(default=1.5, gt=0)
 
     # --- Stability thresholds (see domain/stability.py) ----------------------
-    #: Expressed as durations, never as frame counts: a frame count only means
-    #: something against a known rate, and the rate is `source_fps` above.
-    #: `StabilityConfig.from_durations` does the conversion; `/v1/status`
-    #: reports both halves so an evaluation run can cite either.
+    #: Expressed as durations because the machine compares them directly against
+    #: the samples' own timestamps -- a frame count would silently mean a
+    #: different real duration at every source rate (the exact bug this avoids).
+    #: `/v1/status` reports the observed rate alongside, so an evaluation run can
+    #: see how densely samples fell inside each window.
     #:
     #: Defaults are the plan's values: 0.5s of held position confirms a
     #: placement *after* observed motion, because motion-then-settle is strong
@@ -282,6 +362,26 @@ class Settings(BaseSettings):
             return tuple(item.strip() for item in value.split(",") if item.strip())
         return value
 
+    @model_validator(mode="after")
+    def _identity_band_is_ordered(self) -> Settings:
+        if self.identity_escalation_low > self.identity_min_cosine:
+            raise ValueError("identity_escalation_low cannot exceed identity_min_cosine")
+        if self.registration_min_views > self.registration_target_views:
+            raise ValueError("registration_min_views cannot exceed registration_target_views")
+        if self.registration_temporal_batch_frames > self.registration_temporal_max_frames:
+            raise ValueError(
+                "registration_temporal_batch_frames cannot exceed registration_temporal_max_frames"
+            )
+        if self.registration_capture_seconds > self.registration_max_capture_seconds:
+            raise ValueError(
+                "registration_capture_seconds cannot exceed registration_max_capture_seconds"
+            )
+        if self.registration_min_mask_box_ratio > self.registration_max_mask_box_ratio:
+            raise ValueError(
+                "registration_min_mask_box_ratio cannot exceed registration_max_mask_box_ratio"
+            )
+        return self
+
     @property
     def memory_token(self) -> str | None:
         return self.internal_api_token.get_secret_value() if self.internal_api_token else None
@@ -301,6 +401,7 @@ __all__ = [
     "DepthKind",
     "DetectorKind",
     "Environment",
+    "IdentityKind",
     "Settings",
     "VerifierKind",
     "get_settings",

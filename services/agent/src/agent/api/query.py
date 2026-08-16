@@ -8,8 +8,9 @@ import time
 from fastapi import APIRouter, Request
 
 from agent.deps import authorize_request, backend_of, metrics_of
-from agent.guard import guard_reply
+from agent.guard import guard_registration_reply, guard_reply, registration_message
 from agent.models import AgentQueryRequest, AgentQueryResponse
+from agent.stub import registration_label
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["agent"])
@@ -21,7 +22,12 @@ async def query(body: AgentQueryRequest, request: Request) -> AgentQueryResponse
     started = time.perf_counter()
 
     draft = await backend_of(request).query(body.text, body.session_id)
-    guarded = guard_reply(draft.text, draft.tool_result)
+    if draft.registration_started:
+        label = registration_label(body.text) or "object"
+        prompt = registration_message("prompt", label)
+        guarded = guard_registration_reply(prompt, step="prompt", label=label)
+    else:
+        guarded = guard_reply(draft.text, draft.tool_result)
     metrics_of(request).record_guard(guarded.verdict)
     latency_ms = max(0, round((time.perf_counter() - started) * 1000.0))
 

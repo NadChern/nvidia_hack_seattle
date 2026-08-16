@@ -174,14 +174,30 @@ class Tap:
         await self._client.aclose()
 
 
+def _tamper_jwt_signature(token: str) -> str:
+    """Change one significant signature character while preserving JWT claims.
+
+    The prior version inspected the *last* character but replaced the *first*.
+    When a valid signature started with ``A`` and ended with anything else, the
+    replacement was also ``A`` and the supposedly invalid token was unchanged.
+    That made the real-LiveKit security assertion fail roughly once per 64 CI
+    runs. Inspecting and replacing the same first character makes mutation
+    unconditional and avoids base64url padding bits at the end of the segment.
+    """
+    segments = token.split(".")
+    if len(segments) != 3 or any(not segment for segment in segments):
+        raise ValueError("token is not a three-segment JWT")
+    header, claims, signature = segments
+    replacement = "A" if signature[0] != "A" else "B"
+    return f"{header}.{claims}.{replacement}{signature[1:]}"
+
+
 async def _invalid_livekit_token_is_rejected(livekit_url: str, token: str) -> bool:
     """A tampered signature must not open a room."""
     from livekit import rtc
 
     room = rtc.Room()
-    # Flip the last signature character: same claims, broken signature.
-    head, _, signature = token.rpartition(".")
-    tampered = f"{head}.{'A' if signature[-1] != 'A' else 'B'}{signature[1:]}"
+    tampered = _tamper_jwt_signature(token)
     try:
         await room.connect(livekit_url, tampered, options=rtc.RoomOptions(connect_timeout=5.0))
     except Exception:

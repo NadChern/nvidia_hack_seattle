@@ -23,5 +23,8 @@ def status(request: Request) -> AgentStatusResponse:
         backend=backend,
         model=settings.llm_model,
         endpoint_host=settings.endpoint_host,
+        vision_endpoint_host=settings.vision_endpoint_host,
+        registration_capture_seconds=settings.registration_capture_seconds,
+        registration_timeout_s=settings.registration_timeout_s,
         metrics=AgentMetricsResponse.model_validate(metrics_of(request).snapshot()),
     )

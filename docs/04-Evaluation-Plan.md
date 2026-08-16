@@ -9,6 +9,30 @@ Target 60 first-person clips recorded with the actual glasses; use at least 40 i
 
 Keep clips from the same continuous recording, room setup, and repeated action sequence in the same split to reduce leakage. Record participant, object instance, room, lighting, and capture conditions so results can be sliced by scenario.
 
+### Personal-object identity protocol
+
+The identity set adds **same-instance positives and different-instance, same-class negatives**.
+For each enrolled reference set, pair one query of the same physical object with one query of a
+different physical object carrying the same label. Keep the protocol balanced: always accepting
+then produces F1=0.667 and cannot masquerade as instance recognition. Report accept/reject F1,
+positive accuracy, negative accuracy, ROC-AUC, cosine distributions, identity margin, coverage,
+and VLM escalation rate. Accuracy is always paired with embed latency and peak memory.
+
+Thresholds move only on the development set. The frozen held-out set reports the selected
+threshold once. Every rate includes its numerator/denominator, and a set below approximately 30
+physical objects is explicitly labeled too small for a reliability claim. The preliminary
+keys-only set (3 keyrings, 25 balanced positive/negative trials) is a demo risk check, not the
+frozen set; its record is in [Identity Probe Results](spikes/identity-probe/RESULTS.md).
+`services/vision-worker/scripts/eval_identity.py` prints the fixed end-to-end table from labeled
+predictions and reads the running service's resolved/ambiguous/unmatched/escalated, latency, and
+gallery counters from `/v1/status`, so offline evaluation and the demo report the same runtime
+measurements.
+
+The voice-routing set labels utterances as `register`, `where`, or `other`, including wake-prefix
+variants and paraphrases. Report the full confusion matrix, overall accuracy, and the asymmetric
+misroute-to-registration rate (a side effect) with numerator/denominator. Re-run the complete
+where-answer guard suite unchanged whenever registration vocabulary or routing changes.
+
 ## Ground-truth labels
 
 For every clip, label:

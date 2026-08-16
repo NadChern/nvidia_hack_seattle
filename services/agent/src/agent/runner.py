@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections import OrderedDict
-from typing import Any
+from typing import Any, cast
 
 from google.adk.agents import LlmAgent
 from google.adk.agents.run_config import RunConfig
@@ -18,6 +18,7 @@ from agent.agent import REQUEST_SESSION_STATE
 from agent.config import Settings
 from agent.errors import AgentServiceError, DependencyUnavailableError
 from agent.stub import DraftAnswer
+from agent.tools.assist import ASSIST_REQUESTED_REPLY
 
 APP_NAME = "visual-memory-agent"
 USER_ID = "wearer"
@@ -111,6 +112,8 @@ class AdkRunnerBackend:
             await self._ensure_session(adk_session_id)
             reply = ""
             tool_result: QueryResponse | None = None
+            registration_started = False
+            assist_requested = False
             try:
                 events = self._runner.run_async(
                     user_id=USER_ID,
@@ -124,18 +127,34 @@ class AdkRunnerBackend:
                 )
                 async for event in events:
                     for response in event.get_function_responses():
-                        if response.name != "where_is" or response.response is None:
+                        if response.response is None:
                             continue
                         payload: Any = response.response
-                        tool_result = QueryResponse.model_validate(payload)
+                        if response.name == "where_is":
+                            tool_result = QueryResponse.model_validate(payload)
+                        elif response.name == "start_registration" and isinstance(payload, dict):
+                            registration_payload = cast("dict[str, Any]", payload)
+                            registration_started = bool(registration_payload.get("started", False))
+                        elif response.name == "call_remote_assistant" and isinstance(payload, dict):
+                            assist_payload = cast("dict[str, Any]", payload)
+                            assist_requested = bool(assist_payload.get("requested", False))
                     if event.is_final_response() and event.content and event.content.parts:
-                        text_parts = [part.text for part in event.content.parts if part.text]
+                        # Nemotron exposes chain-of-thought as text-bearing
+                        # parts marked ``thought=True``. It is neither wearer
+                        # output nor safe TTS content; retain only the answer.
+                        text_parts = [
+                            part.text
+                            for part in event.content.parts
+                            if part.text and not part.thought
+                        ]
                         if text_parts:
                             reply = "".join(text_parts).strip()
             except AgentServiceError:
-                raise
+                if not assist_requested:
+                    raise
             except Exception as exc:
-                raise DependencyUnavailableError("language model is unavailable") from exc
+                if not assist_requested:
+                    raise DependencyUnavailableError("language model is unavailable") from exc
             finally:
                 self._sessions.trim_to_turns(
                     app_name=APP_NAME,
@@ -144,7 +163,14 @@ class AdkRunnerBackend:
                     max_turns=self._settings.max_turns_kept,
                 )
 
-            return DraftAnswer(text=reply, tool_result=tool_result)
+            if assist_requested:
+                reply = ASSIST_REQUESTED_REPLY
+            return DraftAnswer(
+                text=reply,
+                tool_result=tool_result,
+                registration_started=registration_started,
+                assist_requested=assist_requested,
+            )
 
 
 __all__ = ["APP_NAME", "USER_ID", "AdkRunnerBackend", "BoundedSessionService"]

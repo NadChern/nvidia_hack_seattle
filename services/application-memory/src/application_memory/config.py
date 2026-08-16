@@ -50,6 +50,9 @@ class Settings(BaseSettings):
     #: Evidence lives outside the database so deletion is a subtree removal and
     #: the file store can later move to object storage unchanged.
     evidence_dir: Path = Path("./data/evidence")
+    #: Registered crops outlive sessions and therefore must never share the
+    #: session-scoped evidence root swept by retention.
+    registration_crop_dir: Path = Path("./data/registration-crops")
     #: Largest evidence upload accepted, in bytes. `request.body()` reads the
     #: whole payload into memory, so without a cap one oversized POST -- a long
     #: clip, a mistake, or a deliberate one -- can exhaust the process. 25 MB
@@ -60,6 +63,11 @@ class Settings(BaseSettings):
     #: caller on the same origin and wrong for anyone else -- so set this to
     #: the address clients actually reach this service on once that differs.
     public_base_url: str | None = None
+
+    # --- Object registry --------------------------------------------------
+    max_registration_crop_bytes: int = Field(default=5_000_000, gt=0)
+    registry_max_views_per_object: int = Field(default=8, ge=2, le=32)
+    registry_max_embedding_dim: int = Field(default=4096, ge=1, le=16384)
 
     # --- Promotion --------------------------------------------------------
     #: Thresholds are configuration, not model constants: docs/04 requires the

@@ -1,4 +1,4 @@
-"""The Agent's sole trusted tool: ask Memory where one object is."""
+"""Trusted visual-memory tool: ask Memory where one object is."""
 
 from __future__ import annotations
 

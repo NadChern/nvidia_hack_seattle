@@ -1,4 +1,4 @@
-"""Google ADK agent construction and the single grounded tool."""
+"""Google ADK agent construction and bounded trusted tools."""
 
 from __future__ import annotations
 
@@ -9,31 +9,50 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool, ToolContext
 
 from agent.config import Settings
+from agent.tools.assist import AssistTool
 from agent.tools.memory import MemoryTool
+from agent.workflow import RegistrationWorkflow
 
 REQUEST_SESSION_STATE = "request_session_id"
 
-INSTRUCTION = """You answer only questions about where the wearer left an object.
+INSTRUCTION = """You are the wearer's concise, helpful personal assistant. Answer the question
+they actually asked. For general knowledge, explanation, planning, and ordinary
+conversation, answer directly from your own knowledge without calling a tool.
+Treat phrases such as "hey memory" as optional ways of addressing you, not as
+part of the requested task. Be honest about uncertainty and keep spoken answers
+brief unless the user asks for detail.
 
-For every supported location question, call where_is exactly once with only the
-object label. The service supplies session identity; never ask for or invent a
-session identifier. Do not answer from your own knowledge.
+You also have two personal visual-memory tools. Use them only when the request
+needs them:
 
-The tool result is authoritative. Return a short spoken answer that preserves
-its answer_status and all uncertainty or invalidation. If answer_status is
-last_confirmed_only, say that the location is historical and preserve why it is
-not current. If it is ambiguous_object, name every candidate and do not choose
+- When the wearer asks where a personal object is, where they left or placed
+  something, or what their visual memory recorded about an object's location,
+  call where_is exactly once with only the object label. The service supplies
+  session identity; never ask for or invent a session identifier. Never claim a
+  remembered personal-object location from your own knowledge.
+- For "remember/register/scan/learn/save my X", call start_registration exactly
+  once with only X as the label. Registration is a background scripted workflow;
+  do not invent progress or confirmation text and do not call where_is for that
+  request.
+- When the wearer explicitly asks for a remote person, human helper, caregiver,
+  or remote assistant, call call_remote_assistant exactly once with no arguments.
+  Do not call it merely because an ordinary request contains the word "help".
+  A requested call is not connected yet; never invent a helper name, arrival
+  estimate, or connection state.
+
+A visual-memory tool result is authoritative. Return a short spoken answer that
+preserves its answer_status and all uncertainty or invalidation. If answer_status
+is last_confirmed_only, say that the location is historical and preserve why it
+is not current. If it is ambiguous_object, name every candidate and do not choose
 one. Never add a room, surface, or location absent from the tool result.
-
-For unsupported conversation, do not call a tool and do not make up an answer.
-A deterministic guard supervises every response and may replace it with the
-Memory service's spoken_answer.
 """
 
 
 def create_agent(
     settings: Settings,
     memory: MemoryTool,
+    registration: RegistrationWorkflow | None = None,
+    assist: AssistTool | None = None,
     *,
     model: LiteLlm | None = None,
 ) -> LlmAgent:
@@ -46,26 +65,66 @@ def create_agent(
         result = await memory.where_is(label.strip(), session_id)
         return result.model_dump(mode="json")
 
+    async def start_registration(label: str, tool_context: ToolContext) -> dict[str, Any]:
+        """Start a narrated personal-object scan for the authenticated session."""
+        raw_session_id = tool_context.state.get(REQUEST_SESSION_STATE, "")
+        session_id = str(raw_session_id) if raw_session_id else ""
+        started = (
+            registration.start(label=label.strip(), session_id=session_id)
+            if registration is not None
+            else False
+        )
+        return {"started": started, "label": label.strip(), "background": True}
+
+    async def call_remote_assistant(tool_context: ToolContext) -> dict[str, object]:
+        """Request a trusted remote human for the authenticated glasses session."""
+        raw_session_id = tool_context.state.get(REQUEST_SESSION_STATE, "")
+        session_id = str(raw_session_id) if raw_session_id else ""
+        if assist is None:
+            return {
+                "requested": False,
+                "session_id": session_id or None,
+                "request_id": None,
+                "state": None,
+                "reason_code": "tool_unavailable",
+            }
+        return (await assist.request(session_id)).to_payload()
+
     if model is None:
         api_key = (
             settings.llm_api_key.get_secret_value()
             if settings.llm_api_key is not None
             else "local-no-key"
         )
-        model = LiteLlm(
-            model=settings.llm_model,
-            api_base=settings.llm_base_url,
-            api_key=api_key,
-            timeout=settings.llm_timeout_s,
-            temperature=0,
-        )
+        model_args: dict[str, Any] = {
+            "model": settings.llm_model,
+            "api_base": settings.llm_base_url,
+            "api_key": api_key,
+            "timeout": settings.llm_timeout_s,
+            "temperature": 0,
+            "max_tokens": settings.llm_max_output_tokens,
+            "max_retries": settings.llm_max_retries,
+        }
+        if settings.endpoint_scope == "local":
+            model_args["extra_body"] = {
+                "chat_template_kwargs": {
+                    "enable_thinking": settings.llm_local_enable_thinking,
+                }
+            }
+        model = LiteLlm(**model_args)
+
+    tools: list[Any] = [FunctionTool(where_is)]
+    if registration is not None:
+        tools.append(FunctionTool(start_registration))
+    if assist is not None:
+        tools.append(FunctionTool(call_remote_assistant))
 
     return LlmAgent(
         name="visual_memory_agent",
-        description="Grounded where-is query orchestration for visual memory",
+        description="Grounded memory, object registration, and remote-human orchestration",
         model=model,
         instruction=INSTRUCTION,
-        tools=[FunctionTool(where_is)],
+        tools=tools,
     )
 
 

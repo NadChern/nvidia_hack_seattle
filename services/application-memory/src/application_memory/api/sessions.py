@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import APIRouter, Request, status
 from pydantic import BaseModel
 
+from application_memory.api.observations import policy_of
 from application_memory.deps import (
     authorize_device,
     authorize_request,
@@ -63,7 +64,7 @@ def forget(session_id: str, request: Request) -> dict[str, Any]:
     factory = session_factory_of(request)
 
     with factory() as db:
-        counts = repository.delete_session(db, session_id)
+        counts = repository.delete_session(db, session_id, policy=policy_of(request))
         db.commit()
 
     counts["evidence_files"] = EvidenceStore(settings.evidence_dir).delete_session(session_id)

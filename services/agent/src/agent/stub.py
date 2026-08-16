@@ -13,6 +13,7 @@ from typing import Protocol
 
 from visual_memory_memory_contract import QueryResponse
 
+from agent.tools.assist import ASSIST_REQUESTED_REPLY, AssistTool
 from agent.tools.memory import MemoryTool
 
 
@@ -20,11 +21,28 @@ from agent.tools.memory import MemoryTool
 class DraftAnswer:
     text: str
     tool_result: QueryResponse | None
+    registration_started: bool = False
+    assist_requested: bool = False
+
+
+class RegistrationStarter(Protocol):
+    def start(self, *, label: str, session_id: str) -> bool: ...
 
 
 class QueryBackend(Protocol):
     async def query(self, text: str, session_id: str | None) -> DraftAnswer: ...
 
+
+_REMOTE_ASSIST_PATTERN = re.compile(
+    r"\b(?:call|contact|connect(?:\s+me)?\s+to|get)\s+"
+    r"(?:my\s+)?(?:remote\s+assistant|human\s+helper|caregiver|helper)\b",
+    re.IGNORECASE,
+)
+
+_REGISTRATION_PATTERN = re.compile(
+    r"\b(?:remember|scan|learn)\s+(?:my|our|the|this)?\s*(?P<label>.+?)\s*[?.!]*$",
+    re.IGNORECASE,
+)
 
 _QUESTION_PATTERNS = (
     re.compile(
@@ -57,13 +75,44 @@ def object_label(text: str) -> str | None:
     return None
 
 
+def registration_label(text: str) -> str | None:
+    match = _REGISTRATION_PATTERN.search(" ".join(text.split()))
+    if match is None:
+        return None
+    label = match.group("label").strip(" .?!")
+    return label or None
+
+
 class StubLlm:
     """Offline backend used by Phase 0 and the endpoint test suite."""
 
-    def __init__(self, memory: MemoryTool) -> None:
+    def __init__(
+        self,
+        memory: MemoryTool,
+        registration: RegistrationStarter | None = None,
+        assist: AssistTool | None = None,
+    ) -> None:
         self._memory = memory
+        self._registration = registration
+        self._assist = assist
 
     async def query(self, text: str, session_id: str | None) -> DraftAnswer:
+        if _REMOTE_ASSIST_PATTERN.search(" ".join(text.split())) is not None and self._assist:
+            outcome = await self._assist.request(session_id or "")
+            return DraftAnswer(
+                text=ASSIST_REQUESTED_REPLY if outcome.requested else "",
+                tool_result=None,
+                assist_requested=outcome.requested,
+            )
+        register = registration_label(text)
+        if register is not None and self._registration is not None and session_id is not None:
+            return DraftAnswer(
+                text="",
+                tool_result=None,
+                registration_started=self._registration.start(
+                    label=register, session_id=session_id
+                ),
+            )
         label = object_label(text)
         if label is None:
             return DraftAnswer(text="", tool_result=None)
@@ -71,4 +120,11 @@ class StubLlm:
         return DraftAnswer(text=result.spoken_answer, tool_result=result)
 
 
-__all__ = ["DraftAnswer", "QueryBackend", "StubLlm", "object_label"]
+__all__ = [
+    "DraftAnswer",
+    "QueryBackend",
+    "RegistrationStarter",
+    "StubLlm",
+    "object_label",
+    "registration_label",
+]

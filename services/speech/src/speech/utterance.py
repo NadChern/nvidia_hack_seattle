@@ -99,7 +99,9 @@ class SileroBoundary:
 
     Deliberately requires speech *before* silence can end anything. Otherwise
     a session that opens with someone not talking would emit an endless series
-    of empty utterances, each one a model call producing "".
+    of empty utterances, each one a model call producing "". The emergency
+    length ceiling likewise starts with first speech, not with idle microphone
+    time before the wearer begins a turn.
     """
 
     def __init__(
@@ -127,7 +129,10 @@ class SileroBoundary:
         self._buffer = bytearray()
         self._heard_speech = False
         self._silent_frames = 0
-        self._frames_since_boundary = 0
+        # The emergency ceiling measures the utterance, not idle microphone
+        # time. Counting before first speech makes a wearer who pauses longer
+        # than ``max_seconds`` get cut off on their first spoken frame.
+        self._frames_since_speech = 0
         #: Frames seen before the first speech of the current utterance. What
         #: makes trimming safe: it is only ever non-zero once speech was found,
         #: so a detector that hears nothing causes nothing to be discarded.
@@ -201,7 +206,7 @@ class SileroBoundary:
         self._buffer.clear()
         self._heard_speech = False
         self._silent_frames = 0
-        self._frames_since_boundary = 0
+        self._frames_since_speech = 0
         self._frames_before_speech = 0
 
     def feed(self, pcm: bytes, *, sample_rate: int) -> bool:
@@ -229,13 +234,13 @@ class SileroBoundary:
         while len(self._buffer) >= VAD_FRAME_BYTES:
             frame = bytes(self._buffer[:VAD_FRAME_BYTES])
             del self._buffer[:VAD_FRAME_BYTES]
-            self._frames_since_boundary += 1
 
             probability = self._vad(frame)
             self._observe(probability)
 
             if probability >= self._threshold:
                 self._heard_speech = True
+                self._frames_since_speech += 1
                 self._silent_frames = 0
                 continue
 
@@ -246,6 +251,7 @@ class SileroBoundary:
                 self._frames_before_speech += 1
                 continue
 
+            self._frames_since_speech += 1
             self._silent_frames += 1
             if self._silent_frames >= self._silence_frames_needed:
                 ended = True
@@ -260,7 +266,7 @@ class SileroBoundary:
         # `max_seconds` forever, each one a model call returning "". A session
         # where nobody ever speaks still buffers until its epoch ends, which is
         # exactly what it did before this module existed.
-        if not ended and self._heard_speech and self._frames_since_boundary >= self._max_frames:
+        if not ended and self._heard_speech and self._frames_since_speech >= self._max_frames:
             logger.info(
                 "utterance reached its length limit before any silence; cutting it",
                 extra={"max_frames": self._max_frames},
@@ -274,7 +280,7 @@ class SileroBoundary:
         boundary, so `leading_silence_seconds` is still readable until then."""
         self._heard_speech = False
         self._silent_frames = 0
-        self._frames_since_boundary = 0
+        self._frames_since_speech = 0
         self._frames_before_speech = 0
 
 

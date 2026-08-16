@@ -92,6 +92,23 @@ def test_expired_request_is_not_listed() -> None:
     assert registry.pending() == []
 
 
+def test_state_expires_a_request_and_reports_end_as_idle() -> None:
+    now = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
+    registry = AssistRequestRegistry(ttl_s=30, now=lambda: now)
+
+    registry.request(session_id="sess_01", device_id="glasses-01")
+    assert registry.state("sess_01") == "requested"
+
+    now += dt.timedelta(seconds=31)
+    assert registry.state("sess_01") is None
+
+    registry.request(session_id="sess_01", device_id="glasses-01")
+    assert registry.accept("sess_01") is not None
+    assert registry.state("sess_01") == "accepted"
+    assert registry.end("sess_01") is not None
+    assert registry.state("sess_01") is None
+
+
 def test_a_second_button_press_before_anyone_answers_does_not_reset_the_request() -> None:
     now = dt.datetime(2026, 1, 1, tzinfo=dt.UTC)
     registry = AssistRequestRegistry(ttl_s=30, now=lambda: now)
@@ -126,6 +143,26 @@ async def test_request_creates_a_pending_request() -> None:
     requests = listed.json()["requests"]
     assert len(requests) == 1
     assert requests[0]["request_id"] == body["request_id"]
+
+
+async def test_session_summary_exposes_requested_and_accepted_state() -> None:
+    async with serve(create_app(settings())) as host:
+        async with httpx.AsyncClient(base_url=f"http://{host}") as http:
+            session, credential = await paired_session(http)
+            session_id = str(session["session_id"])
+
+            idle = (await http.get("/v1/sessions", headers=auth())).json()["sessions"][0]
+            await http.post(f"/v1/assist/{session_id}/request", headers=auth(credential))
+            requested = (await http.get("/v1/sessions", headers=auth())).json()["sessions"][0]
+            await http.post(f"/v1/assist/{session_id}/accept", headers=auth())
+            accepted = (await http.get("/v1/sessions", headers=auth())).json()["sessions"][0]
+
+    assert idle["assist_state"] is None
+    assert idle["assist_active"] is False
+    assert requested["assist_state"] == "requested"
+    assert requested["assist_active"] is False
+    assert accepted["assist_state"] == "accepted"
+    assert accepted["assist_active"] is True
 
 
 async def test_request_for_unknown_session_is_404() -> None:

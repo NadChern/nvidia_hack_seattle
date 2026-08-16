@@ -1,21 +1,28 @@
-"""Deterministic supervision for model-rewritten memory answers.
+"""Deterministic supervision for personal-assistant and memory answers.
 
-The model is never the authority on location. This module is deliberately pure:
-it receives a draft and the exact Memory query result, and either accepts the
-draft or returns ``spoken_answer`` byte-for-byte.
+General-assistant drafts may pass without a Memory result. Once a visual-memory
+tool is used, Memory is the sole authority: this module either accepts the
+bounded rewrite or returns ``spoken_answer`` byte-for-byte.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from typing import cast
 
 from visual_memory_memory_contract import AnswerStatus, QueryResponse
 
-from agent.models import GuardVerdict
+from agent.models import GuardVerdict, RegistrationStep
 
-NO_TOOL_REPLY = "I do not have a memory of that."
+NO_TOOL_REPLY = "I couldn't answer that."
 DEFAULT_MAX_REPLY_CHARS = 400
+
+_REGISTRATION_MESSAGES = {
+    "prompt": "I'll remember this {label}. Rotate it slowly so I can take a short clip.",
+    "succeeded": "Done — I've scanned your {label} and will keep track of it.",
+    "failed": "I couldn't get a clear look. Let's retry.",
+}
 
 _TOKEN = re.compile(r"[a-z0-9]+")
 _LOCATION_CLAIM = re.compile(
@@ -191,7 +198,23 @@ def _veto(result: QueryResponse, rule: int) -> GuardResult:
         reply=result.spoken_answer,
         answer_status=result.answer_status,
         object_id=result.object_id,
-        verdict=f"vetoed:{rule}",  # type: ignore[arg-type]
+        verdict=cast(GuardVerdict, f"vetoed:{rule}"),
+    )
+
+
+def registration_message(step: RegistrationStep, label: str) -> str:
+    safe_label = " ".join(label.strip().split()) or "object"
+    return _REGISTRATION_MESSAGES[step].format(label=safe_label)
+
+
+def guard_registration_reply(reply: str, *, step: RegistrationStep, label: str) -> GuardResult:
+    """Pass only the scripted registration vocabulary, byte-for-byte."""
+    expected = registration_message(step, label)
+    return GuardResult(
+        reply=reply if reply == expected else expected,
+        answer_status=None,
+        object_id=None,
+        verdict=cast(GuardVerdict, f"registration:{step}"),
     )
 
 
@@ -202,13 +225,23 @@ def guard_reply(
     max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS,
 ) -> GuardResult:
     """Apply the six guard rules in their specified order."""
-    # Rule 1: without a Memory tool result there is no source of truth.
+    # Rule 1: general-assistant answers need no Memory authority. Empty or
+    # unbounded model output still fails closed to a short spoken line. When a
+    # visual-memory tool *was* used, the remaining rules constrain every claim
+    # to its authoritative result.
     if tool_result is None:
+        if not draft.strip() or len(draft) > max_reply_chars:
+            return GuardResult(
+                reply=NO_TOOL_REPLY,
+                answer_status=None,
+                object_id=None,
+                verdict="vetoed:1",
+            )
         return GuardResult(
-            reply=NO_TOOL_REPLY,
+            reply=draft,
             answer_status=None,
             object_id=None,
-            verdict="vetoed:1",
+            verdict="passed",
         )
 
     claimed_locations = _claimed_location_tokens(draft)
@@ -265,5 +298,7 @@ __all__ = [
     "DEFAULT_MAX_REPLY_CHARS",
     "GuardResult",
     "NO_TOOL_REPLY",
+    "guard_registration_reply",
     "guard_reply",
+    "registration_message",
 ]

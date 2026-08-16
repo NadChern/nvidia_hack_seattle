@@ -41,21 +41,20 @@ The relay coalesces audio into `audio_chunk` messages, each carrying a `sequence
 
 `ingest.py` yields `AudioSegment` — a frozen Pydantic v2 model carrying `session_id`, `epoch_id`, `sample_rate`, `channels`, `sample_format`, `pts_samples_start`, `samples`, `first_sample_captured_at`, and the raw `pcm` bytes for one contiguous run of audio with no detected gap inside it. It deliberately does none of the following yet: it does not decode the PCM into a numpy array, does not resample it, does not play it back, and does not transcribe it. Each of those is a real later stage of this role with its own design questions (a decode/resample step has to pick a target format before Parakeet can even run), and folding any of them into the ingestion boundary now would make that boundary responsible for decisions it isn't ready to make.
 
-### If the wake word will not trigger
+### If a spoken turn is clipped or delayed
 
-Three settings decide whether a spoken sentence survives segmentation intact,
-and all three failed on the glasses before they were tuned. Symptoms map to
-settings as follows:
+Four settings and boundaries decide whether a spoken sentence survives
+segmentation intact. Symptoms map to them as follows:
 
 | Symptom | Setting | Why |
 |---|---|---|
 | The sentence is cut off before you finish it | `VMA_STT_UTTERANCE_SILENCE_MS` (1000) | A pause longer than this ends the utterance. 700 ms was tuned on a desk mic and cut wearers off at natural breaths. |
 | The **start** of "hey memory" is missing | `VMA_STT_PREROLL_MS` (600) | The trim that removes dead air measures from where the detector grew *confident*, not where the sound began. The margin kept is `preroll − attack delay`, so a slow attack eats the first phoneme. At 300 ms a measured 320 ms attack kept **−20 ms**. |
 | Words drop out mid-sentence | `VMA_STT_VAD_THRESHOLD` (0.5) | Noise suppression and AGC on a head-worn mic flatten inter-word dips below the threshold. |
+| The first words become an immediate turn after waiting quietly | `VMA_STT_UTTERANCE_MAX_SECONDS` (8) | This emergency ceiling starts at the first detected speech frame, never at the previous boundary; idle microphone time cannot spend the spoken-turn budget. |
 
-The prefix and the question arriving as *two* transcripts is not a Speech
-problem — the Agent carries a wake prefix across utterances (`WAKE_CARRY_OVER_S`),
-because no silence window can cover a pause someone chooses to make longer.
+The Agent receives every completed non-empty transcript; Speech is responsible
+only for finding audio boundaries, not for classifying the user's intent.
 
 ### Known limits, flagged rather than worked around
 
@@ -135,6 +134,8 @@ That fixture carries three seconds of 48 kHz mono PCM with one deliberate ~500ms
 ## Backend selection
 
 `VMA_TTS_BACKEND=auto` is the default and selects MLX, CUDA, or the import-fallback stub as described above. `VMA_TTS_BACKEND=stub` is an explicit diagnostic mode: STT selection remains unchanged, but synthesis uses the deterministic silent WAV backend and `/v1/status` reports `tts.real=false`. The measured 8 GB WSL laptop runs Parakeet and Kokoro together; an earlier shutdown attributed to the reply-audio handoff was traced to a Console reload bug rather than insufficient Kokoro headroom.
+
+`VMA_WARM_MODELS_ON_STARTUP=true` makes readiness wait for selected adapters that expose an initializer. The CUDA profile loads Parakeet first, then loads Kokoro and synthesizes one discarded warmup phrase so the first wearer query pays neither model-load nor default-voice load latency. Use this on a pre-seeded deployment together with Hugging Face/Transformers offline mode; a missing artifact then fails startup honestly instead of dropping the first STT listener while attempting network metadata requests.
 
 ## Development
 

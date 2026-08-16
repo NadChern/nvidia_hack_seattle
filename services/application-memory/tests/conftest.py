@@ -32,6 +32,7 @@ def settings(tmp_path: Path) -> Settings:
         environment="ci",
         database_url=f"sqlite+pysqlite:///{tmp_path / 'memory.db'}",
         evidence_dir=tmp_path / "evidence",
+        registration_crop_dir=tmp_path / "registration-crops",
         internal_api_token=None,
     )
 

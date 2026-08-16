@@ -26,13 +26,17 @@ from application_memory.api import (
     evidence,
     health,
     lifecycle,
+    maintenance,
+    objects,
     observations,
     query,
     sessions,
     status,
 )
 from application_memory.config import Settings, get_settings
+from application_memory.domain.reducer import PromotionPolicy
 from application_memory.errors import MemoryServiceError
+from application_memory.evidence.registration import RegistrationCropStore
 from application_memory.evidence.store import EvidenceStore
 from application_memory.logging import configure_logging
 from application_memory.store import repository
@@ -56,8 +60,13 @@ async def _retention_sweeper(app: FastAPI) -> None:
             stale: list[str] = []
             with app.state.sessions() as db:
                 stale = repository.sessions_older_than(db, cutoff)
+                policy = PromotionPolicy(
+                    min_event_confidence=settings.promote_min_event_confidence,
+                    min_identity_confidence=settings.promote_min_identity_confidence,
+                    require_evidence_for_placement=settings.require_evidence_for_placement,
+                )
                 for session_id in stale:
-                    repository.delete_session(db, session_id)
+                    repository.delete_session(db, session_id, policy=policy)
                 db.commit()
             for session_id in stale:
                 app.state.evidence.delete_session(session_id)
@@ -87,6 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.engine = engine
     app.state.sessions = create_session_factory(engine)
     app.state.evidence = EvidenceStore(settings.evidence_dir)
+    app.state.registration_crops = RegistrationCropStore(settings.registration_crop_dir)
     app.state.started_at = dt.datetime.now(dt.UTC)
 
     logger.info(
@@ -144,7 +154,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_exception_handler(MemoryServiceError, handle)  # type: ignore[arg-type]
 
-    for module in (health, sessions, observations, lifecycle, query, evidence, status, events):
+    for module in (
+        health,
+        sessions,
+        observations,
+        lifecycle,
+        query,
+        evidence,
+        objects,
+        status,
+        events,
+        maintenance,
+    ):
         app.include_router(module.router)
 
     return app

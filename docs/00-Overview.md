@@ -49,6 +49,8 @@ Models perceive and propose; structured memory decides what the system claims to
 - [Media Relay Contract](12-Media-Relay-Contract.md) — the Media Gateway to Vision/Speech transport: framing, media epochs, sampling, and lifecycle signals
 - [Agent Laptop Testing](14-Agent-Laptop-Testing.md) — safe MiniCPM and OpenRouter external-LLM evaluation profiles
 - [Glasses Client Plan](15-Glasses-Client-Plan.md) — the pure-Kotlin RayNeo X3 Pro client: scope, gaps, milestones, and risks
+- [Main Integration and Remote Assist Plan](16-Main-Integration-and-Remote-Assist-Plan.md) — merge strategy, third Agent tool, and requested/active call audio gate
+- [Product Backlog](17-Product-Backlog.md) — deferred improvements, including the Hermes personal-assistant scenario
 
 ## MVP boundary
 

@@ -7,9 +7,11 @@ this; the reducer never does.
 from __future__ import annotations
 
 import datetime as dt
+import sys
+from array import array
 from dataclasses import dataclass
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DbSession
 from visual_memory_memory_contract import protocol
@@ -57,6 +59,283 @@ class ConflictingObservation(Exception):
     """Same observation_id, different content."""
 
 
+@dataclass(frozen=True, slots=True)
+class DeletedObject:
+    object_id: str
+    crop_relative_paths: tuple[str, ...]
+    registry_version: int
+
+
+def _pack_float32(values: tuple[float, ...]) -> bytes:
+    packed = array("f", values)
+    if packed.itemsize != 4:  # pragma: no cover - CPython's supported platforms
+        raise RuntimeError("this platform does not provide 32-bit C floats")
+    if sys.byteorder != "little":  # pragma: no cover - supported deployment is little-endian
+        packed.byteswap()
+    return packed.tobytes()
+
+
+def _unpack_float32(value: bytes, dim: int) -> tuple[float, ...]:
+    unpacked = array("f")
+    unpacked.frombytes(value)
+    if sys.byteorder != "little":  # pragma: no cover - supported deployment is little-endian
+        unpacked.byteswap()
+    if len(unpacked) != dim:
+        raise ValueError(f"stored vector has {len(unpacked)} values, expected {dim}")
+    return tuple(float(item) for item in unpacked)
+
+
+def _next_registry_version(db: DbSession) -> int:
+    state = db.get(models.RegistryStateRow, 1)
+    if state is None:
+        try:
+            with db.begin_nested():
+                db.add(models.RegistryStateRow(id=1, version=0))
+        except IntegrityError:
+            # Another request initialized the singleton first.
+            pass
+    version = db.scalar(
+        update(models.RegistryStateRow)
+        .where(models.RegistryStateRow.id == 1)
+        .values(version=models.RegistryStateRow.version + 1)
+        .returning(models.RegistryStateRow.version)
+    )
+    if version is None:  # pragma: no cover - only if the singleton vanished mid-write
+        raise RuntimeError("registry version row disappeared")
+    return version
+
+
+def registry_version(db: DbSession) -> int:
+    state = db.get(models.RegistryStateRow, 1)
+    return state.version if state is not None else 0
+
+
+def reset_all(db: DbSession) -> int:
+    """Delete every persisted memory row and bump the registry version.
+
+    A maintenance/demo reset: clears observations, lifecycle signals, object
+    state, evidence rows, the tracker->object identity map, the enrolled
+    gallery and its views, sessions, and the audit log. Everything except the
+    `registry_state` counter, which is *bumped* (not reset) so the vision
+    gallery cache sees a newer -- now empty -- gallery on its next poll and
+    clears itself without a restart. Children before parents so a foreign key
+    never blocks the delete. Returns the new registry version.
+    """
+    for table in (
+        models.ObjectViewRow,
+        models.EnrolledObjectRow,
+        models.Observation,
+        models.LifecycleSignal,
+        models.ObjectStateRow,
+        models.EvidenceRow,
+        models.ObjectIdentity,
+        models.AuditRow,
+        models.Session,
+    ):
+        db.execute(delete(table))
+    return _next_registry_version(db)
+
+
+def create_enrolled_object(
+    db: DbSession, *, label: str, idempotency_key: str
+) -> tuple[protocol.EnrolledObject, bool]:
+    existing = db.scalars(
+        select(models.EnrolledObjectRow).where(
+            models.EnrolledObjectRow.idempotency_key == idempotency_key
+        )
+    ).first()
+    if existing is not None:
+        if existing.label != label:
+            raise ConflictingObservation(
+                "object idempotency key already belongs to a different label"
+            )
+        return _enrolled_object(existing), False
+
+    now = utcnow()
+    version = _next_registry_version(db)
+    row = models.EnrolledObjectRow(
+        object_id=new_object_id(),
+        label=label,
+        idempotency_key=idempotency_key,
+        created_at=now,
+        updated_at=now,
+        registry_version=version,
+    )
+    try:
+        with db.begin_nested():
+            db.add(row)
+        return _enrolled_object(row), True
+    except IntegrityError:
+        winner = db.scalars(
+            select(models.EnrolledObjectRow).where(
+                models.EnrolledObjectRow.idempotency_key == idempotency_key
+            )
+        ).first()
+        if winner is None:  # pragma: no cover - only if the row vanished again
+            raise
+        if winner.label != label:
+            raise ConflictingObservation(
+                "object idempotency key already belongs to a different label"
+            ) from None
+        return _enrolled_object(winner), False
+
+
+def enrolled_object(db: DbSession, object_id: str) -> protocol.EnrolledObject | None:
+    row = db.get(models.EnrolledObjectRow, object_id)
+    return _enrolled_object(row) if row is not None else None
+
+
+def find_object_view_by_content(
+    db: DbSession, *, object_id: str, view_index: int, crop_sha256: str
+) -> protocol.ObjectView | None:
+    row = db.scalars(
+        select(models.ObjectViewRow).where(
+            models.ObjectViewRow.object_id == object_id,
+            models.ObjectViewRow.view_index == view_index,
+            models.ObjectViewRow.crop_sha256 == crop_sha256,
+        )
+    ).first()
+    return _object_view(row) if row is not None else None
+
+
+def put_object_view(
+    db: DbSession,
+    *,
+    object_id: str,
+    view_id: str,
+    upload: protocol.ObjectViewUpload,
+    crop_relative_path: str,
+    max_views: int,
+    max_dim: int,
+) -> protocol.ObjectView:
+    owner = db.get(models.EnrolledObjectRow, object_id)
+    if owner is None:
+        raise LookupError(object_id)
+    duplicate = find_object_view_by_content(
+        db,
+        object_id=object_id,
+        view_index=upload.view_index,
+        crop_sha256=upload.crop_sha256,
+    )
+    if duplicate is not None:
+        return duplicate
+    if upload.dim > max_dim:
+        raise ValueError(f"embedding dim {upload.dim} exceeds configured maximum {max_dim}")
+    count = int(
+        db.scalar(
+            select(func.count())
+            .select_from(models.ObjectViewRow)
+            .where(models.ObjectViewRow.object_id == object_id)
+        )
+        or 0
+    )
+    if count >= max_views:
+        raise OverflowError(f"object already has the maximum {max_views} reference views")
+
+    now = utcnow()
+    version = _next_registry_version(db)
+    row = models.ObjectViewRow(
+        view_id=view_id,
+        object_id=object_id,
+        view_index=upload.view_index,
+        quality=upload.quality.model_dump(mode="json"),
+        embedder_id=upload.embedder_id,
+        pooling=upload.pooling,
+        dim=upload.dim,
+        summary=_pack_float32(upload.summary),
+        pooled_spatial=_pack_float32(upload.pooled_spatial),
+        crop_sha256=upload.crop_sha256.lower(),
+        crop_media_type=upload.crop_media_type,
+        crop_relative_path=crop_relative_path,
+        created_at=now,
+        registry_version=version,
+    )
+    db.add(row)
+    owner.updated_at = now
+    owner.registry_version = version
+    db.flush()
+    return _object_view(row)
+
+
+def object_view_row(db: DbSession, object_id: str, view_id: str) -> models.ObjectViewRow | None:
+    row = db.get(models.ObjectViewRow, view_id)
+    return row if row is not None and row.object_id == object_id else None
+
+
+def list_gallery(db: DbSession, *, since_version: int | None = None) -> protocol.ObjectGallery:
+    version = registry_version(db)
+    if since_version is not None and since_version >= version:
+        return protocol.ObjectGallery(registry_version=version, unchanged=True)
+    object_rows = db.scalars(
+        select(models.EnrolledObjectRow).order_by(models.EnrolledObjectRow.object_id)
+    ).all()
+    view_rows = db.scalars(
+        select(models.ObjectViewRow).order_by(
+            models.ObjectViewRow.object_id, models.ObjectViewRow.view_index
+        )
+    ).all()
+    return protocol.ObjectGallery(
+        registry_version=version,
+        objects=tuple(_enrolled_object(row) for row in object_rows),
+        views=tuple(_object_view(row) for row in view_rows),
+    )
+
+
+def delete_enrolled_object(db: DbSession, object_id: str) -> DeletedObject | None:
+    row = db.get(models.EnrolledObjectRow, object_id)
+    if row is None:
+        return None
+    views = db.scalars(
+        select(models.ObjectViewRow).where(models.ObjectViewRow.object_id == object_id)
+    ).all()
+    paths = tuple(view.crop_relative_path for view in views)
+    # Explicit deletion keeps behavior identical on databases where FK cascade
+    # configuration differs; no session row is involved.
+    db.execute(delete(models.ObjectViewRow).where(models.ObjectViewRow.object_id == object_id))
+    db.delete(row)
+    version = _next_registry_version(db)
+    db.add(
+        models.AuditRow(
+            occurred_at=utcnow(),
+            action="registered_object_deleted",
+            session_id=None,
+            detail=f"object_id={object_id}, views={len(paths)}",
+        )
+    )
+    return DeletedObject(object_id, paths, version)
+
+
+def _enrolled_object(row: models.EnrolledObjectRow) -> protocol.EnrolledObject:
+    return protocol.EnrolledObject(
+        object_id=row.object_id,
+        label=row.label,
+        idempotency_key=row.idempotency_key,
+        created_at=_aware(row.created_at),
+        updated_at=_aware(row.updated_at),
+        registry_version=row.registry_version,
+    )
+
+
+def _object_view(row: models.ObjectViewRow) -> protocol.ObjectView:
+    quality = protocol.ObjectViewQuality.model_validate(row.quality)
+    return protocol.ObjectView(
+        view_id=row.view_id,
+        object_id=row.object_id,
+        view_index=row.view_index,
+        quality=quality,
+        embedder_id=row.embedder_id,
+        pooling=row.pooling,
+        dim=row.dim,
+        summary=_unpack_float32(row.summary, row.dim),
+        pooled_spatial=_unpack_float32(row.pooled_spatial, row.dim),
+        crop_sha256=row.crop_sha256,
+        crop_media_type=row.crop_media_type,
+        crop_reference=f"/v1/objects/{row.object_id}/views/{row.view_id}/crop",
+        created_at=_aware(row.created_at),
+        registry_version=row.registry_version,
+    )
+
+
 def ensure_session(db: DbSession, *, session_id: str, device_id: str) -> models.Session:
     """Create the session row if it is missing, tolerating a concurrent creator.
 
@@ -90,18 +369,13 @@ def ensure_session(db: DbSession, *, session_id: str, device_id: str) -> models.
 
 
 def resolve_identity(db: DbSession, observation: protocol.Observation) -> str:
-    """Map a tracker identity to a stable object id.
+    """Map a tracker identity to a stable object id and always retain its scope.
 
-    Deliberately dumb: exact label match within `(session_id, media_epoch_id,
-    track_id)`. Cleverness here -- merging similar labels, joining across
-    epochs, matching on appearance -- is how two objects silently become one,
-    and an honest `ambiguous_object` answer beats a confident wrong merge.
-
-    If the producer already resolved identity, that wins.
+    A producer-resolved personal id wins, but it still needs an
+    `ObjectIdentity` row: lifecycle fan-out reads that table, not observations.
+    Returning early used to make registered in-transit objects immune to
+    `track_lost` and `session_ended`.
     """
-    if observation.object.object_id is not None:
-        return observation.object.object_id
-
     scope = select(models.ObjectIdentity).where(
         models.ObjectIdentity.session_id == observation.session_id,
         models.ObjectIdentity.media_epoch_id == observation.media_epoch_id,
@@ -109,8 +383,11 @@ def resolve_identity(db: DbSession, observation: protocol.Observation) -> str:
         models.ObjectIdentity.label == observation.object.label,
     )
     existing = db.scalars(scope).first()
+    resolved_id = observation.object.object_id
     if existing is not None:
-        return existing.object_id
+        if resolved_id is not None and existing.object_id != resolved_id:
+            existing.object_id = resolved_id
+        return resolved_id or existing.object_id
 
     # Same get-then-insert race as `ensure_session`, and worse if it slipped
     # through: two concurrent observations for one tracker identity would mint
@@ -118,7 +395,7 @@ def resolve_identity(db: DbSession, observation: protocol.Observation) -> str:
     # holds enough history to answer with. The unique constraint prevents that;
     # the savepoint turns losing the race into reading the winner's row rather
     # than a 500.
-    object_id = new_object_id()
+    object_id = resolved_id or new_object_id()
     try:
         with db.begin_nested():
             db.add(
@@ -135,15 +412,52 @@ def resolve_identity(db: DbSession, observation: protocol.Observation) -> str:
         winner = db.scalars(scope).first()
         if winner is None:  # pragma: no cover - only if the row vanished again
             raise
+        if resolved_id is not None and winner.object_id != resolved_id:
+            winner.object_id = resolved_id
+            return resolved_id
         return winner.object_id
 
 
 def find_objects_by_label(db: DbSession, label: str, *, session_id: str | None = None) -> list[str]:
-    """Every object matching a label, so the caller can detect ambiguity."""
-    query = select(models.ObjectStateRow.object_id).where(models.ObjectStateRow.label == label)
+    """Every object matching a label, so the caller can detect ambiguity.
+
+    Matches loosely so a spoken label ("keys") reaches an object the detector
+    stored under a longer prompt ("a set of keys"): exact (whitespace/case
+    normalized) matches win, and only when there are none does it fall back to
+    substring containment in either direction. A session match wins, but no
+    session match falls back globally so stable registered objects remain
+    queryable after reconnect. Small-N scan in Python -- fine at demo scale;
+    revisit with SQL LIKE if the object count grows large.
+    """
+
+    def _norm(value: str | None) -> str:
+        return " ".join((value or "").casefold().split())
+
+    wanted = _norm(label)
+
+    def _find(scope: str | None) -> list[str]:
+        stmt = select(models.ObjectStateRow.object_id, models.ObjectStateRow.label)
+        if scope is not None:
+            stmt = stmt.where(models.ObjectStateRow.session_id == scope)
+        rows = list(db.execute(stmt))
+        exact = [object_id for object_id, stored in rows if _norm(stored) == wanted]
+        if exact or not wanted:
+            return exact
+        return [
+            object_id
+            for object_id, stored in rows
+            if wanted in _norm(stored) or _norm(stored) in wanted
+        ]
+
     if session_id is not None:
-        query = query.where(models.ObjectStateRow.session_id == session_id)
-    return list(db.scalars(query))
+        scoped = _find(session_id)
+        if scoped:
+            return scoped
+        # Registered personal objects survive reconnects. The current session
+        # may have no observation yet, so fall back to stable global state
+        # rather than claiming there is no record of an object remembered in a
+        # prior session. A current-session match still wins above.
+    return _find(None)
 
 
 def timeline_for(db: DbSession, object_id: str) -> list[TimelineEntry]:
@@ -212,6 +526,9 @@ def recompute(
         row.updated_at = result.state.updated_at
         row.state = serialized
         row.label = label
+        # Label-scoped queries may be session-filtered. A stable personal
+        # object observed in a new session must move with its latest state.
+        row.session_id = session_id
     return result
 
 
@@ -438,14 +755,39 @@ def record_lifecycle(
     return states
 
 
-def delete_session(db: DbSession, session_id: str) -> dict[str, int]:
-    """Remove everything scoped to a session, returning what was removed.
+def delete_session(
+    db: DbSession,
+    session_id: str,
+    *,
+    policy: PromotionPolicy | None = None,
+) -> dict[str, int]:
+    """Remove one session without destroying a stable object's other sessions.
 
-    State is derived, so deleting observations deletes the claim; the cached
-    state rows go too, and evidence files are removed by the caller, which owns
-    the filesystem. Counts are returned for the audit record, which carries no
-    media.
+    `ObjectStateRow.session_id` identifies the latest contributing session; it
+    is not ownership. Deleting rows by that cache field used to erase a
+    registered object's state even when another session still had live
+    observations. Delete source events first, then recompute every affected
+    stable object from what remains.
     """
+    resolved_policy = policy or PromotionPolicy()
+    affected_ids = {
+        object_id
+        for object_id in db.scalars(
+            select(models.Observation.object_id).where(
+                models.Observation.session_id == session_id,
+                models.Observation.object_id.is_not(None),
+            )
+        ).all()
+        if object_id is not None
+    }
+    affected_ids.update(
+        db.scalars(
+            select(models.ObjectIdentity.object_id).where(
+                models.ObjectIdentity.session_id == session_id
+            )
+        ).all()
+    )
+
     counts = {
         "observations": db.query(models.Observation)
         .filter(models.Observation.session_id == session_id)
@@ -464,12 +806,31 @@ def delete_session(db: DbSession, session_id: str) -> dict[str, int]:
     for table in (
         models.Observation,
         models.LifecycleSignal,
-        models.ObjectStateRow,
         models.EvidenceRow,
         models.ObjectIdentity,
     ):
         db.execute(delete(table).where(table.session_id == session_id))  # type: ignore[arg-type]
     db.execute(delete(models.Session).where(models.Session.session_id == session_id))
+    db.flush()
+
+    for object_id in affected_ids:
+        latest = db.scalars(
+            select(models.Observation)
+            .where(models.Observation.object_id == object_id)
+            .order_by(models.Observation.occurred_at.desc())
+        ).first()
+        if latest is None:
+            row = db.get(models.ObjectStateRow, object_id)
+            if row is not None:
+                db.delete(row)
+            continue
+        recompute(
+            db,
+            object_id,
+            policy=resolved_policy,
+            label=latest.label,
+            session_id=latest.session_id,
+        )
 
     db.add(
         models.AuditRow(
@@ -492,17 +853,27 @@ def sessions_older_than(db: DbSession, cutoff: dt.datetime) -> list[str]:
 
 __all__ = [
     "ConflictingObservation",
+    "DeletedObject",
     "IngestResult",
-    "state_of",
+    "create_enrolled_object",
+    "delete_enrolled_object",
     "delete_session",
+    "enrolled_object",
     "ensure_session",
+    "find_object_view_by_content",
     "find_objects_by_label",
+    "list_gallery",
+    "object_view_row",
     "objects_in_scope",
+    "put_object_view",
     "recompute",
     "record_lifecycle",
     "record_observation",
+    "registry_version",
+    "reset_all",
     "resolve_identity",
     "sessions_older_than",
+    "state_of",
     "timeline_for",
     "utcnow",
 ]

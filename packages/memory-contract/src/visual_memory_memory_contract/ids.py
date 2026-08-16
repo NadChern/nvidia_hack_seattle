@@ -15,6 +15,7 @@ SIGNAL_PREFIX = "lc"
 OBJECT_PREFIX = "object"
 EVIDENCE_PREFIX = "ev"
 EVENT_PREFIX = "event"
+VIEW_PREFIX = "view"
 
 
 def new_observation_id() -> str:
@@ -36,6 +37,10 @@ def new_evidence_id() -> str:
 
 def new_event_id() -> str:
     return f"{EVENT_PREFIX}_{ULID()}"
+
+
+def new_view_id() -> str:
+    return f"{VIEW_PREFIX}_{ULID()}"
 
 
 def observation_idempotency_key(
@@ -68,11 +73,13 @@ __all__ = [
     "OBJECT_PREFIX",
     "OBSERVATION_PREFIX",
     "SIGNAL_PREFIX",
+    "VIEW_PREFIX",
     "lifecycle_idempotency_key",
     "new_event_id",
     "new_evidence_id",
     "new_object_id",
     "new_observation_id",
     "new_signal_id",
+    "new_view_id",
     "observation_idempotency_key",
 ]

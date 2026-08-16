@@ -43,3 +43,4 @@ def test_status_reports_what_it_expects_from_the_relay() -> None:
 
     assert body["config"]["gateway_audio_url"].startswith("ws")
     assert body["config"]["expected_audio_sample_rate"] > 0
+    assert isinstance(body["config"]["warm_models_on_startup"], bool)

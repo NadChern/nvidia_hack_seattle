@@ -1,18 +1,21 @@
 # Agent Service
 
-The conversational boundary for the Visual Memory Assistant. It accepts a
-question, calls the deterministic Memory query API, and supervises any wording
-before returning it. Port: **8086**.
+The conversational boundary for the Visual Memory Assistant. It is a concise
+personal assistant that answers ordinary questions directly and uses bounded
+visual-memory tools when a request needs remembered object state. Port: **8086**.
 
 The default backend is a Google ADK 2.6 `Runner` with one `LlmAgent`, one
-LiteLLM model, and one tool. `StubLlm` remains available for deterministic,
-fully offline development; it recognizes bounded “where” questions and returns
-Memory's `spoken_answer` unchanged.
+LiteLLM model, and three bounded tools: `where_is`, `start_registration`, and
+`call_remote_assistant`. Nemotron owns intent selection: general questions receive
+a direct model answer, while personal-object location, registration, and explicit
+remote-human requests use the appropriate tool. `StubLlm` remains available for deterministic, fully offline development;
+it recognizes bounded “where” questions and returns Memory's `spoken_answer`
+unchanged.
 
 ## What it refuses to do
 
-- It does not answer from model knowledge or raw vision output.
-- It exposes only `where_is`; there is no open chat or history tool.
+- It may answer general questions from model knowledge, but never treats raw vision output or model knowledge as remembered personal-object state.
+- It exposes only `where_is`, `start_registration`, and `call_remote_assistant`; there is no open history, shell, or browser tool.
 - It never lets a model create or choose a `session_id`.
 - It does not send transcripts to a non-loopback model endpoint unless
   `VMA_ALLOW_EXTERNAL_LLM=true` is explicitly configured.
@@ -21,9 +24,17 @@ Memory's `spoken_answer` unchanged.
 
 ## Truthfulness guard
 
-A model rewrite is untrusted. Rules run in order:
+Nemotron reasoning parts marked as private thought are discarded before reply
+handling; only its final answer can reach the HUD or TTS. The local voice profile
+also disables chat-template thinking and bounds output to 256 tokens. This is a
+latency requirement, not merely presentation: an unconstrained reasoning turn
+was measured hitting the 30-second socket timeout, and the OpenAI client's two
+default retries made the glasses appear frozen for 91 seconds. Voice requests
+therefore use no timeout retries. A model rewrite of a Memory result remains
+untrusted. Rules run in order:
 
-1. No Memory tool call produces a fixed unknown response.
+1. A bounded, non-empty general-assistant answer may pass without a Memory result;
+   empty or oversized output receives a fixed failure line.
 2. An unknown Memory answer may name no place.
 3. `last_confirmed_only` must preserve an explicit uncertainty marker.
 4. `ambiguous_object` must name every candidate and preserve ambiguity.
@@ -31,7 +42,12 @@ A model rewrite is untrusted. Rules run in order:
 6. Speech must be non-empty and bounded.
 
 A veto is a successful safety outcome, not an endpoint error. The response uses
-`spoken_answer` byte-for-byte and reports `guard: "vetoed:<rule>"`.
+`spoken_answer` byte-for-byte and reports `guard: "vetoed:<rule>"`. Registration
+never passes model prose through this guard: its prompt and terminal lines come
+from a fixed vocabulary and carry `registration:prompt|succeeded|failed` verdicts.
+Remote assistance similarly replaces model prose with the fixed acknowledgement,
+"I've sent a request to your remote assistant." A request is never described as
+an accepted or connected call.
 
 ## API
 
@@ -58,16 +74,20 @@ All variables use the `VMA_` prefix.
 | `MEMORY_BASE_URL` | `http://127.0.0.1:8081` |
 | `MEMORY_API_TOKEN` | unset |
 | `HANDS_FREE_ENABLED` | `false` |
+| `REPLY_ECHO_SUPPRESSION_S` | `3.0` |
 | `GATEWAY_BASE_URL` | `http://127.0.0.1:8080` |
 | `SPEECH_BASE_URL` | `http://127.0.0.1:8085` |
-| `WAKE_PREFIX` | `hey memory` |
-| `WAKE_PREFIX_VARIANTS` | `hay memory,he memory,hey memories,hey mammary` |
-| `WAKE_CARRY_OVER_S` | `10.0` |
+| `VISION_BASE_URL` | `http://127.0.0.1:8082` |
+| `REGISTRATION_CAPTURE_SECONDS` | `6.0` |
+| `REGISTRATION_TIMEOUT_S` | `20.0` |
 | `LLM_BASE_URL` | `http://127.0.0.1:11434/v1` |
 | `LLM_MODEL` | `openai/qwen3:4b` |
 | `LLM_API_KEY` | unset |
 | `ALLOW_EXTERNAL_LLM` | `false` |
 | `LLM_TIMEOUT_S` | `30` |
+| `LLM_MAX_OUTPUT_TOKENS` | `256` |
+| `LLM_MAX_RETRIES` | `0` |
+| `LLM_LOCAL_ENABLE_THINKING` | `false` |
 | `REQUEST_TIMEOUT_S` | `30` |
 | `MAX_TURNS_KEPT` | `6` |
 
@@ -144,8 +164,8 @@ because this repository has no OpenRouter key.
 
 Do not drop `:free` as a rate-limit workaround: the paid
 `nvidia/nemotron-3.5-lightning` route currently does not advertise tools. A
-route that omits the `where_is` call causes guard rule 1 to replace each reply;
-watch `metrics.guard_vetoed["vetoed:1"]` on `/v1/status` for that signal.
+route without tool support can still answer general questions, but it cannot
+reliably satisfy personal-memory requests and is not a valid deployment profile.
 
 ### GN100 Cosmos3 switch boundary
 
@@ -167,23 +187,29 @@ Ollama `/api/chat` wire format.
 ## Hands-free loop
 
 When enabled, the service polls the authenticated Gateway session list and
-opens Speech's existing STT WebSocket only for sessions with a publisher. Most
-transcripts stop at a deterministic double gate: a configured wake prefix must
-appear on a word boundary and be followed by a supported `where` question shape.
-Scanning permits leading disfluency or leaked reply audio; an ordinary mention
-such as “the hey memory demo” still cannot run ADK. Common STT renderings are a
-comma-separated configuration list rather than fuzzy matching.
+opens Speech's existing STT WebSocket only for sessions with a publisher. Every
+completed non-empty transcript is forwarded to Nemotron, whose system
+instruction owns find-versus-register-versus-unsupported intent selection. There
+is no listener regex, wake-prefix requirement, or manual-trigger requirement;
+“where are my keys?” works as a bare utterance. The glasses button remains a UI
+convenience but is not an authorization gate.
 
-**The two gates may arrive in two utterances.** A wake phrase invites a pause —
-people say “Hey memory.” and *then* ask — and any pause longer than Speech's
-`STT_UTTERANCE_SILENCE_MS` ends the utterance there, so the prefix and the
-question reach this service as separate transcripts that neither can fire alone.
-Measured on the glasses, where it read as being cut off mid-sentence. A prefix
-with no question after it therefore stays live for `WAKE_CARRY_OVER_S`, and the
-next supported `where` question consumes it. Both gates still hold and the carry
-is single-use; set it to `0` to require prefix and question in one breath.
-Widening the VAD window alone cannot fix this, because someone will always pause
-a little longer.
+This deliberately trades the previous ambient-speech filter for model-owned
+intent routing. General conversation may be answered from model knowledge, but
+only a Memory tool result is treated as authoritative personal visual memory.
+Since barge-in is unsupported, transcripts finalized during the configured short
+post-reply cooldown are dropped to prevent the glasses speaker from recursively
+querying the Agent through its microphone; this is timing suppression, not an
+intent regex.
+
+A successful remote-assist request immediately closes a local per-session audio
+gate and the current STT socket. Both Gateway states `requested` and `accepted`
+keep the gate closed, so neither queued wearer audio nor the human conversation
+reaches Nemotron. Only the fixed request acknowledgement may play after the gate
+closes. The gate fails closed across Gateway polling errors and reopens only when
+an authoritative session summary reports no pending/active request, following a
+helper disconnect or unanswered-request expiration. Helper tracks are also
+excluded from Gateway inference ingest.
 
 Every completed transcript is also posted to the Gateway's bounded device-event channel.
 A guarded answer is posted there with `answer_status`, object ID, guard verdict, and
@@ -211,10 +237,11 @@ uv run pytest
 |---|---|
 | `test_guard.py` | Every guard rule vetoes unsafe text and accepts grounded text |
 | `test_config.py` | External egress is opt-in and secrets remain redacted |
-| `test_tools_memory.py` | The complete `QueryResponse` and caller session are preserved |
+| `test_tools_memory.py` / `test_tools_register.py` / `test_tools_assist.py` | Trusted session scope and bounded tool side effects are preserved |
 | `test_api_query.py` | Offline end-to-end query and no-tool behavior |
 | `test_agent_litellm.py` | Fake tool-calling completion, bounded ADK sessions, opt-in real model |
-| `test_listener.py` | Wake-prefix/question gate prevents unwanted model calls |
+| `test_listener.py` / `test_listener_assist_active.py` | Echo and assist gates prevent recursive or human-call audio from reaching the model |
+| `test_workflow.py` | Registration always reaches a fixed prompt and terminal success/failure line |
 | `test_reply.py` | WAV validation, resampling, and PCM-only return transport |
 | `test_health.py` / `test_status.py` | Operational and trust-boundary reporting |
 | `test_logging.py` | Structured logging redacts secrets and binary payloads |

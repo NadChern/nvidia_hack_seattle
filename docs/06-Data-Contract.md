@@ -39,7 +39,7 @@ The candidate-event record:
 
 ```json
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "candidate_id": "cand_01JABCEXAMPLE00000000000",
   "session_id": "sess_01JAB...",
   "device_id": "glasses-01",
@@ -60,6 +60,14 @@ The candidate-event record:
     "centroid": {"x": 0.45, "y": 0.55},
     "depth_m": 0.62
   },
+  "identity": {
+    "object_id": "object_01JABC",
+    "best_score": 0.88,
+    "margin": 0.09,
+    "runner_up_object_id": "object_01JABD",
+    "reason_code": "embedding_resolved",
+    "escalated": false
+  },
   "hand_candidate": null,
   "room_candidate": "living_room",
   "surface_candidate": "coffee_table",
@@ -71,6 +79,10 @@ The candidate-event record:
   "pipeline_version": "vision-pipeline-v1"
 }
 ```
+
+`identity` is an optional per-track annotation. `null` means identity did not run;
+`object_id=null` inside an `IdentityMatch` means it ran and abstained. The decision is cached for
+the track's life and is not a verifier result.
 
 `hand_candidate` is nullable and stays null in the current implementation -- the interaction state machine decides `placed`/`picked_up`/`carried` from whether the object itself is at rest or moving through the world, not from hand contact. The field is kept rather than removed so a future owner who adds hand detection has a contract-compatible slot to fill.
 
@@ -321,6 +333,113 @@ The `idempotency_key` is deterministic — `{device_id}/{session_id}/{media_epoc
 
 One rule worth stating explicitly, because it is not obvious from the reducer table: a `track_lost` for an object that is **confirmed at a location is ignored**. A camera disconnect is not evidence that an object moved, and downgrading a good answer because the network blinked discards correct memory for nothing. The transition only applies while an object is `in_transit`.
 
+## Object registry contract
+
+Personal-object registration versions independently from observations under
+`OBJECT_REGISTRY_SCHEMA_VERSION = "1.0"`. It does not bump the observation schema:
+`object.object_id` was already nullable and a resolved producer already had a compatible place
+to carry a stable id.
+
+Memory mints `object_id`. Registered objects and views are durable, have no foreign key to a
+session, and therefore survive reconnects and ordinary session retention. A label query with a
+session first prefers state observed in that session, then falls back to stable global state when
+there is no session match; reconnecting must not turn a remembered personal object into “no
+record.” Each selected view stores its controlled crop plus two little-endian float32 pooled
+vectors. `embedder_id`,
+`pooling`, and `dim` make a stale or incompatible gallery fail loudly rather than compare vectors
+from different domains.
+
+```json
+{
+  "schema_version": "1.0",
+  "registry_version": 2,
+  "unchanged": false,
+  "objects": [
+    {
+      "schema_version": "1.0",
+      "object_id": "object_01JABC",
+      "label": "keys",
+      "idempotency_key": "registration/sess_01JAB/keys/1",
+      "created_at": "2026-07-29T17:42:11.240Z",
+      "updated_at": "2026-07-29T17:42:17.240Z",
+      "registry_version": 2
+    }
+  ],
+  "views": [
+    {
+      "schema_version": "1.0",
+      "view_id": "view_01JABC",
+      "object_id": "object_01JABC",
+      "view_index": 0,
+      "quality": {
+        "detection_confidence": 0.94,
+        "box_area_fraction": 0.31,
+        "sharpness_score": 1.12,
+        "mask_box_ratio": 0.76,
+        "quality_score": 0.91,
+        "angular_velocity_rad_s": null
+      },
+      "embedder_id": "nvidia/C-RADIOv4-H@0057b339",
+      "pooling": "summary+mask-weighted-spatial-v1",
+      "dim": 2,
+      "summary": [0.25, -0.5],
+      "pooled_spatial": [0.125, -0.25],
+      "crop_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "crop_media_type": "image/jpeg",
+      "crop_reference": "/v1/objects/object_01JABC/views/view_01JABC/crop",
+      "created_at": "2026-07-29T17:42:17.240Z",
+      "registry_version": 2
+    }
+  ]
+}
+```
+
+`registry_version` is monotonic across creates, view writes, and deletions. A gallery request with
+`since_version` equal to the current version returns `unchanged=true` and empty object/view lists;
+an older version receives a full snapshot. Serving a last-known-good snapshot while Memory is
+unreachable is a Vision policy, not permission for Memory to return stale data.
+
+View insertion is idempotent on `(object_id, view_index, crop_sha256)`, bounded by configured crop,
+dimension, and view-count limits. Deleting an enrolled object removes its registry rows,
+embeddings, and durable crop subtree. Session deletion removes only that session's event history;
+it must not erase a registered object or another session's state for that stable id.
+
+Vision owns registration capture. `POST /v1/objects` validates that the label is trackable and
+proxies object minting to Memory. `POST /v1/objects/{id}/capture` arms a bounded EvidenceRing
+window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `extracting`,
+`succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
+window retains all frames received at the Gateway's sampled relay rate. Vision evenly samples up
+to 16 coarse frames and sends ordered four-frame batches through a temporal Cosmos prompt that
+looks for the same deliberately presented object across time. Only original relay frames within a
+bounded interval around temporal hits enter the image-grounding pass, with at most 24 detailed
+frames. Each geometrically usable first crop gets an optional second localization; a valid tighter
+box refines the suggestion, while a second-pass abstention preserves the first crop. Label-specific
+grounding disambiguates physical personal objects from common homonyms; notably, portable keys
+explicitly exclude computer keyboard keys and screen images. A separate contrastive quality
+judgment remains a hard safety gate, so any crop the model identifies as the wrong physical object
+cannot become a C-RADIO reference. Valid candidates are filtered relative to their own sharpness
+median, embedded through the same optional two-stage mask-to-crop transform used for live matching,
+and farthest-point sampled to at most six suggestions. Fewer than two valid quality/diverse views
+is an explicit failed registration, removes the empty object, and stores no weak gallery. No
+recording endpoint or video process is added to the Media Gateway.
+
+The Admin Console uses a separate operator-guided registration contract. The browser freezes the
+POV it already displays and keeps the full frame and pending crops local while the operator draws,
+previews, adds, or removes views. On explicit confirmation it creates the object and sends two to
+eight JPEG crops as `views_base64` to `POST /v1/objects/{object_id}/manual`. Vision checks image
+quality, embeds and diversity-ranks the crops with C-RADIO, and persists at least two or rolls back
+the new object. Cosmos neither chooses nor vetoes manual crops, and no pending crop is an active
+identity reference before confirmation. Console rollback uses Vision's
+`DELETE /v1/objects/{object_id}` proxy so Memory deletion and forced gallery invalidation happen as
+one service operation rather than leaving a deleted identity active in Vision's cache.
+
+The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
+intent; a background workflow owns all side effects and narration: fixed prompt through
+`ReplyTransport`, create/arm/poll, then one fixed success or honest-failure line. Registration
+speech is not treated as a rewrite of a Memory query result. It passes only the fixed vocabulary
+under `registration:prompt`, `registration:succeeded`, or `registration:failed`; the six
+where-answer guard rules and their canonical fallback remain unchanged.
+
 ## Trusted object state
 
 ```json
@@ -383,7 +502,7 @@ The field is absent from stored trusted state on purpose. A URL is not durable �
 - `unknown`
 - `ambiguous_object`
 
-The conversational layer may shorten wording, but it must preserve `answer_status`, uncertainty, and invalidation information.
+The conversational layer may shorten wording, but it must preserve `answer_status`, uncertainty, and invalidation information. A state with `last_seen` but no confirmed placement is historical evidence only: its answer remains `unknown` (or another non-current status) and says *"I last saw it ..."*. It must never use present-tense *"it is ..."* wording. This is the answer-layer half of the reducer rule that `observed` updates `last_seen` without creating a placement.
 
 ## Versioning
 

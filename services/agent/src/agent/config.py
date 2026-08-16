@@ -6,11 +6,11 @@ import ipaddress
 import os
 import socket
 from functools import lru_cache
-from typing import Annotated, Literal, Self
+from typing import Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import Field, PrivateAttr, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Environment = Literal["dev", "ci", "deploy"]
 AgentBackendKind = Literal["stub", "llm"]
@@ -80,12 +80,19 @@ class Settings(BaseSettings):
     hands_free_enabled: bool = False
     gateway_base_url: str = "http://127.0.0.1:8080"
     speech_base_url: str = "http://127.0.0.1:8085"
+    vision_base_url: str = "http://127.0.0.1:8082"
     session_poll_interval_s: float = Field(default=2.0, ge=0.25, le=60.0)
     listener_reconnect_s: float = Field(default=1.0, ge=0.1, le=30.0)
     gateway_event_timeout_s: float = Field(default=2.0, gt=0.0, le=10.0)
+    # Barge-in is unsupported. Ignore transcripts finalized immediately after
+    # return audio so the glasses speaker cannot recursively query the Agent.
+    reply_echo_suppression_s: float = Field(default=3.0, ge=0.0, le=15.0)
     gateway_audio_sample_rate: int = Field(default=48_000, ge=8_000, le=192_000)
     gateway_audio_channels: int = Field(default=1, ge=1, le=2)
     max_synthesis_bytes: int = Field(default=10_000_000, ge=1_024, le=50_000_000)
+    registration_capture_seconds: float = Field(default=6.0, gt=0.0, le=15.0)
+    registration_timeout_s: float = Field(default=20.0, gt=1.0, le=120.0)
+    registration_poll_interval_s: float = Field(default=0.25, ge=0.05, le=5.0)
 
     # Local ADK/LiteLLM is the default path. ``stub`` remains available for
     # deterministic development and the fully offline endpoint suite.
@@ -95,37 +102,17 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     allow_external_llm: bool = False
     llm_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
+    # Voice turns must be bounded independently of model context capacity.
+    # Nemotron's private reasoning counts against this budget even though it is
+    # removed before HUD/TTS output.
+    llm_max_output_tokens: int = Field(default=256, ge=32, le=2_048)
+    # OpenAI clients otherwise retry a 30-second read timeout twice, making a
+    # single bad turn look like a 90-second frozen assistant.
+    llm_max_retries: int = Field(default=0, ge=0, le=2)
+    # Applied only to loopback OpenAI-compatible servers. vLLM's Nemotron chat
+    # template supports this flag and remains tool-capable without reasoning.
+    llm_local_enable_thinking: bool = False
 
-    wake_prefix: str = "hey memory"
-    # STT commonly renders the same spoken prefix several ways. Keep this list
-    # explicit and configurable; matching still requires a bounded where-question
-    # after the prefix, which is the false-fire gate.
-    wake_prefix_variants: Annotated[tuple[str, ...], NoDecode] = (
-        "hay memory",
-        "he memory",
-        "hey memories",
-        "hey mammary",
-        # Observed on the glasses, from the HUD transcript of a query that
-        # failed to trigger: "Hey may me, where did I leave my ma monitor?".
-        # Parakeet splits "memory" into two words on this microphone.
-        "hey may me",
-        "hey maybe",
-        "hey mame",
-    )
-    #: How long a wake prefix stays live when the utterance carrying it held no
-    #: question.
-    #:
-    #: A wake phrase invites a pause -- people say "Hey memory." and *then* ask.
-    #: Any silence longer than `VMA_STT_UTTERANCE_SILENCE_MS` ends the utterance
-    #: there, so the prefix and the question arrive as two transcripts and
-    #: neither one can fire on its own. Carrying the wake forward briefly is
-    #: what makes a natural pause survivable; lengthening the VAD window alone
-    #: cannot, because someone will always pause a little longer.
-    #:
-    #: Both gates still apply, just across two utterances instead of one, and
-    #: the carry is single-use. Set to 0 to require prefix and question in the
-    #: same breath.
-    wake_carry_over_s: float = Field(default=10.0, ge=0.0, le=60.0)
     # Bounds local service HTTP and WebSocket setup. LLM inference has its own
     # timeout because a slow free route must not make Memory or audio look hung.
     request_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
@@ -140,6 +127,7 @@ class Settings(BaseSettings):
         "memory_base_url",
         "gateway_base_url",
         "speech_base_url",
+        "vision_base_url",
         "llm_base_url",
     )
     @classmethod
@@ -148,29 +136,6 @@ class Settings(BaseSettings):
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("endpoint must be an http:// or https:// URL with a hostname")
         return value.rstrip("/")
-
-    @field_validator("wake_prefix")
-    @classmethod
-    def _wake_prefix_is_not_empty(cls, value: str) -> str:
-        normalized = " ".join(value.casefold().split())
-        if not normalized:
-            raise ValueError("wake_prefix must not be empty")
-        return normalized
-
-    @field_validator("wake_prefix_variants", mode="before")
-    @classmethod
-    def _split_wake_prefix_variants(cls, value: object) -> object:
-        if isinstance(value, str):
-            return tuple(item.strip() for item in value.split(",") if item.strip())
-        return value
-
-    @field_validator("wake_prefix_variants")
-    @classmethod
-    def _normalize_wake_prefix_variants(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        normalized = tuple(" ".join(item.casefold().split()) for item in value)
-        if any(not item for item in normalized):
-            raise ValueError("wake_prefix_variants must not contain an empty prefix")
-        return tuple(dict.fromkeys(normalized))
 
     @model_validator(mode="after")
     def _external_llm_requires_opt_in(self) -> Self:
@@ -214,17 +179,16 @@ class Settings(BaseSettings):
         return self.memory_api_token or self.internal_api_token
 
     @property
-    def accepted_wake_prefixes(self) -> tuple[str, ...]:
-        """Canonical wake prefix followed by unique configured STT variants."""
-        return tuple(dict.fromkeys((self.wake_prefix, *self.wake_prefix_variants)))
-
-    @property
     def endpoint_host(self) -> str:
         return _endpoint_host(self.llm_base_url)
 
     @property
     def endpoint_scope(self) -> EndpointScope:
         return self._resolved_endpoint_scope
+
+    @property
+    def vision_endpoint_host(self) -> str:
+        return _endpoint_host(self.vision_base_url)
 
 
 @lru_cache

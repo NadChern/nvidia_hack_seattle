@@ -67,6 +67,30 @@ export async function del(service: ServiceName, path: string): Promise<void> {
   )
 }
 
+/** DELETE where failure must be visible rather than best-effort cleanup. */
+export async function delChecked(service: ServiceName, path: string): Promise<void> {
+  const response = await fetch(`${BASE[service]}${path}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  })
+  if (!response.ok) {
+    throw new ApiError(service, response.status, await response.text())
+  }
+}
+
+/** GET returning authenticated raw bytes, used for durable reference crops. */
+export async function getBlob(
+  service: ServiceName,
+  path: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const response = await fetch(`${BASE[service]}${path}`, { headers: authHeaders(), signal })
+  if (!response.ok) {
+    throw new ApiError(service, response.status, await response.text())
+  }
+  return await response.blob()
+}
+
 /** POST returning raw bytes -- speech synthesis hands back audio/wav. */
 export async function postForBlob(
   service: ServiceName,

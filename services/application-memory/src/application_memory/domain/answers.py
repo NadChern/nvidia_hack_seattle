@@ -178,6 +178,19 @@ def answer_for(
             ),
         )
 
+    if state.last_seen is not None:
+        where = _place(None, room=state.last_seen.room)
+        at = _clock(state.last_seen.occurred_at)
+        return QueryResponse(
+            object_id=state.object_id,
+            answer_status="unknown",
+            current_status=state.current_status,
+            spoken_answer=(
+                f"I last saw the {label} {where} at {at}, but I never confirmed "
+                "where it was put down."
+            ),
+        )
+
     return QueryResponse(
         object_id=state.object_id,
         answer_status="unknown",

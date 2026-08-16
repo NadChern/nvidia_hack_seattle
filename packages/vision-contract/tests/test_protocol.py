@@ -14,6 +14,7 @@ from visual_memory_vision_contract.protocol import (
     Detection,
     DetectorRef,
     EvidenceWindow,
+    IdentityMatch,
     VerifierResult,
 )
 
@@ -75,6 +76,15 @@ def test_hand_candidate_defaults_to_none() -> None:
     candidate = a_candidate()
 
     assert candidate.hand_candidate is None
+
+
+def test_identity_none_and_identity_abstained_are_distinct() -> None:
+    did_not_run = a_candidate()
+    abstained = a_candidate(identity=IdentityMatch(reason_code="ambiguous"))
+
+    assert did_not_run.identity is None
+    assert abstained.identity is not None
+    assert abstained.identity.object_id is None
 
 
 def test_an_unknown_action_is_rejected() -> None:

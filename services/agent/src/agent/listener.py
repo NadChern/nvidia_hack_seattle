@@ -1,14 +1,13 @@
-"""Wake-prefix-gated hands-free transcript listener."""
+"""Hands-free transcript listener with return-audio and assist-call gates."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import re
 import time
 from collections.abc import AsyncIterable
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -24,21 +23,6 @@ from agent.reply import ReplyTransport
 from agent.stub import QueryBackend
 
 logger = logging.getLogger(__name__)
-
-#: The only question shape this assistant answers. Kept in one place so the
-#: anchored and scanning forms below cannot drift apart.
-_QUESTION_ALTERNATION = (
-    r"(?:where\b|do\s+you\s+know\s+where\b|can\s+you\s+tell\s+me\s+where\b|"
-    r"could\s+you\s+tell\s+me\s+where\b)"
-)
-
-_QUESTION_SHAPE = re.compile(rf"^{_QUESTION_ALTERNATION}")
-
-#: The same shape starting at any word boundary. Used only after a deliberate
-#: press, never for the wake word: the button already establishes intent, so
-#: scanning costs nothing there, whereas after a wake prefix the question must
-#: follow the prefix or "hey memory" stops meaning anything.
-_QUESTION_SHAPE_ANYWHERE = re.compile(rf"(?:^|(?<=\W)){_QUESTION_ALTERNATION}")
 
 
 class Transcript(BaseModel):
@@ -57,10 +41,11 @@ class SessionSummary(BaseModel):
 
     session_id: str
     publisher_present: bool
-    #: True while a remote-assist call is accepted for this session. Absent
-    #: from an older gateway reads as `False` (`extra="ignore"` covers the
-    #: reverse: a newer gateway field this Agent doesn't know yet).
+    #: Backward-compatible accepted-call signal from an older Gateway.
     assist_active: bool = False
+    #: Pending and accepted requests both suppress model-bound audio. The
+    #: Gateway reports null after an ended or expired request.
+    assist_state: Literal["requested", "accepted", "ended"] | None = None
 
 
 class SessionList(BaseModel):
@@ -100,62 +85,6 @@ class EventSender(Protocol):
     ) -> None: ...
 
 
-def triggered_question(text: str, wake_prefixes: str | tuple[str, ...]) -> str | None:
-    """Find a wake prefix followed by a bounded where-question.
-
-    Prefixes may appear after a disfluency or leaked reply audio. The supported
-    question shape remains mandatory; scanning is not permission to trigger on
-    an ordinary mention of the product name.
-    """
-    normalized = " ".join(text.casefold().split())
-    configured = (wake_prefixes,) if isinstance(wake_prefixes, str) else wake_prefixes
-    matches: list[tuple[int, str]] = []
-
-    for configured_prefix in configured:
-        prefix = " ".join(configured_prefix.casefold().split())
-        if not prefix:
-            continue
-        start = 0
-        while (hit := normalized.find(prefix, start)) != -1:
-            end = hit + len(prefix)
-            before_ok = hit == 0 or not normalized[hit - 1].isalnum()
-            after_ok = end == len(normalized) or not normalized[end].isalnum()
-            if before_ok and after_ok:
-                question = normalized[end:].lstrip(" ,:;.!?-")
-                if question and _QUESTION_SHAPE.match(question) is not None:
-                    matches.append((hit, question))
-            start = hit + 1
-
-    if not matches:
-        return None
-    return min(matches, key=lambda match: match[0])[1]
-
-
-def contains_wake_prefix(text: str, wake_prefixes: str | tuple[str, ...]) -> bool:
-    """Whether a wake prefix was spoken, regardless of what followed it.
-
-    `triggered_question` deliberately answers a narrower question: prefix *and*
-    a supported question. This one exists to notice "Hey memory." on its own,
-    which is what a wearer says before pausing to think.
-    """
-    normalized = " ".join(text.casefold().split())
-    configured = (wake_prefixes,) if isinstance(wake_prefixes, str) else wake_prefixes
-
-    for configured_prefix in configured:
-        prefix = " ".join(configured_prefix.casefold().split())
-        if not prefix:
-            continue
-        start = 0
-        while (hit := normalized.find(prefix, start)) != -1:
-            end = hit + len(prefix)
-            before_ok = hit == 0 or not normalized[hit - 1].isalnum()
-            after_ok = end == len(normalized) or not normalized[end].isalnum()
-            if before_ok and after_ok:
-                return True
-            start = hit + 1
-    return False
-
-
 class HandsFreeListener:
     """Discovers live gateway sessions and owns one STT socket per session."""
 
@@ -174,18 +103,18 @@ class HandsFreeListener:
         self._events = events or GatewayEventTransport(settings)
         self._metrics = metrics or AgentMetrics()
         self._tasks: dict[str, asyncio.Task[None]] = {}
-        #: session_id -> monotonic deadline for a wake prefix whose utterance
-        #: carried no question. Single-use; see `wake_carry_over_s`.
-        self._pending_wake: dict[str, float] = {}
+        self._suppress_until: dict[str, float] = {}
+        self._assist_suppressed: set[str] = set()
 
-    def _arm_wake_carry_over(self, session_id: str) -> None:
-        if self._settings.wake_carry_over_s > 0:
-            self._pending_wake[session_id] = time.monotonic() + self._settings.wake_carry_over_s
-
-    def _consume_wake_carry_over(self, session_id: str) -> bool:
-        """True once, if a wake prefix arrived in a recent earlier utterance."""
-        deadline = self._pending_wake.pop(session_id, None)
-        return deadline is not None and deadline > time.monotonic()
+    def _set_assist_suppressed(self, session_id: str, suppressed: bool) -> None:
+        if suppressed and session_id not in self._assist_suppressed:
+            self._assist_suppressed.add(session_id)
+            self._metrics.record_assist_gate_closed()
+            logger.info("remote-assist audio gate closed", extra={"session_id": session_id})
+        elif not suppressed and session_id in self._assist_suppressed:
+            self._assist_suppressed.remove(session_id)
+            self._metrics.record_assist_gate_opened()
+            logger.info("remote-assist audio gate opened", extra={"session_id": session_id})
 
     def _headers(self) -> dict[str, str]:
         token = self._settings.internal_api_token
@@ -240,89 +169,26 @@ class HandsFreeListener:
                 },
             )
 
-    async def _manual_question(self, transcript: Transcript) -> str | None:
-        """Answer a bounded where-question that followed a deliberate press.
-
-        Shape is checked *before* the arm is consumed, for two reasons. Most
-        utterances are not questions at all, and asking the gateway about every
-        one of them is a network round-trip per transcript on the hot path.
-        More importantly, consuming an arm and then discarding it because the
-        wearer said something else first would silently spend the press.
-
-        Scan rather than anchor: SG-A measured that anchoring the shape to the
-        start of an utterance loses 6 of 10 realistic questions to a leading
-        "um" or to reply audio bleeding in. This is the fallback for when the
-        wake word fails, so it must not fail the same way.
-        """
-        normalized = " ".join(transcript.text.casefold().split())
-        found = _QUESTION_SHAPE_ANYWHERE.search(normalized)
-        if found is None:
-            return None
-
-        try:
-            armed = await self._events.consume_manual_trigger(transcript.session_id)
-        except Exception as exc:
-            logger.warning(
-                "could not consume manual trigger",
-                extra={
-                    "session_id": transcript.session_id,
-                    "error_type": type(exc).__name__,
-                },
-            )
-            return None
-        return normalized[found.start() :] if armed else None
-
-    def _carried_over_question(self, transcript: Transcript) -> str | None:
-        """Accept a bare question when the wake prefix was the previous utterance.
-
-        The VAD ends an utterance at any pause longer than its silence window,
-        and a wake phrase invites exactly such a pause -- "Hey memory." then a
-        beat, then the question. Without this, the prefix and the question
-        arrive as two transcripts and neither can fire alone, which reads to
-        the wearer as being cut off mid-sentence.
-
-        Both gates still hold, only split across two utterances: a prefix was
-        spoken recently, and this utterance is a supported where-question.
-        """
-        normalized = " ".join(transcript.text.casefold().split())
-        found = _QUESTION_SHAPE_ANYWHERE.search(normalized)
-        if found is None:
-            return None
-        if not self._consume_wake_carry_over(transcript.session_id):
-            return None
-        logger.info(
-            "question answered against a wake prefix from the previous utterance",
-            extra={"session_id": transcript.session_id},
-        )
-        return normalized[found.start() :]
-
     async def process(self, transcript: Transcript) -> bool:
-        """Handle one transcript. False means it stopped before any model call."""
-        await self._send_transcript_event(transcript)
-        prefixes = self._settings.accepted_wake_prefixes
-        question = triggered_question(transcript.text, prefixes)
-
-        if question is None:
-            question = self._carried_over_question(transcript)
-        if question is None:
-            question = await self._manual_question(transcript)
-
-        if question is None:
-            # "Hey memory." on its own is not a question, but it is a wearer
-            # who is about to ask one. Hold the wake open rather than making
-            # them start over.
-            if contains_wake_prefix(transcript.text, prefixes):
-                self._arm_wake_carry_over(transcript.session_id)
-                logger.info(
-                    "wake prefix held open for the next utterance",
-                    extra={
-                        "session_id": transcript.session_id,
-                        "carry_over_s": self._settings.wake_carry_over_s,
-                    },
-                )
-            self._metrics.record_hands_free_ignored()
+        """Forward a transcript only while its remote-assist gate is open."""
+        if transcript.session_id in self._assist_suppressed:
+            self._metrics.record_assist_transcript_suppressed()
+            logger.info(
+                "transcript ignored during remote-assist audio suppression",
+                extra={"session_id": transcript.session_id},
+            )
             return False
 
+        await self._send_transcript_event(transcript)
+        if time.monotonic() < self._suppress_until.get(transcript.session_id, 0.0):
+            self._metrics.record_hands_free_ignored()
+            logger.info(
+                "transcript ignored during return-audio echo cooldown",
+                extra={"session_id": transcript.session_id},
+            )
+            return False
+
+        question = " ".join(transcript.text.casefold().split())
         self._metrics.record_hands_free_triggered()
         logger.info(
             "hands-free query triggered",
@@ -331,6 +197,21 @@ class HandsFreeListener:
         try:
             started = time.perf_counter()
             draft = await self._backend.query(question, transcript.session_id)
+            if draft.assist_requested:
+                # Close locally before acknowledgement audio or another queued
+                # transcript can race the Gateway's next session-state poll.
+                self._set_assist_suppressed(transcript.session_id, True)
+                self._metrics.record_assist_request_started()
+            if draft.registration_started:
+                # The tool-owned background workflow speaks its own fixed
+                # prompt and terminal line. Sending the model draft here would
+                # duplicate audio and incorrectly guard it as a where-answer.
+                return True
+            if transcript.session_id in self._assist_suppressed and not draft.assist_requested:
+                # A Console-created request may become visible while this model
+                # turn is in flight. Never speak its stale reply over a human call.
+                self._metrics.record_assist_transcript_suppressed()
+                return False
             guarded = guard_reply(draft.text, draft.tool_result)
             latency_ms = max(0, round((time.perf_counter() - started) * 1000))
             self._metrics.record_guard(guarded.verdict)
@@ -344,6 +225,10 @@ class HandsFreeListener:
                 latency_ms=latency_ms,
             )
             await self._reply.send(transcript.session_id, guarded.reply)
+            if not draft.assist_requested:
+                self._suppress_until[transcript.session_id] = (
+                    time.monotonic() + self._settings.reply_echo_suppression_s
+                )
             self._metrics.record_hands_free_reply()
             logger.info(
                 "hands-free reply sent",
@@ -362,15 +247,23 @@ class HandsFreeListener:
         response = await client.get("/v1/sessions")
         response.raise_for_status()
         listing = SessionList.model_validate(response.json())
-        # Excluding an assist-active session here is what stops listening:
-        # `run()`'s reconciliation loop cancels its STT task on the next poll
-        # because the session drops out of this set, and restarts one with no
-        # special-casing once the call ends and the session reappears in it.
-        return {
-            item.session_id
-            for item in listing.sessions
-            if item.publisher_present and not item.assist_active
-        }
+        active: set[str] = set()
+        reported: set[str] = set()
+        for item in listing.sessions:
+            reported.add(item.session_id)
+            assist_suppresses = item.assist_state in {"requested", "accepted"}
+            # ``assist_active`` preserves safety with a Gateway that predates
+            # the additive state field and only knows accepted calls.
+            assist_suppresses = assist_suppresses or item.assist_active
+            self._set_assist_suppressed(item.session_id, assist_suppresses)
+            if item.publisher_present and not assist_suppresses:
+                active.add(item.session_id)
+
+        # Absence from the authoritative active-session listing means the
+        # session ended; do not retain one suppression entry per old session.
+        for session_id in self._assist_suppressed - reported:
+            self._set_assist_suppressed(session_id, False)
+        return active
 
     def _stt_url(self, session_id: str) -> str:
         base = self._settings.speech_base_url
@@ -395,6 +288,10 @@ class HandsFreeListener:
                 if transcript.session_id != session_id:
                     continue
                 await self.process(transcript)
+                if session_id in self._assist_suppressed:
+                    # Close the STT socket immediately instead of waiting for
+                    # the next Gateway polling interval.
+                    return
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -410,7 +307,7 @@ class HandsFreeListener:
                 )
 
     async def _listen(self, session_id: str) -> None:
-        while True:
+        while session_id not in self._assist_suppressed:
             try:
                 async with connect(
                     self._stt_url(session_id),
@@ -419,6 +316,8 @@ class HandsFreeListener:
                     open_timeout=self._settings.request_timeout_s,
                 ) as websocket:
                     await self._consume_messages(session_id, websocket)
+                    if session_id in self._assist_suppressed:
+                        return
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -447,10 +346,7 @@ class HandsFreeListener:
                         for session_id in self._tasks.keys() - active:
                             task = self._tasks.pop(session_id)
                             task.cancel()
-                            # A wake held open for a session that has gone away
-                            # must not outlive it, and the map must not grow
-                            # one entry per session for the life of the process.
-                            self._pending_wake.pop(session_id, None)
+                            self._suppress_until.pop(session_id, None)
                         await asyncio.sleep(self._settings.session_poll_interval_s)
                     except asyncio.CancelledError:
                         raise
@@ -463,6 +359,8 @@ class HandsFreeListener:
         finally:
             tasks = list(self._tasks.values())
             self._tasks.clear()
+            self._suppress_until.clear()
+            self._assist_suppressed.clear()
             for task in tasks:
                 task.cancel()
             if tasks:
@@ -476,5 +374,4 @@ __all__ = [
     "SessionList",
     "SessionSummary",
     "Transcript",
-    "triggered_question",
 ]

@@ -148,7 +148,7 @@ prerecorded-video fallback in S01 remains the fallback here.
 
 Do not substitute Cosmos3-Super by assumption: at 64B with only BF16 officially tested it cannot preserve safe headroom in a shared 128 GB budget. Cosmos3-Nano is the planned 16B tier, but it still passes only after measured physical coexistence. Cosmos3-Edge is also not a laptop fallback because its approximately 9.1 GB of weights exceed the laptop's 8,188 MiB VRAM before runtime allocations.
 
-If Cosmos3 is also proposed for the Agent, separately test OpenAI tool-call parsing, one-and-only-one `where_is` invocation, thinking suppression, guard acceptance/veto behavior, and the no-tool unsupported-conversation path.
+If Cosmos3 is also proposed for the Agent, separately test OpenAI tool-call parsing, one-and-only-one `where_is` invocation for personal-memory questions, thinking suppression, guarded Memory rewrites, and bounded no-tool general-assistant answers.
 
 **Pass gate:** Select one resident verifier that meets the precision, JSON-validity, latency, ARM64, and complete-workload memory gates while preserving agreed GN100 headroom.
 

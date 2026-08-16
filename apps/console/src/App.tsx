@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import { AgentPanel } from "@/features/agent/AgentPanel"
 import { AssistPanel } from "@/features/assist/AssistPanel"
+import { EnrollmentPanel } from "@/features/enrollment/EnrollmentPanel"
 import { GlassesPanel } from "@/features/glasses/GlassesPanel"
 import { MemoryPanel } from "@/features/memory/MemoryPanel"
 import { SpeechPanel } from "@/features/speech/SpeechPanel"
@@ -39,7 +40,7 @@ export default function App() {
           <header className="flex items-center gap-3 border-b px-4 py-2.5">
             <h1 className="text-sm font-semibold">Visual Memory Assistant</h1>
             <span className="text-xs text-muted-foreground">
-              console — camera, detection, memory, speech, assistant
+              console — glasses POV, Cosmos, personal memory, speech, assistant
             </span>
           </header>
 
@@ -64,6 +65,7 @@ export default function App() {
                     <TabsTrigger value="memory">Memory</TabsTrigger>
                     <TabsTrigger value="speech">Speech</TabsTrigger>
                     <TabsTrigger value="assistant">Assistant</TabsTrigger>
+                    <TabsTrigger value="enroll">Enroll</TabsTrigger>
                   </TabsList>
                   <TabsContent
                     value="glasses"
@@ -98,6 +100,9 @@ export default function App() {
                     className="min-h-0 flex-1 data-[state=inactive]:hidden"
                   >
                     <AgentPanel />
+                  </TabsContent>
+                  <TabsContent value="enroll" className="min-h-0 flex-1">
+                    <EnrollmentPanel />
                   </TabsContent>
                 </Tabs>
               </TranscriptProvider>

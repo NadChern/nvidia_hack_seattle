@@ -7,9 +7,14 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from visual_memory_memory_contract import AnswerStatus
 
-GuardVerdict = Literal[
-    "passed", "vetoed:1", "vetoed:2", "vetoed:3", "vetoed:4", "vetoed:5", "vetoed:6"
+RegistrationStep = Literal["prompt", "succeeded", "failed"]
+RegistrationGuardVerdict = Literal[
+    "registration:prompt", "registration:succeeded", "registration:failed"
 ]
+GuardVerdict = (
+    Literal["passed", "vetoed:1", "vetoed:2", "vetoed:3", "vetoed:4", "vetoed:5", "vetoed:6"]
+    | RegistrationGuardVerdict
+)
 StatusBackend = Literal["stub", "local", "external"]
 
 
@@ -40,6 +45,13 @@ class AgentMetricsResponse(BaseModel):
     hands_free_triggered: int = 0
     hands_free_replies: int = 0
     hands_free_errors: int = 0
+    assist_requests_started: int = 0
+    assist_transcripts_suppressed: int = 0
+    assist_gate_closed: int = 0
+    assist_gate_opened: int = 0
+    registrations_started: int = 0
+    registrations_succeeded: int = 0
+    registrations_failed: int = 0
 
 
 class AgentStatusResponse(BaseModel):
@@ -48,6 +60,9 @@ class AgentStatusResponse(BaseModel):
     backend: StatusBackend
     model: str
     endpoint_host: str
+    vision_endpoint_host: str
+    registration_capture_seconds: float
+    registration_timeout_s: float
     metrics: AgentMetricsResponse
 
 
@@ -65,5 +80,7 @@ __all__ = [
     "AgentStatusResponse",
     "GuardVerdict",
     "HealthResponse",
+    "RegistrationGuardVerdict",
+    "RegistrationStep",
     "StatusBackend",
 ]
