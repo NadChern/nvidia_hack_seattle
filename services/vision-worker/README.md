@@ -61,10 +61,12 @@ authority after a `written` result.
 
 ### Registration
 
-Registration creates a durable object in Memory, captures a bounded frame window, localizes the
-chosen label through the same Cosmos grounding path, embeds quality crops with C-RADIO, removes
-near-duplicates, and stores two to four diverse reference views. Fewer than the configured minimum
-views fails explicitly and stores no weak gallery.
+Registration creates a durable object in Memory, captures a bounded frame window, and localizes the
+chosen label with a strict single-frame Cosmos prompt. Every geometrically usable crop then passes a
+second semantic localization: a crisp crop of only a cord, hand, floor, or other background is
+rejected even if the first box claimed the target was there. C-RADIO embeds the surviving crops,
+removes near-duplicates, and stores two to four diverse reference views. Fewer than the configured
+minimum views fails explicitly and stores no weak gallery.
 
 The registration allowlist is `VMA_DETECTION_LABELS`. `/v1/status` exposes it as
 `config.registration_labels` so the Console uses the same server-enforced list rather than a

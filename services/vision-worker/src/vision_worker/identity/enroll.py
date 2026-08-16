@@ -167,11 +167,41 @@ class ObjectEnroller:
         relative_scores = apply_relative_sharpness(
             [quality for _, quality in candidates], config=self._config.quality
         )
-        passed = [
+        physically_usable = [
             (crop, quality)
             for (crop, _), quality in zip(candidates, relative_scores, strict=True)
             if quality.accepted
         ]
+
+        # A sharp, reasonably sized box can still be semantically wrong. The
+        # failed live keys capture that motivated this gate produced one crop
+        # containing keys and three crisp crops containing only cord/floor;
+        # geometric quality assigned all four high scores. Ask the strict
+        # enrollment localizer to recognize the target again inside each crop.
+        # This second pass cannot make a crop good -- it can only abstain -- and
+        # fewer than two surviving views fails without persisting a poisoned
+        # personal-object gallery.
+        semantic_boxes = await asyncio.gather(
+            *(
+                self._localizer.localize(_jpeg(crop.image), label)
+                for crop, _quality in physically_usable
+            )
+        )
+        passed = [
+            candidate
+            for candidate, semantic_box in zip(physically_usable, semantic_boxes, strict=True)
+            if semantic_box is not None
+        ]
+        logger.info(
+            "registration semantic crop gate completed",
+            extra={
+                "object_id": object_id,
+                "label": label,
+                "localized": detections,
+                "physical_quality": len(physically_usable),
+                "semantic_quality": len(passed),
+            },
+        )
         preliminary = EnrollmentResult(len(sampled), detections, len(passed), 0)
         if len(passed) < self._config.min_views:
             raise EnrollmentError(

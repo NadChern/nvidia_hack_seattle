@@ -29,6 +29,14 @@ class BoxLocalizer:
         return BOX
 
 
+class RejectingCropLocalizer:
+    """Finds a box in source frames but rejects the resulting semantic crops."""
+
+    async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
+        with Image.open(io.BytesIO(frame)) as image:
+            return BOX if image.size == (64, 64) else None
+
+
 class StubGallery:
     def __init__(self) -> None:
         self.refreshes = 0
@@ -103,6 +111,32 @@ async def test_good_capture_selects_and_persists_a_diverse_gallery() -> None:
     assert 2 <= result.selected_views <= 4
     assert len(memory.uploads) == result.selected_views
     assert gallery.refreshes == 1
+
+
+async def test_semantically_wrong_crops_are_rejected_before_embedding() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=RejectingCropLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+    )
+    frames = tuple(
+        frame(index, color)
+        for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
+    )
+
+    with pytest.raises(EnrollmentError, match="passed quality") as caught:
+        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+
+    assert caught.value.reason_code == "too_few_quality_frames"
+    assert caught.value.result.detections == 3
+    assert caught.value.result.quality_passed == 0
+    assert memory.uploads == []
+    assert gallery.refreshes == 0
 
 
 async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:

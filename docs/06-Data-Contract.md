@@ -408,10 +408,13 @@ Vision owns registration capture. `POST /v1/objects` validates that the label is
 proxies object minting to Memory. `POST /v1/objects/{id}/capture` arms a bounded EvidenceRing
 window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `extracting`,
 `succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
-window is decoded in the enrollment service, segmented, filtered relative to its own sharpness
-median, embedded through the same mask-to-crop function used for matching, and farthest-point
-sampled. Fewer than two quality/diverse views is an explicit failed registration and stores no
-weak gallery. No recording endpoint or video process is added to the Media Gateway.
+window is decoded in the enrollment service and localized with a strict single-frame prompt. Each
+geometrically usable crop is localized a second time so a sharp crop containing only an accessory,
+hand, or background cannot enter the gallery. Surviving crops are filtered relative to their own
+sharpness median, embedded through the same mask-to-crop function used for matching, and
+farthest-point sampled. Fewer than two semantically valid quality/diverse views is an explicit
+failed registration and stores no weak gallery. No recording endpoint or video process is added to
+the Media Gateway.
 
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through

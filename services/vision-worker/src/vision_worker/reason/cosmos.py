@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 #: recorded run can say which wording produced it -- carried on the DetectorRef.
 PROMPT_VERSION = "cosmos-reason-v1"
 
+#: Registration uses a separate single-frame prompt. Event reasoning asks what
+#: happened across time, while enrollment must abstain unless the crop contains
+#: the physical target itself. Keeping the versions separate avoids pretending
+#: an enrollment-only safety change moved event semantics.
+LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v2"
+
 #: The model's own action vocabulary. The first three are memory events; the
 #: last two are how it declines. `carried` covers an object in transit.
 _ACTIONS = ("placed", "picked_up", "carried", "nothing_happened", "unknown")
@@ -78,6 +84,18 @@ Use "placed" only if the object is set down and left at rest during these frames
 "picked_up" if a hand lifts it, "carried" if it is moving with a person, and \
 "nothing_happened" if it just sits there untouched -- that is a correct and expected \
 answer, not a failure. Report only objects you actually see. Do not invent anything."""
+
+_LOCALIZE_PROMPT = """You are validating one reference image for personal-object \
+registration. The target label is: {label}.
+
+Find the physical target object itself. A valid box must tightly enclose pixels that make \
+the target visually recognizable. Do not substitute an attached cord, lanyard, strap, the \
+holder's hand, or the surrounding floor, wall, table, or other background. If a recognizable \
+{label} is not clearly visible, output exactly NO_OBJECT.
+
+If a recognizable {label} is clearly visible, output exactly one line and nothing else:
+<ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
+Coordinates are 0 to 1000, top-left origin."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,17 +147,29 @@ class CosmosReasoner:
         return self._parse(reply, labels)
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
-        """Registration helper: the box of `label` in a single frame, or None.
+        """Return one strict enrollment box, abstaining on accessories/background.
 
-        Reuses the exact grounding path the pipeline uses, so an enrolled crop
-        is framed the same way a query crop will be -- the crop-parity the
-        identity match depends on.
+        The temporal event prompt is intentionally not reused here. A single
+        enrollment frame has no action to classify, and asking for one made
+        Cosmos confidently box a key cord or the floor beneath it. The dedicated
+        prompt makes `NO_OBJECT` the required result when the physical target is
+        not visually recognizable.
         """
-        events = await self.analyze((frame,), labels=(label,))
-        for event in events:
-            if event.label == label:
-                return event.box
-        return events[0].box if events else None
+        if not frame or not label:
+            return None
+        try:
+            reply = await asyncio.to_thread(self._ask_localize_blocking, frame, label)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "Cosmos unreachable; enrollment frame yields no box",
+                extra={"error": str(exc)},
+            )
+            return None
+        wanted = label.strip().casefold()
+        for raw_label, box in _parse_boxes(reply):
+            if raw_label.strip().casefold() == wanted:
+                return box
+        return None
 
     # ------ Parsing --------------------------------------------------------
 
@@ -174,6 +204,27 @@ class CosmosReasoner:
 
     # ------ Blocking work, always run off the event loop -------------------
 
+    def _ask_localize_blocking(self, frame: bytes, label: str) -> str:
+        content: list[dict[str, Any]] = [
+            {"type": "text", "text": _LOCALIZE_PROMPT.format(label=label)},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode()}"},
+            },
+        ]
+        started = time.perf_counter()
+        reply = self._complete_blocking(content, max_tokens=96)
+        logger.info(
+            "Cosmos enrollment frame localized",
+            extra={
+                "latency_ms": (time.perf_counter() - started) * 1000.0,
+                "label": label,
+                "prompt_version": LOCALIZE_PROMPT_VERSION,
+                "found": bool(_parse_boxes(reply)),
+            },
+        )
+        return reply
+
     def _ask_blocking(self, frames: Sequence[bytes], labels: Sequence[str]) -> str:
         content: list[dict[str, Any]] = [
             {
@@ -186,24 +237,28 @@ class CosmosReasoner:
             content.append(
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded}"}}
             )
+        started = time.perf_counter()
+        reply = self._complete_blocking(content, max_tokens=self._config.max_tokens)
+        logger.info(
+            "Cosmos window analyzed",
+            extra={"latency_ms": (time.perf_counter() - started) * 1000.0, "labels": list(labels)},
+        )
+        return reply
+
+    def _complete_blocking(self, content: Sequence[dict[str, Any]], *, max_tokens: int) -> str:
         payload = {
             "model": self._config.model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": [{"role": "user", "content": list(content)}],
             "temperature": 0,
-            "max_tokens": self._config.max_tokens,
+            "max_tokens": max_tokens,
         }
         request = urllib.request.Request(
             f"{self._config.base_url.rstrip('/')}/chat/completions",
             data=json.dumps(payload).encode(),
             headers={"content-type": "application/json"},
         )
-        started = time.perf_counter()
         with urllib.request.urlopen(request, timeout=self._config.timeout_s) as response:
             body = json.load(response)
-        logger.info(
-            "Cosmos window analyzed",
-            extra={"latency_ms": (time.perf_counter() - started) * 1000.0, "labels": list(labels)},
-        )
         choices = body.get("choices", [])
         if not choices:
             return ""
@@ -275,4 +330,9 @@ def _parse_action_tail(reply: str) -> dict[str, dict[str, Any]]:
     return out
 
 
-__all__ = ["PROMPT_VERSION", "CosmosReasoner", "CosmosReasonerConfig"]
+__all__ = [
+    "LOCALIZE_PROMPT_VERSION",
+    "PROMPT_VERSION",
+    "CosmosReasoner",
+    "CosmosReasonerConfig",
+]

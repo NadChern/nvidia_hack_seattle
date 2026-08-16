@@ -80,6 +80,49 @@ async def test_analyze_pairs_a_box_with_its_action(monkeypatch: pytest.MonkeyPat
     assert event.box.x_min == pytest.approx(0.300)
 
 
+async def test_enrollment_localize_uses_the_strict_single_frame_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_localize_blocking",
+        lambda frame, label: "<ref>keys</ref><box>[400, 100, 600, 480]</box>",
+    )
+
+    box = await reasoner.localize(b"jpeg", "keys")
+
+    assert box is not None
+    assert box.x_min == pytest.approx(0.4)
+    assert box.y_max == pytest.approx(0.48)
+
+
+async def test_enrollment_localize_abstains_when_target_is_not_recognizable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_localize_blocking",
+        lambda frame, label: "NO_OBJECT",
+    )
+
+    assert await reasoner.localize(b"jpeg", "keys") is None
+
+
+async def test_enrollment_localize_ignores_a_box_for_the_wrong_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_localize_blocking",
+        lambda frame, label: "<ref>cord</ref><box>[100, 100, 900, 900]</box>",
+    )
+
+    assert await reasoner.localize(b"jpeg", "keys") is None
+
+
 async def test_boxes_for_unrequested_labels_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     reply = (
         '<ref>laptop</ref><box>[100, 100, 200, 200]</box>\n[{"label":"laptop","action":"carried"}]'

@@ -158,8 +158,8 @@ export function EnrollmentPanel() {
           <Camera /> {starting ? "Starting…" : "Start registration"}
         </Button>
         <p className="text-xs text-muted-foreground">
-          Cosmos localizes the object while you rotate it; C-RADIO stores only the
-          strongest diverse reference views.
+          Hold the object close, centered, and fully visible while rotating it slowly.
+          Cosmos rechecks every crop before C-RADIO stores diverse reference views.
         </p>
 
         {progress ? (
