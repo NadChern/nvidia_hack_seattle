@@ -377,7 +377,7 @@ python3 .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py
 
 ## Participants
 
-- [Erin Shih](https://github.com/erinshih413) — `erinshih413`
-- [Jacky Huang](https://github.com/jack980180) — `jack980180`
-- [Nadine Chernova](https://github.com/NadChern) — `NadChern`
-- [Aleexander Kuznetsov](https://github.com/AlexSKuznetsov) — `AlexSKuznetsov`
+- [Erin Shih](https://github.com/erinshih413)
+- [Jacky Huang](https://github.com/jack980180)
+- [Nadine Chernova](https://github.com/NadChern)
+- [Alexander Kuznetsov](https://github.com/AlexSKuznetsov)
