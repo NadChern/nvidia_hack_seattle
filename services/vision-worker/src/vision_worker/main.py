@@ -121,6 +121,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     enrollment_config = EnrollmentConfig(
         capture_seconds=settings.registration_capture_seconds,
         max_capture_seconds=settings.registration_max_capture_seconds,
+        temporal_max_frames=settings.registration_temporal_max_frames,
+        temporal_batch_frames=settings.registration_temporal_batch_frames,
+        candidate_interval_seconds=settings.registration_candidate_interval_seconds,
         max_frames=settings.registration_max_frames,
         target_views=settings.registration_target_views,
         min_views=settings.registration_min_views,

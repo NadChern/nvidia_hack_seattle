@@ -80,6 +80,14 @@ class WindowReasoner(Protocol):
         ...
 
 
+@dataclass(frozen=True, slots=True)
+class LocalizedFrame:
+    """One frame index and target box returned by temporal enrollment search."""
+
+    index: int
+    box: BoundingBox
+
+
 class Localizer(Protocol):
     """Finds one named object's box in one frame -- registration's front end.
 
@@ -88,6 +96,12 @@ class Localizer(Protocol):
     framed like the crops it will later be matched against -- the crop-parity
     the identity cosine depends on.
     """
+
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> Sequence[LocalizedFrame]:
+        """Find frames where the deliberately presented target is visible."""
+        ...
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None: ...
 
@@ -101,6 +115,7 @@ class ReasonerLocalizer(WindowReasoner, Localizer, Protocol):
 
 
 __all__ = [
+    "LocalizedFrame",
     "Localizer",
     "ReasonAction",
     "ReasonerLocalizer",

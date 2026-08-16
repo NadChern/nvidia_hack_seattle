@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+from collections.abc import Sequence
 
 import numpy as np
 import pytest
@@ -15,6 +16,7 @@ from vision_worker.identity.crop import prepare_masked_crop
 from vision_worker.identity.enroll import EnrollmentConfig, EnrollmentError, ObjectEnroller
 from vision_worker.identity.fixture import FixtureEmbedder
 from vision_worker.identity.selection import QualityConfig
+from vision_worker.reason.base import LocalizedFrame
 
 pytestmark = pytest.mark.anyio
 
@@ -25,6 +27,11 @@ BOX = BoundingBox(x_min=0.25, y_min=0.25, x_max=0.75, y_max=0.75)
 class BoxLocalizer:
     """Stands in for Cosmos: every box and final reference is valid."""
 
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> tuple[LocalizedFrame, ...]:
+        return tuple(LocalizedFrame(index=index, box=BOX) for index in range(len(frames)))
+
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         return BOX
 
@@ -34,6 +41,11 @@ class BoxLocalizer:
 
 class RejectingCropLocalizer:
     """Finds a box in source frames but rejects the resulting semantic crops."""
+
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> tuple[LocalizedFrame, ...]:
+        return tuple(LocalizedFrame(index=index, box=BOX) for index in range(len(frames)))
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         with Image.open(io.BytesIO(frame)) as image:
@@ -46,6 +58,13 @@ class RejectingCropLocalizer:
 class RejectingReferenceLocalizer(BoxLocalizer):
     async def validate_reference(self, crop: bytes, label: str) -> bool:
         return False
+
+
+class NoTemporalTargetLocalizer(BoxLocalizer):
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> tuple[LocalizedFrame, ...]:
+        return ()
 
 
 class StubGallery:
@@ -172,6 +191,30 @@ async def test_rejected_physical_references_never_reach_the_gallery() -> None:
     assert caught.value.reason_code == "too_few_valid_references"
     assert caught.value.result.detections == 3
     assert caught.value.result.quality_passed == 0
+    assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
+    assert gallery.refreshes == 0
+
+
+async def test_capture_without_a_temporally_visible_target_fails_early() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=NoTemporalTargetLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+    )
+    frames = tuple(
+        frame(index, color) for index, color in enumerate(((220, 30, 30), (30, 220, 30)))
+    )
+
+    with pytest.raises(EnrollmentError, match="across the capture") as caught:
+        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+
+    assert caught.value.reason_code == "too_few_temporal_candidates"
     assert memory.uploads == []
     assert memory.deleted == ["object_keys"]
     assert gallery.refreshes == 0

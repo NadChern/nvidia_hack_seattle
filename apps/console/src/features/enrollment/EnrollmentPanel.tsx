@@ -169,7 +169,7 @@ export function EnrollmentPanel() {
         </Button>
         <p className="text-xs text-muted-foreground">
           Hold the object close, centered, and fully visible while rotating it slowly.
-          Cosmos rechecks every crop before C-RADIO stores diverse reference views.
+          Cosmos searches the capture over time, then validates each crop before C-RADIO ranks diverse views.
         </p>
 
         {progress ? (

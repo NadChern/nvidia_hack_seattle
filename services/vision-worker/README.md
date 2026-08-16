@@ -61,16 +61,20 @@ authority after a `written` result.
 
 ### Registration
 
-Registration creates a durable object in Memory, captures a bounded frame window, and localizes the
-chosen label with a strict single-frame Cosmos prompt. Every geometrically usable crop gets an
-optional second localization; when it succeeds, the tighter box becomes the suggestion, but an
-abstention on the already-masked crop falls back to the valid first box instead of collapsing the
-registration to zero. The keys prompt explicitly excludes computer keyboards and screen images,
-which otherwise dominate a desk scene when the requested label is ambiguous. A contrastive
-reference-quality check remains a hard gate: explicitly rejected crops never enter C-RADIO.
-C-RADIO removes near-duplicates and stores two to four valid suggestions for enlarged Console
-inspection. Fewer than two valid quality views fails explicitly and deletes the empty object. The
-live identity path applies the same optional two-stage crop transform before gallery matching.
+Registration creates a durable object in Memory and keeps the complete bounded capture at the
+Gateway's sampled relay rate (8 FPS by default, not the glasses' native camera rate). A coarse
+Cosmos temporal search scans up to 16 evenly spaced frames in ordered four-frame batches and looks
+for the same deliberately presented object across time. Only original relay frames within 0.75
+seconds of those candidate moments enter the dynamically batched image-grounding pass, bounded at
+24 frames. This avoids ranking unrelated desk frames merely because a single-image prompt guessed
+a box.
+
+Every geometrically usable crop gets an optional tighter localization. The keys prompts explicitly
+exclude computer keyboards and screen images. A contrastive reference-quality check remains a hard
+gate: explicitly rejected crops never enter C-RADIO. C-RADIO removes near-duplicates and stores up
+to six valid suggestions for enlarged Console inspection. Fewer than two valid quality views fails
+explicitly and deletes the empty object. The live identity path applies the same optional two-stage
+crop transform before gallery matching.
 
 The registration allowlist is `VMA_DETECTION_LABELS`. `/v1/status` exposes it as
 `config.registration_labels` so the Console uses the same server-enforced list rather than a

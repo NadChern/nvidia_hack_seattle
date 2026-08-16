@@ -408,17 +408,20 @@ Vision owns registration capture. `POST /v1/objects` validates that the label is
 proxies object minting to Memory. `POST /v1/objects/{id}/capture` arms a bounded EvidenceRing
 window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `extracting`,
 `succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
-window is decoded in the enrollment service and localized with a strict single-frame prompt. Each
-geometrically usable first crop gets an optional second localization; a valid tighter box refines
-the suggestion, while a second-pass abstention preserves the first crop rather than erasing it. Label-specific grounding
-disambiguates physical personal objects from common homonyms; notably, portable keys explicitly
-exclude computer keyboard keys and screen images. A separate contrastive quality judgment remains
-a hard safety gate, so any crop the model identifies as the wrong physical object cannot become a
-C-RADIO reference. Valid candidates are filtered relative to their own sharpness median, embedded
-through the same optional two-stage mask-to-crop transform used for live matching, and
-farthest-point sampled. Fewer than two valid quality/diverse views is an explicit failed
-registration, removes the empty object, and stores no weak gallery. No recording endpoint or video
-process is added to the Media Gateway.
+window retains all frames received at the Gateway's sampled relay rate. Vision evenly samples up
+to 16 coarse frames and sends ordered four-frame batches through a temporal Cosmos prompt that
+looks for the same deliberately presented object across time. Only original relay frames within a
+bounded interval around temporal hits enter the image-grounding pass, with at most 24 detailed
+frames. Each geometrically usable first crop gets an optional second localization; a valid tighter
+box refines the suggestion, while a second-pass abstention preserves the first crop. Label-specific
+grounding disambiguates physical personal objects from common homonyms; notably, portable keys
+explicitly exclude computer keyboard keys and screen images. A separate contrastive quality
+judgment remains a hard safety gate, so any crop the model identifies as the wrong physical object
+cannot become a C-RADIO reference. Valid candidates are filtered relative to their own sharpness
+median, embedded through the same optional two-stage mask-to-crop transform used for live matching,
+and farthest-point sampled to at most six suggestions. Fewer than two valid quality/diverse views
+is an explicit failed registration, removes the empty object, and stores no weak gallery. No
+recording endpoint or video process is added to the Media Gateway.
 
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through

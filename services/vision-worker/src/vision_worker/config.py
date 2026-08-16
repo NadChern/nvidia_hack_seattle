@@ -149,11 +149,14 @@ class Settings(BaseSettings):
     # --- Registration capture ------------------------------------------------
     registration_capture_seconds: float = Field(default=6.0, gt=0)
     registration_max_capture_seconds: float = Field(default=15.0, gt=0)
-    #: Kept small: enrollment localizes every sampled frame through Cosmos
-    #: (~5s/call, run concurrently), so dozens of frames would make registration
-    #: unbearably slow. A handful of diverse views is what the gallery needs.
-    registration_max_frames: int = Field(default=8, ge=2, le=240)
-    registration_target_views: int = Field(default=4, ge=2, le=8)
+    #: Coarse temporal search scans evenly spaced frames in four-frame Cosmos
+    #: batches before the image pass. Original relay frames near a temporal hit
+    #: are then dynamically batched by vLLM for tight grounding.
+    registration_temporal_max_frames: int = Field(default=16, ge=4, le=64)
+    registration_temporal_batch_frames: int = Field(default=4, ge=2, le=8)
+    registration_candidate_interval_seconds: float = Field(default=0.75, gt=0.0, le=3.0)
+    registration_max_frames: int = Field(default=24, ge=2, le=240)
+    registration_target_views: int = Field(default=6, ge=2, le=8)
     registration_min_views: int = Field(default=2, ge=2, le=8)
     registration_dedup_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
     registration_min_mask_box_ratio: float = Field(default=0.4, ge=0.0, le=1.0)
@@ -365,6 +368,10 @@ class Settings(BaseSettings):
             raise ValueError("identity_escalation_low cannot exceed identity_min_cosine")
         if self.registration_min_views > self.registration_target_views:
             raise ValueError("registration_min_views cannot exceed registration_target_views")
+        if self.registration_temporal_batch_frames > self.registration_temporal_max_frames:
+            raise ValueError(
+                "registration_temporal_batch_frames cannot exceed registration_temporal_max_frames"
+            )
         if self.registration_capture_seconds > self.registration_max_capture_seconds:
             raise ValueError(
                 "registration_capture_seconds cannot exceed registration_max_capture_seconds"

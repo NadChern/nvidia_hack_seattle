@@ -17,6 +17,8 @@ from vision_worker.reason.cosmos import (
     _localize_prompt,
     _parse_action_tail,
     _parse_boxes,
+    _parse_temporal_boxes,
+    _temporal_localize_prompt,
 )
 
 pytestmark = pytest.mark.anyio
@@ -65,6 +67,26 @@ def test_keys_localization_explicitly_excludes_computer_keyboards() -> None:
     assert "image displayed on a monitor" in prompt
 
 
+def test_temporal_localization_requires_the_same_presented_physical_object() -> None:
+    prompt = _temporal_localize_prompt("keys", 4)
+
+    assert "Temporal continuity matters" in prompt
+    assert "Computer keyboard keys" in prompt
+    assert "<frame>INDEX</frame>" in prompt
+
+
+def test_temporal_boxes_preserve_frame_indices() -> None:
+    reply = (
+        "<frame>1</frame><ref>keys</ref><box>[100, 200, 400, 600]</box>\n"
+        "<frame>3</frame><ref>keys</ref><box>[200, 300, 500, 700]</box>"
+    )
+
+    found = _parse_temporal_boxes(reply)
+
+    assert [index for index, _label, _box in found] == [1, 3]
+    assert found[0][2].x_min == pytest.approx(0.1)
+
+
 def test_the_action_tail_is_read_even_after_grounding_tags() -> None:
     actions = _parse_action_tail(_REPLY)
     assert actions["keys"]["action"] == "placed"
@@ -87,6 +109,26 @@ async def test_analyze_pairs_a_box_with_its_action(monkeypatch: pytest.MonkeyPat
     assert event.location_description == "on the kitchen table"
     assert event.is_memory_event
     assert event.box.x_min == pytest.approx(0.300)
+
+
+async def test_temporal_enrollment_filters_wrong_labels_and_indices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_temporal_localize_blocking",
+        lambda frames, label: (
+            "<frame>1</frame><ref>keys</ref><box>[100, 200, 400, 600]</box>\n"
+            "<frame>2</frame><ref>wallet</ref><box>[100, 200, 400, 600]</box>\n"
+            "<frame>8</frame><ref>keys</ref><box>[100, 200, 400, 600]</box>"
+        ),
+    )
+
+    found = await reasoner.localize_sequence((b"one", b"two", b"three"), "keys")
+
+    assert len(found) == 1
+    assert found[0].index == 1
 
 
 async def test_enrollment_localize_uses_the_strict_single_frame_reply(

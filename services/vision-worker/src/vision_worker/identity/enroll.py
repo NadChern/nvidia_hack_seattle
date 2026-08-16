@@ -44,8 +44,11 @@ _ENROLL_CONFIDENCE = 0.9
 class EnrollmentConfig:
     capture_seconds: float = 6.0
     max_capture_seconds: float = 15.0
-    max_frames: int = 48
-    target_views: int = 4
+    temporal_max_frames: int = 16
+    temporal_batch_frames: int = 4
+    candidate_interval_seconds: float = 0.75
+    max_frames: int = 24
+    target_views: int = 6
     min_views: int = 2
     dedup_threshold: float = 0.95
     summary_weight: float = 0.5
@@ -124,13 +127,60 @@ class ObjectEnroller:
         label: str,
         frames: Sequence[BufferedFrame],
     ) -> EnrollmentResult:
-        sampled = _subsample(frames, self._config.max_frames)
-        # Localize the object in every sampled frame at once. Cosmos is ~5s per
-        # call, so localizing serially would make registration unbearable; the
-        # frames are independent, so a single gather lets the model server batch
-        # them. The reasoner's box is used for enrollment exactly as at query
-        # time, so the enrolled crop is framed like the crops it will be matched
-        # against -- the crop-parity the cosine depends on.
+        frames_total = len(frames)
+        coarse = _subsample_indexed(frames, self._config.temporal_max_frames)
+        batches = tuple(
+            coarse[index : index + self._config.temporal_batch_frames]
+            for index in range(0, len(coarse), self._config.temporal_batch_frames)
+        )
+        temporal_results = await asyncio.gather(
+            *(
+                self._localizer.localize_sequence(
+                    tuple(frame.payload for _source_index, frame in batch), label
+                )
+                for batch in batches
+            )
+        )
+        hit_indices: set[int] = set()
+        for batch, hits in zip(batches, temporal_results, strict=True):
+            for hit in hits:
+                if 0 <= hit.index < len(batch):
+                    hit_indices.add(batch[hit.index][0])
+
+        if not hit_indices:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_temporal_candidates",
+                "the physical target was not recognizable across the capture",
+                result=EnrollmentResult(frames_total, 0, 0, 0),
+            )
+
+        centers = tuple(frames[index].captured_at for index in sorted(hit_indices))
+        interval_frames = tuple(
+            frame
+            for frame in frames
+            if any(
+                abs((frame.captured_at - center).total_seconds())
+                <= self._config.candidate_interval_seconds
+                for center in centers
+            )
+        )
+        sampled = _subsample(interval_frames, self._config.max_frames)
+        logger.info(
+            "registration temporal search completed",
+            extra={
+                "object_id": object_id,
+                "label": label,
+                "source_frames": frames_total,
+                "coarse_frames": len(coarse),
+                "temporal_hits": len(hit_indices),
+                "candidate_frames": len(sampled),
+            },
+        )
+
+        # Ground the original relay frames only inside the temporal candidate
+        # intervals. Calls remain independent so vLLM can dynamically batch
+        # them, while the expensive image pass avoids irrelevant desk frames.
         boxes = await asyncio.gather(
             *(self._localizer.localize(buffered.payload, label) for buffered in sampled)
         )
@@ -171,7 +221,7 @@ class ObjectEnroller:
             if quality.accepted
         ]
 
-        preliminary = EnrollmentResult(len(sampled), detections, len(physically_usable), 0)
+        preliminary = EnrollmentResult(frames_total, detections, len(physically_usable), 0)
         if len(physically_usable) < self._config.min_views:
             await self._rollback_failed_object(object_id)
             raise EnrollmentError(
@@ -251,7 +301,7 @@ class ObjectEnroller:
                 "reference_valid": len(model_approved),
             },
         )
-        preliminary = EnrollmentResult(len(sampled), detections, len(passed), 0)
+        preliminary = EnrollmentResult(frames_total, detections, len(passed), 0)
         if len(passed) < self._config.min_views:
             await self._rollback_failed_object(object_id)
             raise EnrollmentError(
@@ -273,7 +323,7 @@ class ObjectEnroller:
             summary_weight=self._config.summary_weight,
         )
         result = EnrollmentResult(
-            frames_total=len(sampled),
+            frames_total=frames_total,
             detections=detections,
             quality_passed=len(passed),
             selected_views=len(selected_views),
@@ -447,11 +497,17 @@ def _apply_result(progress: EnrollmentProgress, result: EnrollmentResult) -> Non
     progress.selected_views = result.selected_views
 
 
-def _subsample(frames: Sequence[BufferedFrame], limit: int) -> tuple[BufferedFrame, ...]:
+def _subsample_indexed(
+    frames: Sequence[BufferedFrame], limit: int
+) -> tuple[tuple[int, BufferedFrame], ...]:
     if len(frames) <= limit:
-        return tuple(frames)
+        return tuple(enumerate(frames))
     indexes = np.linspace(0, len(frames) - 1, limit).round().astype(int)
-    return tuple(frames[int(index)] for index in dict.fromkeys(indexes.tolist()))
+    return tuple((index, frames[index]) for index in dict.fromkeys(int(value) for value in indexes))
+
+
+def _subsample(frames: Sequence[BufferedFrame], limit: int) -> tuple[BufferedFrame, ...]:
+    return tuple(frame for _index, frame in _subsample_indexed(frames, limit))
 
 
 __all__ = [

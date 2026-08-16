@@ -13,7 +13,7 @@ from collections.abc import Sequence
 
 from visual_memory_vision_contract.protocol import BoundingBox, DetectorRef
 
-from vision_worker.reason.base import WindowEvent
+from vision_worker.reason.base import LocalizedFrame, WindowEvent
 
 _CENTER_BOX = BoundingBox(x_min=0.25, y_min=0.25, x_max=0.75, y_max=0.75)
 
@@ -58,6 +58,15 @@ class FixtureReasoner:
         if self._script:
             return tuple(self._script.popleft())
         return self._default
+
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> Sequence[LocalizedFrame]:
+        if self._localize_box is None:
+            return ()
+        return tuple(
+            LocalizedFrame(index=index, box=self._localize_box) for index in range(len(frames))
+        )
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         return self._localize_box

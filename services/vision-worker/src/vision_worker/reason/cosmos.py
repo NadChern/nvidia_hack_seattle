@@ -41,7 +41,7 @@ from typing import Any, cast
 import numpy as np
 from visual_memory_vision_contract.protocol import BoundingBox, DetectorRef
 
-from vision_worker.reason.base import WindowEvent
+from vision_worker.reason.base import LocalizedFrame, WindowEvent
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ PROMPT_VERSION = "cosmos-reason-v1"
 #: the physical target itself. Keeping the versions separate avoids pretending
 #: an enrollment-only safety change moved event semantics.
 LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v3"
+TEMPORAL_LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-temporal-v1"
 REFERENCE_PROMPT_VERSION = "cosmos-enrollment-reference-v1"
 
 #: The model's own action vocabulary. The first three are memory events; the
@@ -64,6 +65,11 @@ _ACTIONS = ("placed", "picked_up", "carried", "nothing_happened", "unknown")
 #: format. The label and the bracketed numbers are captured separately; the
 #: numbers are pulled out with `_NUMBERS` so stray nesting or spacing is fine.
 _GROUNDING = re.compile(r"<ref>(?P<label>.*?)</ref>\s*<box>(?P<box>.*?)</box>", re.DOTALL)
+_FRAME_GROUNDING = re.compile(
+    r"<frame>(?P<frame>\d+)</frame>\s*"
+    r"<ref>(?P<label>.*?)</ref>\s*<box>(?P<box>.*?)</box>",
+    re.DOTALL,
+)
 _NUMBERS = re.compile(r"-?\d+(?:\.\d+)?")
 
 _PROMPT = """These {count} frames are consecutive moments from one continuous video, in \
@@ -111,6 +117,25 @@ If a recognizable {label} is clearly visible, output exactly one line and nothin
 <ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
 Coordinates are 0 to 1000, top-left origin."""
 
+_TEMPORAL_LOCALIZE_PROMPT = """These {count} frames are ordered moments from one \
+continuous glasses-camera registration capture. The wearer is deliberately presenting and slowly \
+rotating one physical personal object labeled: {label}.
+
+Target-specific meaning:
+{requirements}
+
+Search across time for the deliberately presented physical target. Temporal continuity matters: \
+the same handheld object should persist or rotate across nearby frames. Ignore static background, \
+the wearer's hand by itself, laptop keyboards, screen images, cords, and label homonyms. A frame \
+with no clearly recognizable physical target is correctly omitted.
+
+For every frame where the target itself is clearly recognizable, output one line:
+<frame>INDEX</frame><ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
+
+INDEX is the zero-based frame number shown before each image. Coordinates are 0 to 1000 with \
+top-left origin and must tightly enclose the target. Output exactly NO_OBJECT if no frame \
+qualifies. Output no prose."""
+
 _REFERENCE_REQUIREMENTS = {
     "keys": """VALID requires a clearly visible metal key blade with its shaft and cut \
 teeth or grooves. A ring, fob, tag, tracker, cord, lanyard, or colored accessory without a \
@@ -131,14 +156,24 @@ exactly VALID or REJECT.
 Blur, severe occlusion, or a tiny partial target is REJECT. When uncertain, REJECT."""
 
 
-def _localize_prompt(label: str) -> str:
-    normalized = label.strip().casefold()
-    requirements = _LOCALIZE_REQUIREMENTS.get(
-        normalized,
+def _localize_requirements(label: str) -> str:
+    return _LOCALIZE_REQUIREMENTS.get(
+        label.strip().casefold(),
         f"The target is the physical {label} itself, not text, a related object, "
         "or an image displayed on a screen.",
     )
-    return _LOCALIZE_PROMPT.format(label=label, requirements=requirements)
+
+
+def _localize_prompt(label: str) -> str:
+    return _LOCALIZE_PROMPT.format(label=label, requirements=_localize_requirements(label))
+
+
+def _temporal_localize_prompt(label: str, count: int) -> str:
+    return _TEMPORAL_LOCALIZE_PROMPT.format(
+        label=label,
+        count=count,
+        requirements=_localize_requirements(label),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +223,27 @@ class CosmosReasoner:
             logger.warning("Cosmos unreachable; window yields no events", extra={"error": str(exc)})
             return ()
         return self._parse(reply, labels)
+
+    async def localize_sequence(
+        self, frames: Sequence[bytes], label: str
+    ) -> Sequence[LocalizedFrame]:
+        """Search a short ordered sequence before expensive frame grounding."""
+        if not frames or not label:
+            return ()
+        try:
+            reply = await asyncio.to_thread(self._ask_temporal_localize_blocking, frames, label)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "Cosmos unreachable; temporal enrollment search yields no frames",
+                extra={"error": str(exc)},
+            )
+            return ()
+        wanted = label.strip().casefold()
+        return tuple(
+            LocalizedFrame(index=index, box=box)
+            for index, raw_label, box in _parse_temporal_boxes(reply)
+            if index < len(frames) and raw_label.strip().casefold() == wanted
+        )
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         """Return one strict enrollment box, abstaining on accessories/background.
@@ -260,6 +316,39 @@ class CosmosReasoner:
         return tuple(events)
 
     # ------ Blocking work, always run off the event loop -------------------
+
+    def _ask_temporal_localize_blocking(self, frames: Sequence[bytes], label: str) -> str:
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": _temporal_localize_prompt(label, len(frames)),
+            }
+        ]
+        for index, frame in enumerate(frames):
+            content.extend(
+                (
+                    {"type": "text", "text": f"FRAME {index}"},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode()}"
+                        },
+                    },
+                )
+            )
+        started = time.perf_counter()
+        reply = self._complete_blocking(content, max_tokens=256)
+        logger.info(
+            "Cosmos enrollment sequence searched",
+            extra={
+                "latency_ms": (time.perf_counter() - started) * 1000.0,
+                "label": label,
+                "frames": len(frames),
+                "prompt_version": TEMPORAL_LOCALIZE_PROMPT_VERSION,
+                "found": len(_parse_temporal_boxes(reply)),
+            },
+        )
+        return reply
 
     def _ask_localize_blocking(self, frame: bytes, label: str) -> str:
         content: list[dict[str, Any]] = [
@@ -365,6 +454,18 @@ def _subsample(frames: Sequence[bytes], limit: int) -> Sequence[bytes]:
     return [frames[index] for index in dict.fromkeys(int(p) for p in positions)]
 
 
+def _parse_temporal_boxes(
+    reply: str,
+) -> list[tuple[int, str, BoundingBox]]:
+    """Parse frame-indexed enrollment grounding without inventing indices."""
+    found: list[tuple[int, str, BoundingBox]] = []
+    for match in _FRAME_GROUNDING.finditer(reply):
+        box = _normalized_box(match.group("box"))
+        if box is not None:
+            found.append((int(match.group("frame")), match.group("label"), box))
+    return found
+
+
 def _parse_boxes(reply: str) -> list[tuple[str, BoundingBox]]:
     """Every `<ref>label</ref><box>[...]</box>` in the reply as (label, box).
 
@@ -374,23 +475,24 @@ def _parse_boxes(reply: str) -> list[tuple[str, BoundingBox]]:
     """
     boxes: list[tuple[str, BoundingBox]] = []
     for match in _GROUNDING.finditer(reply):
-        numbers = _NUMBERS.findall(match.group("box"))
-        if len(numbers) < 4:
-            continue
-        x0, y0, x1, y1 = (float(n) / 1000.0 for n in numbers[:4])
-        x_min, x_max = sorted((x0, x1))
-        y_min, y_max = sorted((y0, y1))
-        x_min, y_min = max(0.0, x_min), max(0.0, y_min)
-        x_max, y_max = min(1.0, x_max), min(1.0, y_max)
-        if x_max - x_min < 1e-3 or y_max - y_min < 1e-3:
-            continue
-        boxes.append(
-            (
-                match.group("label"),
-                BoundingBox(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max),
-            )
-        )
+        box = _normalized_box(match.group("box"))
+        if box is not None:
+            boxes.append((match.group("label"), box))
     return boxes
+
+
+def _normalized_box(raw: str) -> BoundingBox | None:
+    numbers = _NUMBERS.findall(raw)
+    if len(numbers) < 4:
+        return None
+    x0, y0, x1, y1 = (float(n) / 1000.0 for n in numbers[:4])
+    x_min, x_max = sorted((x0, x1))
+    y_min, y_max = sorted((y0, y1))
+    x_min, y_min = max(0.0, x_min), max(0.0, y_min)
+    x_max, y_max = min(1.0, x_max), min(1.0, y_max)
+    if x_max - x_min < 1e-3 or y_max - y_min < 1e-3:
+        return None
+    return BoundingBox(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max)
 
 
 def _parse_action_tail(reply: str) -> dict[str, dict[str, Any]]:
@@ -421,6 +523,7 @@ __all__ = [
     "LOCALIZE_PROMPT_VERSION",
     "PROMPT_VERSION",
     "REFERENCE_PROMPT_VERSION",
+    "TEMPORAL_LOCALIZE_PROMPT_VERSION",
     "CosmosReasoner",
     "CosmosReasonerConfig",
 ]

@@ -55,6 +55,11 @@ def status(request: Request) -> dict[str, Any]:
             "evidence_ring_seconds": settings.evidence_ring_seconds,
             "clip_fps": settings.resolved_clip_fps,
             "registration_capture_seconds": settings.registration_capture_seconds,
+            "registration_temporal_max_frames": (settings.registration_temporal_max_frames),
+            "registration_candidate_interval_seconds": (
+                settings.registration_candidate_interval_seconds
+            ),
+            "registration_max_frames": settings.registration_max_frames,
             "registration_target_views": settings.registration_target_views,
             "registration_min_views": settings.registration_min_views,
             # Console enrollment needs the same allowlist enforced by
