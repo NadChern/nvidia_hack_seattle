@@ -227,14 +227,20 @@ class Pipeline:
     ) -> None:
         """Snapshot a window and hand it to the reasoner, on a cadence.
 
-        Cadence gate, single-flight gate, and gallery gate, all necessary: the
-        interval must have elapsed; the previous analysis must have finished
-        (one model, one at a time); and there must be a registered label to look
-        for -- an empty gallery means nothing to find, so no call is made.
+        Cadence gate and single-flight gate: the interval must have elapsed and
+        the previous analysis must have finished (one model, one at a time).
+
+        There is deliberately **no** "gallery is empty, skip" gate here. The
+        gallery cache is refreshed inside `_analyze_window`, so gating window
+        scheduling on a non-empty gallery would be a deadlock after a restart --
+        the cache starts empty, so no window would schedule, so the cache would
+        never refresh, so an object already registered in memory would stay
+        invisible forever. Scheduling always and refreshing-then-checking inside
+        the worker is what lets a prior registration reappear once frames flow;
+        the refresh is TTL-guarded and cheap, and no Cosmos call is made while
+        the gallery is empty.
         """
         if self._pending.pending > 0:
-            return
-        if not self._gallery.labels:
             return
         if (
             self._last_window_at is not None

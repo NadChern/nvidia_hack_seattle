@@ -224,6 +224,45 @@ async def test_distinct_actions_for_one_object_both_pass() -> None:
     assert actions == ["picked_up", "placed"]
 
 
+class LateGallery:
+    """Empty until the first refresh -- a registration made before this process
+    started, still in memory, that the cache has not loaded yet."""
+
+    def __init__(self, *, score: GalleryScore) -> None:
+        self._loaded = False
+        self._score = score
+        self.refreshes = 0
+
+    @property
+    def labels(self) -> frozenset[str]:
+        return frozenset({"keys"}) if self._loaded else frozenset()
+
+    async def refresh(self, *, force: bool = False) -> bool:
+        self.refreshes += 1
+        self._loaded = True  # memory had it all along; the cache just warmed up
+        return True
+
+    def match(
+        self, queries: Sequence[object], *, label: str, summary_weight: float
+    ) -> GalleryScore | None:
+        return self._score
+
+
+async def test_a_prior_registration_reappears_after_a_cold_start() -> None:
+    # The gallery cache starts empty (fresh process), but the object is in
+    # memory. Scheduling must NOT be gated on a non-empty gallery, or the cache
+    # would never refresh and the registration would stay invisible forever.
+    reasoner = FixtureReasoner(default=(_event("placed"),))
+    gallery = LateGallery(score=_match())
+    recorder = Recorder()
+    pipeline = _pipeline(reasoner, gallery, recorder)  # type: ignore[arg-type]
+
+    await _feed(pipeline, [_frame(0, sequence=1)])
+
+    assert gallery.refreshes >= 1
+    assert len(recorder.calls) == 1  # the prior registration matched once loaded
+
+
 async def test_an_empty_gallery_asks_the_reasoner_nothing() -> None:
     reasoner = FixtureReasoner(default=(_event("placed"),))
     gallery = StubGallery(labels=set(), score=_match())
