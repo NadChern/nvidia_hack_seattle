@@ -215,35 +215,19 @@ behaviour: LiveKit 1.13.4 admitted a token **28 s** past expiry and refused one 
 past it. That is ordinary clock-skew leeway, almost certainly 60 s, not an unenforced
 check. Expiry is enforced; the refresh endpoint is required; do not spend the leeway.
 
-### 5. The wake matcher was too strict to survive a room
+### 5. Intent routing belongs to the Agent model
 
-**Implemented.** This was not a gap in the glasses client, but in the server path the
-client depends on. `services/agent` now scans for a configured prefix on word boundaries,
-keeps the where-question gate unchanged, and regression-tests the SG-A2 corpora.
+**Implemented.** The server no longer uses a wake-prefix or question-shape regex before
+calling the Agent. Every completed non-empty STT transcript from an authenticated live
+glasses session reaches Nemotron. Its system instruction selects `where_is`,
+`start_registration`, or no supported action, so a bare “where are my keys?” does not
+silently stop between STT and the Agent.
 
-`triggered_question` requires the transcript to **start with** the wake prefix. Measured on
-realistic utterances, recall was **4/10**: a leading "uh", a leading "um", or any bleed of
-the previous reply into the same utterance suppresses the trigger completely. All four
-plausible mishearings of the prefix scored **0/4**.
-
-The candidate fix scans for the prefix anywhere in the utterance and keeps the existing
-question-shape gate on what follows. Scored on the same corpora:
-
-| | baseline | scan | scan + variants |
-|---|---|---|---|
-| recall (10 utterances) | 4 | **10** | **10** |
-| no-fire (12 adversarial) | 12 | **12** | **12** |
-| misheard prefix (4) | 0 | 0 | **4** |
-
-The no-fire column is the one that matters: scanning bought back every miss and cost
-nothing, because the question-shape gate still rejects `"hey memory is a cool name for the
-project"` and `"the hey memory demo runs on the spark box"`. The double gate was always
-what made this safe; `startswith` was never the part doing the work. Accepted STT
-renderings are now configurable through `wake_prefix_variants`, so a venue can widen or
-narrow them without a code change. The Gateway and Android HUD also implement a
-consume-once 15-second manual-trigger transport: it bypasses only the prefix and retains
-this same where-question gate. A physically validated temple single-tap now arms it for
-15 seconds during a live session and the HUD shows **Ask now**; it is not a pointer button.
+This intentionally removes the earlier ambient-speech filter and its configurable wake
+variants. The Gateway and Android HUD may still expose the consume-once manual-trigger
+interaction as user feedback, but the Agent listener does not require or inspect it. The
+trust boundary remains downstream: only Memory can authorize a location, and the
+deterministic reply guard rejects an ungrounded model answer.
 
 ## Module layout
 

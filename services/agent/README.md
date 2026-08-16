@@ -70,9 +70,6 @@ All variables use the `VMA_` prefix.
 | `VISION_BASE_URL` | `http://127.0.0.1:8082` |
 | `REGISTRATION_CAPTURE_SECONDS` | `6.0` |
 | `REGISTRATION_TIMEOUT_S` | `20.0` |
-| `WAKE_PREFIX` | `hey memory` |
-| `WAKE_PREFIX_VARIANTS` | `hay memory,he memory,hey memories,hey mammary` |
-| `WAKE_CARRY_OVER_S` | `10.0` |
 | `LLM_BASE_URL` | `http://127.0.0.1:11434/v1` |
 | `LLM_MODEL` | `openai/qwen3:4b` |
 | `LLM_API_KEY` | unset |
@@ -177,24 +174,16 @@ Ollama `/api/chat` wire format.
 ## Hands-free loop
 
 When enabled, the service polls the authenticated Gateway session list and
-opens Speech's existing STT WebSocket only for sessions with a publisher. Most
-transcripts stop at a deterministic double gate: a configured wake prefix must
-appear on a word boundary and be followed by a supported `where` question or
-`remember/scan/learn my X` registration shape.
-Scanning permits leading disfluency or leaked reply audio; an ordinary mention
-such as “the hey memory demo” still cannot run ADK. Common STT renderings are a
-comma-separated configuration list rather than fuzzy matching.
+opens Speech's existing STT WebSocket only for sessions with a publisher. Every
+completed non-empty transcript is forwarded to Nemotron, whose system
+instruction owns find-versus-register-versus-unsupported intent selection. There
+is no listener regex, wake-prefix requirement, or manual-trigger requirement;
+“where are my keys?” works as a bare utterance. The glasses button remains a UI
+convenience but is not an authorization gate.
 
-**The two gates may arrive in two utterances.** A wake phrase invites a pause —
-people say “Hey memory.” and *then* ask — and any pause longer than Speech's
-`STT_UTTERANCE_SILENCE_MS` ends the utterance there, so the prefix and the
-question reach this service as separate transcripts that neither can fire alone.
-Measured on the glasses, where it read as being cut off mid-sentence. A prefix
-with no question after it therefore stays live for `WAKE_CARRY_OVER_S`, and the
-next supported where/registration intent consumes it. Both gates still hold and the carry
-is single-use; set it to `0` to require prefix and question in one breath.
-Widening the VAD window alone cannot fix this, because someone will always pause
-a little longer.
+This deliberately trades the previous ambient-speech filter for model-owned
+intent routing. Unsupported conversation receives no Memory authority: without
+a Memory result, the deterministic guard still prevents a location claim.
 
 Every completed transcript is also posted to the Gateway's bounded device-event channel.
 A guarded answer is posted there with `answer_status`, object ID, guard verdict, and
