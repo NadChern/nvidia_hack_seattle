@@ -99,6 +99,21 @@ def test_the_length_limit_does_not_fire_on_a_quiet_session() -> None:
     assert not any(fired)
 
 
+def test_idle_time_does_not_spend_the_spoken_utterance_limit() -> None:
+    """A wearer may pause indefinitely before speaking.
+
+    The ceiling starts on the first speech frame; otherwise eight seconds of
+    idle microphone time makes the first word end the turn immediately.
+    """
+    detector = ScriptedDetector(*([0.0] * 625 + [1.0] * 20))
+    boundary = SileroBoundary(silence_ms=700, max_seconds=0.5, detector=detector)
+
+    assert boundary.feed(pcm(625), sample_rate=VAD_SAMPLE_RATE) is False
+    assert boundary.feed(pcm(1), sample_rate=VAD_SAMPLE_RATE) is False
+    assert boundary.feed(pcm(13), sample_rate=VAD_SAMPLE_RATE) is False
+    assert boundary.feed(pcm(1), sample_rate=VAD_SAMPLE_RATE) is True
+
+
 def test_the_threshold_decides_what_counts_as_speech() -> None:
     quiet = SileroBoundary(silence_ms=100, threshold=0.9, detector=ScriptedDetector(0.6))
     # 0.6 is below 0.9, so nothing is ever speech and nothing can end.

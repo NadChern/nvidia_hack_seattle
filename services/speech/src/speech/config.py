@@ -79,9 +79,8 @@ class Settings(BaseSettings):
     #: reading a script. 1000 ms is the compromise -- still inside the "slow to
     #: notice" bound above.
     #:
-    #: This value cannot fix the pause *after* a wake phrase; nothing here can,
-    #: because someone will always pause a little longer. The Agent carries a
-    #: wake prefix across utterances instead (`wake_carry_over_s`).
+    #: This is an end-of-speech window, not an initial-listening timeout. Idle
+    #: microphone time before the first detected word never consumes it.
     stt_utterance_silence_ms: int = Field(default=1_000, ge=100)
     #: A ceiling, not a target. Without it, audio the VAD reads as unbroken
     #: speech -- sustained noise near the microphone -- would buffer forever
@@ -95,6 +94,8 @@ class Settings(BaseSettings):
     #: OOM. A clipped question is a bad demo, but no transcript at all is not a
     #: demo.
     #:
+    #: The ceiling starts at the first detected speech frame; idle microphone
+    #: time must never make a wearer's first word end the turn immediately.
     #: 8 s is roughly double a real "where did I leave my keys" and bounds the
     #: allocation to something the card can hold. Lower it further if OOM
     #: persists. The ceiling firing at all is a *symptom*: when the detector
