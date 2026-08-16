@@ -13,6 +13,28 @@ _CONTEXT_SCALE = 1.15
 _BACKGROUND = 127
 
 
+def box_to_mask(
+    box: BoundingBox, height: int, width: int, *, padding: float = 0.0
+) -> NDArray[np.bool_]:
+    """A rectangular boolean mask for `box`, expanded by `padding` on each side.
+
+    With no segmenter available (SAM3 is gated), both enrollment and matching
+    treat the reasoner's box as the object region: this mask is the padded box
+    itself, so `prepare_masked_crop` grays everything outside it and pools over
+    it -- the box-only degradation the pivot accepts, applied identically on
+    both sides so crop-parity holds.
+    """
+    pad_x = (box.x_max - box.x_min) * padding
+    pad_y = (box.y_max - box.y_min) * padding
+    x0 = int(np.floor(max(0.0, box.x_min - pad_x) * width))
+    y0 = int(np.floor(max(0.0, box.y_min - pad_y) * height))
+    x1 = int(np.ceil(min(1.0, box.x_max + pad_x) * width))
+    y1 = int(np.ceil(min(1.0, box.y_max + pad_y) * height))
+    mask = np.zeros((height, width), dtype=np.bool_)
+    mask[y0:y1, x0:x1] = True
+    return mask
+
+
 def prepare_masked_crop(
     frame_rgb: NDArray[np.uint8],
     mask: NDArray[np.bool_],
@@ -97,4 +119,4 @@ def prepare_masked_crop(
     return MaskedCrop(image=resized_image, mask=resized_mask)
 
 
-__all__ = ["prepare_masked_crop"]
+__all__ = ["box_to_mask", "prepare_masked_crop"]

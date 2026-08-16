@@ -4,16 +4,13 @@ from __future__ import annotations
 
 import datetime as dt
 import io
-from collections.abc import Sequence
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
 from PIL import Image
-from visual_memory_vision_contract.protocol import BoundingBox, Detection, Point2D
+from visual_memory_vision_contract.protocol import BoundingBox
 
 from vision_worker.evidence.ring import BufferedFrame
-from vision_worker.identity.base import MaskedCrop, SegmentedDetection
 from vision_worker.identity.crop import prepare_masked_crop
 from vision_worker.identity.enroll import EnrollmentConfig, EnrollmentError, ObjectEnroller
 from vision_worker.identity.fixture import FixtureEmbedder
@@ -25,35 +22,20 @@ T0 = dt.datetime(2026, 8, 15, 12, 0, tzinfo=dt.UTC)
 BOX = BoundingBox(x_min=0.25, y_min=0.25, x_max=0.75, y_max=0.75)
 
 
-class BoxSegmenter:
-    async def segment(
-        self, frame_rgb: NDArray[np.uint8], *, labels: Sequence[str]
-    ) -> Sequence[SegmentedDetection]:
-        mask = np.zeros(frame_rgb.shape[:2], dtype=np.bool_)
-        mask[16:48, 16:48] = True
-        return (
-            SegmentedDetection(
-                detection=Detection(
-                    label=labels[0],
-                    confidence=0.95,
-                    box=BOX,
-                    centroid=Point2D(x=0.5, y=0.5),
-                ),
-                mask=mask,
-            ),
-        )
+class BoxLocalizer:
+    """Stands in for the Cosmos reasoner: the object is always the center box."""
+
+    async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
+        return BOX
 
 
-class SharedFixtureResolver:
+class StubGallery:
     def __init__(self) -> None:
-        self.embedder = FixtureEmbedder()
         self.refreshes = 0
 
-    async def embed_crops(self, crops: Sequence[MaskedCrop]):  # type: ignore[no-untyped-def]
-        return await self.embedder.embed(crops)
-
-    async def refresh_gallery(self) -> None:
+    async def refresh(self, *, force: bool = False) -> bool:
         self.refreshes += 1
+        return False
 
 
 class RecordingMemory:
@@ -97,13 +79,15 @@ def config() -> EnrollmentConfig:
 
 
 async def test_good_capture_selects_and_persists_a_diverse_gallery() -> None:
-    resolver = SharedFixtureResolver()
+    gallery = StubGallery()
     memory = RecordingMemory()
     enroller = ObjectEnroller(
-        segmenter=BoxSegmenter(),
-        identity_resolver=resolver,  # type: ignore[arg-type]
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
+        box_padding=0.0,
     )
     frames = tuple(
         frame(index, color)
@@ -118,17 +102,19 @@ async def test_good_capture_selects_and_persists_a_diverse_gallery() -> None:
     assert result.quality_passed == 5
     assert 2 <= result.selected_views <= 4
     assert len(memory.uploads) == result.selected_views
-    assert resolver.refreshes == 1
+    assert gallery.refreshes == 1
 
 
 async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:
-    resolver = SharedFixtureResolver()
+    gallery = StubGallery()
     memory = RecordingMemory()
     enroller = ObjectEnroller(
-        segmenter=BoxSegmenter(),
-        identity_resolver=resolver,  # type: ignore[arg-type]
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
+        box_padding=0.0,
     )
     frames = tuple(frame(index, (120, 120, 120), textured=False) for index in range(4))
 

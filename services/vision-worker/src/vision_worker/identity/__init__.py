@@ -9,14 +9,11 @@ from vision_worker.identity.base import (
     SegmentingDetector,
 )
 from vision_worker.identity.gallery import GalleryCache
-from vision_worker.identity.resolver import IdentityResolver, IdentityResolverConfig
 
 __all__ = [
     "EmbeddingVectors",
     "GalleryCache",
     "IdentityFrame",
-    "IdentityResolver",
-    "IdentityResolverConfig",
     "MaskedCrop",
     "ObjectEmbedder",
     "SegmentedDetection",

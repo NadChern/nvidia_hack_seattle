@@ -149,7 +149,10 @@ class Settings(BaseSettings):
     # --- Registration capture ------------------------------------------------
     registration_capture_seconds: float = Field(default=6.0, gt=0)
     registration_max_capture_seconds: float = Field(default=15.0, gt=0)
-    registration_max_frames: int = Field(default=48, ge=2, le=240)
+    #: Kept small: enrollment localizes every sampled frame through Cosmos
+    #: (~5s/call, run concurrently), so dozens of frames would make registration
+    #: unbearably slow. A handful of diverse views is what the gallery needs.
+    registration_max_frames: int = Field(default=8, ge=2, le=240)
     registration_target_views: int = Field(default=4, ge=2, le=8)
     registration_min_views: int = Field(default=2, ge=2, le=8)
     registration_dedup_threshold: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -157,6 +160,37 @@ class Settings(BaseSettings):
     registration_max_mask_box_ratio: float = Field(default=1.0, ge=0.0, le=1.2)
     registration_relative_sharpness_floor: float = Field(default=0.5, ge=0.0)
     registration_max_angular_velocity_rad_s: float = Field(default=2.5, gt=0)
+
+    # --- Window reasoner (see reason/cosmos.py, pipeline.py) -----------------
+    #: The VLM that localizes objects and classifies events over a short video
+    #: window -- this replaces the old detect/track/stability/verify chain.
+    #: OpenAI-compatible (vLLM). The model runs wherever it runs; this service
+    #: holds no weights. On the GN100 this is Cosmos 3 Nano at :8001/v1.
+    #: `cosmos` is the real reasoner (`reason/cosmos.py`), needing a reachable
+    #: vLLM endpoint. `fixture` returns a scripted empty result -- the ci/no-GPU
+    #: shape that proves every other piece of plumbing works without a model.
+    reason_kind: Literal["cosmos", "fixture"] = "cosmos"
+    reason_base_url: str = "http://127.0.0.1:8001/v1"
+    reason_model: str = "nvidia/Cosmos3-Nano"
+    #: The rolling window handed to the reasoner, and how often a new one fires.
+    #: Cosmos is ~5s+/call warm, so windows are short (few frames) and roughly
+    #: non-overlapping -- the pipeline's event dedup tolerates a slow cadence.
+    #: One window is analyzed at a time (one GPU, one model server).
+    reason_window_seconds: float = Field(default=6.0, gt=0)
+    reason_interval_seconds: float = Field(default=7.0, gt=0)
+    reason_max_frames: int = Field(default=4, ge=1, le=16)
+    #: Cosmos gives no numeric score; the memory contract needs one for
+    #: `confidence.event`. Identity confidence is computed from the cosine.
+    reason_event_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
+    reason_max_tokens: int = Field(default=320, ge=64)
+    reason_timeout_s: float = Field(default=120.0, gt=0)
+    #: How long the same (object, action) is suppressed after a write, so
+    #: overlapping windows do not re-report one placement many times.
+    event_cooldown_seconds: float = Field(default=20.0, gt=0)
+    #: Cosmos boxes run tight/noisy on small objects; the identity crop pads the
+    #: box by this fraction on each side before cropping (no segmenter -- SAM3
+    #: is gated), keeping the object inside the frame the embedder sees.
+    identity_box_padding: float = Field(default=0.12, ge=0.0, le=1.0)
 
     # --- Depth ---------------------------------------------------------------
     depth_kind: DepthKind = "none"

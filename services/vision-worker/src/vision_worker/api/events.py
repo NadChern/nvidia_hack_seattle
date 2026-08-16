@@ -27,12 +27,11 @@ def events(request: Request) -> dict[str, Any]:
         "events": [
             {
                 "at": event.at,
-                "track_id": event.track_id,
                 "label": event.label,
                 "action": event.action,
+                "object_id": event.object_id,
                 "outcome": event.outcome,
-                "reason_code": event.reason_code,
-                "confidence": event.confidence,
+                "score": event.score,
             }
             for event in pipeline.recent_events
         ]

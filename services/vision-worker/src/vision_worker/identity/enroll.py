@@ -19,9 +19,9 @@ from visual_memory_memory_contract.client import MemoryClient, MemoryError_
 from visual_memory_memory_contract.protocol import ObjectViewQuality, ObjectViewUpload
 
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
-from vision_worker.identity.base import MaskedCrop, SegmentedDetection, SegmentingDetector
-from vision_worker.identity.crop import prepare_masked_crop
-from vision_worker.identity.resolver import IdentityResolver
+from vision_worker.identity.base import MaskedCrop, ObjectEmbedder
+from vision_worker.identity.crop import box_to_mask, prepare_masked_crop
+from vision_worker.identity.gallery import GalleryCache
 from vision_worker.identity.selection import (
     EmbeddedCandidate,
     QualityConfig,
@@ -30,10 +30,16 @@ from vision_worker.identity.selection import (
     score_quality,
     select_diverse,
 )
+from vision_worker.reason.base import Localizer
 
 logger = logging.getLogger(__name__)
 
 EnrollmentState = Literal["capturing", "extracting", "succeeded", "failed"]
+
+#: Cosmos reports no detection score, so enrollment uses a fixed confidence
+#: above the quality filter's floor -- the object being deliberately held up
+#: and rotated is, by construction, a confident presence.
+_ENROLL_CONFIDENCE = 0.9
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,15 +105,19 @@ class ObjectEnroller:
     def __init__(
         self,
         *,
-        segmenter: SegmentingDetector,
-        identity_resolver: IdentityResolver,
+        localizer: Localizer,
+        embedder: ObjectEmbedder,
+        gallery: GalleryCache,
         memory_client: MemoryClient,
         config: EnrollmentConfig,
+        box_padding: float = 0.12,
     ) -> None:
-        self._segmenter = segmenter
-        self._resolver = identity_resolver
+        self._localizer = localizer
+        self._embedder = embedder
+        self._gallery = gallery
         self._memory = memory_client
         self._config = config
+        self._box_padding = box_padding
 
     async def enroll(
         self,
@@ -117,9 +127,21 @@ class ObjectEnroller:
         frames: Sequence[BufferedFrame],
     ) -> EnrollmentResult:
         sampled = _subsample(frames, self._config.max_frames)
+        # Localize the object in every sampled frame at once. Cosmos is ~5s per
+        # call, so localizing serially would make registration unbearable; the
+        # frames are independent, so a single gather lets the model server batch
+        # them. The reasoner's box is used for enrollment exactly as at query
+        # time, so the enrolled crop is framed like the crops it will be matched
+        # against -- the crop-parity the cosine depends on.
+        boxes = await asyncio.gather(
+            *(self._localizer.localize(buffered.payload, label) for buffered in sampled)
+        )
         candidates: list[tuple[MaskedCrop, QualityScore]] = []
         detections = 0
-        for buffered in sampled:
+        for buffered, box in zip(sampled, boxes, strict=True):
+            if box is None:
+                continue
+            detections += 1
             rgb = decode_video_payload(
                 buffered.payload,
                 encoding="jpeg",
@@ -127,25 +149,17 @@ class ObjectEnroller:
                 height=buffered.height,
                 pixel_format="rgb",
             )
-            segments = await self._segmenter.segment(rgb, labels=(label,))
-            selected = _best_segment(segments, label)
-            if selected is None:
-                continue
-            detections += 1
+            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._box_padding)
             quality = score_quality(
                 rgb,
-                selected.mask,
-                selected.detection.box,
-                selected.detection.confidence,
+                mask,
+                box,
+                _ENROLL_CONFIDENCE,
                 angular_velocity=None,
                 config=self._config.quality,
             )
             try:
-                crop = prepare_masked_crop(
-                    rgb,
-                    selected.mask,
-                    selected.detection.box,
-                )
+                crop = prepare_masked_crop(rgb, mask, box)
             except ValueError:
                 continue
             candidates.append((crop, quality))
@@ -166,7 +180,7 @@ class ObjectEnroller:
                 result=preliminary,
             )
 
-        embeddings = await self._resolver.embed_crops([crop for crop, _ in passed])
+        embeddings = await self._embedder.embed([crop for crop, _ in passed])
         embedded = tuple(
             EmbeddedCandidate(crop=crop, embedding=embedding, quality=quality)
             for (crop, quality), embedding in zip(passed, embeddings, strict=True)
@@ -226,7 +240,7 @@ class ObjectEnroller:
                 logger.exception("failed to roll back partial registration")
             raise
 
-        await self._resolver.refresh_gallery()
+        await self._gallery.refresh(force=True)
         return result
 
 
@@ -346,19 +360,6 @@ def _subsample(frames: Sequence[BufferedFrame], limit: int) -> tuple[BufferedFra
         return tuple(frames)
     indexes = np.linspace(0, len(frames) - 1, limit).round().astype(int)
     return tuple(frames[int(index)] for index in dict.fromkeys(indexes.tolist()))
-
-
-def _best_segment(segments: Sequence[SegmentedDetection], label: str) -> SegmentedDetection | None:
-    matching = [segment for segment in segments if segment.detection.label == label]
-    return max(
-        matching,
-        key=lambda segment: (
-            segment.detection.confidence
-            * max(0.0, segment.detection.box.x_max - segment.detection.box.x_min)
-            * max(0.0, segment.detection.box.y_max - segment.detection.box.y_min)
-        ),
-        default=None,
-    )
 
 
 def _jpeg(image: np.ndarray) -> bytes:
