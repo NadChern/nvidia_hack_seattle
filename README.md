@@ -1,4 +1,4 @@
-# Visual Memory Assistant
+# NEMO - Visual Memory Assistant
 
 A local-first wearable assistant that remembers personal objects, answers everyday questions, and
 connects a trusted person when human help is needed. RayNeo X3 Pro glasses stream first-person
@@ -14,6 +14,21 @@ That second sentence is the hard part. Being usefully uncertain matters more tha
 confident.
 
 Built for the NVIDIA Spark Hackathon, Seattle.
+
+## Why
+
+We are building NEMO for our parents.
+
+NEMO helps them keep track of important belongings, such as keys or a wallet, so they can ask where
+something is and receive its last confirmed location. It also gives them a simple, hands-free way to
+ask everyday questions.
+
+But not every situation should be left to AI. When judgment, reassurance, or human reasoning is
+especially valuable, NEMO connects our parents with family members they know and trust. It does not
+try to replace family support—it keeps that support within reach.
+
+Our goal is to give our parents greater confidence and independence while giving their families
+peace of mind and a trusted way to help when it matters.
 
 ## Product at a glance
 
@@ -41,13 +56,11 @@ and their stable state survive glasses reconnects and new sessions.
 
 ### 2. Local personal assistant
 
-Every completed non-empty glasses transcript reaches local NVIDIA Nemotron, which owns intent and
-tool selection. It can answer concise general questions directly while using bounded tools for
-personal visual memory and registration. Private model reasoning is removed before HUD display or
-speech playback, and voice generation is bounded to avoid long apparent stalls.
-
-Hermes profiles, `SOUL.md`, personal text memory, and web search are future improvements tracked in
-the [Product Backlog](docs/17-Product-Backlog.md); they are not part of the current runtime.
+Every completed non-empty glasses transcript reaches local NVIDIA Nemotron 3.5 Lightning, which
+owns intent and tool selection. It can answer concise general questions directly while using
+bounded tools for personal visual memory and registration. Private model reasoning is removed
+before HUD display or speech playback, and voice generation is bounded to avoid long apparent
+stalls.
 
 ### 3. Remote human assistant
 
