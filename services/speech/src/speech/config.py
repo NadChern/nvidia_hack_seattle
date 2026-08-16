@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     )
 
     service_name: str = "speech"
+    #: Load selected real STT/TTS models during application startup instead of
+    #: making the first wearer query pay model download/load latency. Off for
+    #: ordinary development and CI; enabled on the pre-seeded GN100 profile.
+    warm_models_on_startup: bool = False
     #: Passed straight to `logging.py`'s `configure_logging` -- Python's
     #: `logging.setLevel` accepts the upper-case name directly.
     log_level: str = "INFO"

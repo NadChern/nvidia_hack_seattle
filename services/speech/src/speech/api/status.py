@@ -41,6 +41,7 @@ def status(request: Request) -> dict[str, Any]:
         "config": {
             "gateway_audio_url": settings.gateway_audio_url,
             "expected_audio_sample_rate": settings.expected_audio_sample_rate,
+            "warm_models_on_startup": settings.warm_models_on_startup,
         },
         "backends": {
             "tts": {

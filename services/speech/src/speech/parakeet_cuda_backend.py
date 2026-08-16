@@ -62,6 +62,10 @@ class ParakeetCudaSpeechToText:
     def device(self) -> str:
         return self._device
 
+    async def initialize(self) -> None:
+        """Load the pinned processor and model before the first transcript."""
+        await self._get_model()
+
     async def _get_model(self) -> tuple[Any, Any]:
         """Load on first use, exactly once.
 

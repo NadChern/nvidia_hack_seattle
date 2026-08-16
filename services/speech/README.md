@@ -136,6 +136,8 @@ That fixture carries three seconds of 48 kHz mono PCM with one deliberate ~500ms
 
 `VMA_TTS_BACKEND=auto` is the default and selects MLX, CUDA, or the import-fallback stub as described above. `VMA_TTS_BACKEND=stub` is an explicit diagnostic mode: STT selection remains unchanged, but synthesis uses the deterministic silent WAV backend and `/v1/status` reports `tts.real=false`. The measured 8 GB WSL laptop runs Parakeet and Kokoro together; an earlier shutdown attributed to the reply-audio handoff was traced to a Console reload bug rather than insufficient Kokoro headroom.
 
+`VMA_WARM_MODELS_ON_STARTUP=true` makes readiness wait for selected adapters that expose an initializer. The CUDA profile loads Parakeet first, then loads Kokoro and synthesizes one discarded warmup phrase so the first wearer query pays neither model-load nor default-voice load latency. Use this on a pre-seeded deployment together with Hugging Face/Transformers offline mode; a missing artifact then fails startup honestly instead of dropping the first STT listener while attempting network metadata requests.
+
 ## Development
 
 ```text

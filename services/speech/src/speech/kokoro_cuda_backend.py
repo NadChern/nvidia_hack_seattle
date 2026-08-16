@@ -54,6 +54,17 @@ class KokoroCudaTextToSpeech:
     def device(self) -> str:
         return self._device
 
+    async def initialize(self) -> None:
+        """Load the pipeline and default voice before the first spoken reply."""
+        settings = get_settings()
+        pipeline = await self._get_pipeline(settings.tts_lang_code)
+        await asyncio.to_thread(
+            self._synthesize_sync,
+            pipeline,
+            "Ready.",
+            settings.tts_cuda_default_voice,
+        )
+
     async def _get_pipeline(self, lang_code: str) -> Any:
         async with self._lock:
             if self._pipeline is None:
