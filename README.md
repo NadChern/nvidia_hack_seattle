@@ -374,3 +374,10 @@ python3 .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py
 [DGX Spark](https://build.nvidia.com/spark?utm_source=luma) ·
 [NVIDIA Build models](https://build.nvidia.com/models?utm_source=luma) ·
 [VSS Spark Playbook](https://build.nvidia.com/spark/vss?utm_source=luma)
+
+## Participants
+
+- [Erin Shih](https://github.com/erinshih413) — `erinshih413`
+- [Jacky Huang](https://github.com/jack980180) — `jack980180`
+- [Nadine Chernova](https://github.com/NadChern) — `NadChern`
+- [Aleexander Kuznetsov](https://github.com/AlexSKuznetsov) — `AlexSKuznetsov`
