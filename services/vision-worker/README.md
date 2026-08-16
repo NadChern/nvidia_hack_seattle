@@ -62,13 +62,14 @@ authority after a `written` result.
 ### Registration
 
 Registration creates a durable object in Memory, captures a bounded frame window, and localizes the
-chosen label with a strict single-frame Cosmos prompt. Every geometrically usable crop then passes a
-second semantic localization, and the tighter second box—not the broad proposal—is what gets
-embedded. A separate contrastive reference-quality check rejects sharp but wrong crops; for keys,
-a ring, fob, or tag without a clearly visible metal key blade is explicitly invalid. C-RADIO embeds
-the survivors, removes near-duplicates, and stores two to four diverse reference views. Fewer than
-the configured minimum views fails explicitly, deletes the empty object, and stores no weak gallery.
-The live identity path applies the same two-stage crop transform before gallery matching.
+chosen label with a strict single-frame Cosmos prompt. Every geometrically usable crop gets an
+optional second localization; when it succeeds, the tighter box becomes the suggestion, but an
+abstention on the already-masked crop falls back to the valid first box instead of collapsing the
+registration to zero. A contrastive reference-quality check is enforced when it independently
+approves at least the minimum gallery and otherwise remains diagnostic for human review. C-RADIO
+removes near-duplicates and stores two to four suggestions for enlarged Console inspection. Fewer
+than two first-pass quality views fails explicitly and deletes the empty object. The live identity
+path applies the same optional two-stage crop transform before gallery matching.
 
 The registration allowlist is `VMA_DETECTION_LABELS`. `/v1/status` exposes it as
 `config.registration_labels` so the Console uses the same server-enforced list rather than a

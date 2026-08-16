@@ -160,7 +160,7 @@ async def test_a_matched_placed_event_is_written_with_its_location() -> None:
     assert pipeline.metrics.observations_written == 1
 
 
-async def test_an_event_without_a_semantically_valid_crop_is_skipped() -> None:
+async def test_second_localization_abstention_uses_the_first_event_crop() -> None:
     reasoner = FixtureReasoner(default=(_event("placed"),), localize_box=None)
     gallery = StubGallery(labels={"keys"}, score=_match())
     recorder = Recorder()
@@ -168,9 +168,9 @@ async def test_an_event_without_a_semantically_valid_crop_is_skipped() -> None:
 
     await _feed(pipeline, [_frame(0, sequence=1)])
 
-    assert recorder.calls == []
-    assert pipeline.metrics.identity_skipped == 1
-    assert pipeline.metrics.observations_written == 0
+    assert len(recorder.calls) == 1
+    assert pipeline.metrics.identity_matched == 1
+    assert pipeline.metrics.observations_written == 1
 
 
 async def test_an_unmatched_event_is_skipped_not_written() -> None:

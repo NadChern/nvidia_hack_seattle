@@ -124,7 +124,7 @@ async def test_good_capture_selects_and_persists_a_diverse_gallery() -> None:
     assert gallery.refreshes == 1
 
 
-async def test_semantically_wrong_crops_are_rejected_before_embedding() -> None:
+async def test_second_pass_abstention_falls_back_to_reviewable_first_crops() -> None:
     gallery = StubGallery()
     memory = RecordingMemory()
     enroller = ObjectEnroller(
@@ -140,18 +140,17 @@ async def test_semantically_wrong_crops_are_rejected_before_embedding() -> None:
         for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
     )
 
-    with pytest.raises(EnrollmentError, match="passed quality") as caught:
-        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+    result = await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
 
-    assert caught.value.reason_code == "too_few_quality_frames"
-    assert caught.value.result.detections == 3
-    assert caught.value.result.quality_passed == 0
-    assert memory.uploads == []
-    assert memory.deleted == ["object_keys"]
-    assert gallery.refreshes == 0
+    assert result.detections == 3
+    assert result.quality_passed == 3
+    assert result.selected_views >= 2
+    assert len(memory.uploads) == result.selected_views
+    assert memory.deleted == []
+    assert gallery.refreshes == 1
 
 
-async def test_grounded_but_unrecognizable_references_are_rejected() -> None:
+async def test_reference_false_negatives_do_not_zero_human_review() -> None:
     gallery = StubGallery()
     memory = RecordingMemory()
     enroller = ObjectEnroller(
@@ -167,13 +166,13 @@ async def test_grounded_but_unrecognizable_references_are_rejected() -> None:
         for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
     )
 
-    with pytest.raises(EnrollmentError, match="passed quality") as caught:
-        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+    result = await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
 
-    assert caught.value.result.detections == 3
-    assert caught.value.result.quality_passed == 0
-    assert memory.uploads == []
-    assert memory.deleted == ["object_keys"]
+    assert result.detections == 3
+    assert result.quality_passed == 3
+    assert result.selected_views >= 2
+    assert len(memory.uploads) == result.selected_views
+    assert memory.deleted == []
 
 
 async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:

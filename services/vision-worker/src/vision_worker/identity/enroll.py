@@ -171,27 +171,39 @@ class ObjectEnroller:
             if quality.accepted
         ]
 
-        # A sharp, reasonably sized first box can still contain mostly a key
-        # ring, fob, hand, or floor. Localize inside that crop, then build the
-        # crop that will actually be embedded from the second, tighter box.
-        # This is also the transform used for live identity below, preserving
-        # enrollment/query crop parity instead of validating one box and storing
-        # the broader, known-bad one.
+        preliminary = EnrollmentResult(len(sampled), detections, len(physically_usable), 0)
+        if len(physically_usable) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_quality_frames",
+                f"only {len(physically_usable)} frames passed quality; "
+                f"need {self._config.min_views}",
+                result=preliminary,
+            )
+
+        # Refine when Cosmos can recognize the target inside its first crop,
+        # but do not turn an abstention into an automatic zero-view failure.
+        # Four live retries showed that recursive grounding is much less stable
+        # on already masked 512px crops than on source frames: five to seven
+        # useful first crops repeatedly became zero or one. The first strict
+        # grounding remains the eligibility gate; this pass is an optional
+        # tighter crop for the operator to review in the Console modal.
         semantic_boxes = await asyncio.gather(
             *(
                 self._localizer.localize(encode_jpeg(crop.image), label)
                 for crop, _quality in physically_usable
             )
         )
-        refined: list[tuple[MaskedCrop, QualityScore]] = []
-        for (first_crop, _first_quality), semantic_box in zip(
-            physically_usable, semantic_boxes, strict=True
-        ):
+        review_candidates: list[tuple[MaskedCrop, QualityScore]] = []
+        refined_count = 0
+        for first_candidate, semantic_box in zip(physically_usable, semantic_boxes, strict=True):
+            first_crop, _first_quality = first_candidate
             if semantic_box is None:
+                review_candidates.append(first_candidate)
                 continue
             height, width = first_crop.image.shape[:2]
             mask = box_to_mask(semantic_box, height, width, padding=self._box_padding)
-            quality = score_quality(
+            refined_quality = score_quality(
                 first_crop.image,
                 mask,
                 semantic_box,
@@ -200,55 +212,46 @@ class ObjectEnroller:
                 config=self._config.quality,
             )
             try:
-                crop = prepare_masked_crop(first_crop.image, mask, semantic_box)
+                refined_crop = prepare_masked_crop(first_crop.image, mask, semantic_box)
             except ValueError:
+                review_candidates.append(first_candidate)
                 continue
-            refined.append((crop, quality))
+            if not refined_quality.accepted:
+                review_candidates.append(first_candidate)
+                continue
+            review_candidates.append((refined_crop, refined_quality))
+            refined_count += 1
 
-        refined_scores = apply_relative_sharpness(
-            [quality for _, quality in refined], config=self._config.quality
-        )
-        semantically_localized = [
-            (crop, quality)
-            for (crop, _), quality in zip(refined, refined_scores, strict=True)
-            if quality.accepted
-        ]
-
-        # Grounding answers where the model thinks an object might be. A
-        # separate contrastive QC question is intentionally stricter: for keys,
-        # for example, a ring/fob without a visible metal blade is REJECT. This
-        # caught all three bad suggestions from the second physical retry even
-        # though grounding had returned boxes for them.
+        # Keep the contrastive judgment as diagnostic evidence and enforce it
+        # only when it independently approves enough views. Cosmos currently
+        # false-rejects visible keys on small masked crops; the human review is
+        # the final registration authority, not a brittle third model vote.
         reference_results = await asyncio.gather(
             *(
                 self._localizer.validate_reference(encode_jpeg(crop.image), label)
-                for crop, _quality in semantically_localized
+                for crop, _quality in review_candidates
             )
         )
-        passed = [
+        model_approved = [
             candidate
-            for candidate, valid in zip(semantically_localized, reference_results, strict=True)
+            for candidate, valid in zip(review_candidates, reference_results, strict=True)
             if valid
         ]
+        passed = (
+            model_approved if len(model_approved) >= self._config.min_views else review_candidates
+        )
         logger.info(
-            "registration semantic crop gate completed",
+            "registration crop review completed",
             extra={
                 "object_id": object_id,
                 "label": label,
                 "localized": detections,
                 "physical_quality": len(physically_usable),
-                "semantic_localized": len(semantically_localized),
-                "reference_valid": len(passed),
+                "refined": refined_count,
+                "reference_valid": len(model_approved),
+                "review_fallback": len(model_approved) < self._config.min_views,
             },
         )
-        preliminary = EnrollmentResult(len(sampled), detections, len(passed), 0)
-        if len(passed) < self._config.min_views:
-            await self._rollback_failed_object(object_id)
-            raise EnrollmentError(
-                "too_few_quality_frames",
-                f"only {len(passed)} frames passed quality; need {self._config.min_views}",
-                result=preliminary,
-            )
 
         embeddings = await self._embedder.embed([crop for crop, _ in passed])
         embedded = tuple(
@@ -424,7 +427,7 @@ class EnrollmentManager:
         else:
             progress.state = "succeeded"
             progress.reason_code = "enrollment_complete"
-            progress.message = "reference gallery stored"
+            progress.message = "reference suggestions ready for review"
             _apply_result(progress, result)
             self.succeeded += 1
 

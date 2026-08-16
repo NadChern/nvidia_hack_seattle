@@ -348,12 +348,12 @@ class Pipeline:
     async def _resolve_identity(
         self, rgb: NDArray[np.uint8], event: WindowEvent
     ) -> GalleryScore | None:
-        """Refine the event box, embed the tight crop, and match the gallery.
+        """Optionally refine the event box, embed it, and match the gallery.
 
-        Event grounding and enrollment both start with one box, then run the
-        strict single-crop localizer and embed its tighter result. Keeping that
-        two-stage transform on both sides prevents a key ring or table around a
-        small key from becoming the personal identity signal.
+        Event grounding and enrollment both start with one strict box and try a
+        tighter second localization. Cosmos may abstain on an already-masked
+        crop even when the first crop is usable, so both paths fall back to the
+        first crop rather than turning the identity gate into a permanent miss.
         """
         if not self._embedder.is_ready:
             return None
@@ -364,16 +364,16 @@ class Pipeline:
         try:
             first_crop = prepare_masked_crop(rgb, first_mask, event.box)
             semantic_box = await self._reasoner.localize(encode_jpeg(first_crop.image), event.label)
-            if semantic_box is None:
-                return None
-            crop_height, crop_width = first_crop.image.shape[:2]
-            semantic_mask = box_to_mask(
-                semantic_box,
-                crop_height,
-                crop_width,
-                padding=self._box_padding,
-            )
-            crop = prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
+            crop = first_crop
+            if semantic_box is not None:
+                crop_height, crop_width = first_crop.image.shape[:2]
+                semantic_mask = box_to_mask(
+                    semantic_box,
+                    crop_height,
+                    crop_width,
+                    padding=self._box_padding,
+                )
+                crop = prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
             vectors = await self._embedder.embed([crop])
         except Exception:
             logger.exception("identity embedding failed; event left unmatched")
