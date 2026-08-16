@@ -33,7 +33,7 @@ _QUESTION_ALTERNATION = (
 )
 
 _QUESTION_SHAPE = re.compile(rf"^{_QUESTION_ALTERNATION}")
-_REGISTRATION_ALTERNATION = r"(?:remember|scan|learn)\s+(?:my|our|the|this)\b"
+_REGISTRATION_ALTERNATION = r"(?:remember|scan|learn)\s+(?:my|our|the|this|these|those)\b"
 _SUPPORTED_INTENT_SHAPE = re.compile(rf"^(?:{_QUESTION_ALTERNATION}|{_REGISTRATION_ALTERNATION})")
 
 #: The same supported shapes starting at any word boundary. Used only after a deliberate
