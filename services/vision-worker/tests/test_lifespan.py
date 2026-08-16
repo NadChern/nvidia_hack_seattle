@@ -72,19 +72,19 @@ async def test_status_reports_configuration_and_thresholds() -> None:
     # Real thresholds, not just settings echoed back -- the plan's
     # requirement that an evaluation run can cite what was actually in
     # effect, not what was merely configured.
-    assert body["stability_thresholds"]["dwell_frames"] > 0
+    assert body["stability_thresholds"]["dwell_seconds"] > 0
     assert body["verifier_thresholds"]["min_confidence"] >= 0.0
     assert body["metrics"]["frames_processed"] == 0
 
-    # Both halves of the frame-rate assumption. A frame count alone does not
-    # say what duration it stands for, and the configured rate alone does not
-    # say whether the relay agrees -- only the pair is citable.
+    # The configured rate and whether the relay agrees are both reported -- but
+    # the thresholds themselves are durations, so the observed rate no longer
+    # rescales them, it only sets how densely samples fall inside each window.
     assert body["frame_rate"]["configured_fps"] == settings.source_fps
     assert body["frame_rate"]["observed_fps"] is None  # no frames yet
     assert body["stability_durations_s"]["dwell"] == settings.dwell_seconds
-    assert body["stability_thresholds"]["dwell_frames"] == round(
-        settings.dwell_seconds * settings.source_fps
-    )
+    # The thresholds in effect are the configured durations directly, with no
+    # frame-rate conversion in between.
+    assert body["stability_thresholds"]["dwell_seconds"] == settings.dwell_seconds
 
 
 async def test_clip_fps_defaults_to_the_source_rate() -> None:
@@ -140,12 +140,13 @@ async def test_liveness_does_not_depend_on_the_relay() -> None:
     assert body["status"] == "ok"
 
 
-async def test_build_stability_config_warns_when_a_duration_rounds_to_one_frame(
+async def test_build_stability_config_keeps_durations_at_a_slow_source_rate(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """At a source rate of 2fps a 0.5s dwell rounds to a
-    single frame -- one stable sighting confirming a placement. Legitimate to
-    run with, never something to arrive at by accident."""
+    """A duration is a duration at any rate: a 0.5s dwell means 0.5s whether the
+    relay delivers 2fps or 24. There is no frame-count rounding to warn about
+    any more -- the whole class of "thresholds silently rescaled by the rate"
+    bug is gone because the thresholds are never frames."""
     settings = Settings(
         environment="ci",
         memory_base_url="http://127.0.0.1:1",
@@ -156,11 +157,11 @@ async def test_build_stability_config_warns_when_a_duration_rounds_to_one_frame(
     with caplog.at_level("WARNING", logger="vision_worker.main"):
         config = build_stability_config(settings)
 
-    assert config.dwell_frames == 1
-    assert any("rounds to a single frame" in record.message for record in caplog.records)
+    assert config.dwell_seconds == 0.5
+    assert not [record for record in caplog.records if record.levelname == "WARNING"]
 
 
-async def test_build_stability_config_is_quiet_when_the_rate_supports_the_durations(
+async def test_build_stability_config_passes_the_configured_durations_through(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     settings = Settings(
@@ -172,6 +173,6 @@ async def test_build_stability_config_is_quiet_when_the_rate_supports_the_durati
     with caplog.at_level("WARNING", logger="vision_worker.main"):
         config = build_stability_config(settings)
 
-    assert config.dwell_frames == 12
-    assert config.passive_confirmation_frames == 90
+    assert config.dwell_seconds == settings.dwell_seconds
+    assert config.passive_confirmation_seconds == settings.passive_confirmation_seconds
     assert not [record for record in caplog.records if record.levelname == "WARNING"]

@@ -18,7 +18,7 @@ it is "is this object at rest in the world, or moving through it."** Keys
 carried from the kitchen to the front door and pocketed must never resolve to
 "the front hall" just because the last sighting was there. A sighting only
 updates the confirmed location once the object has held its position for
-`dwell_frames`; a sighting while moving marks the object as moving and never
+`dwell_seconds`; a sighting while moving marks the object as moving and never
 overwrites a confirmed placement.
 
 **Why a brand-new track never promotes on its first stable sighting.** An
@@ -27,11 +27,11 @@ like an object that was just placed -- both are stationary the moment Vision
 first sees them. Distinguishing "just placed" from "was already there" from
 motion alone is not something a single frame can answer honestly, so this
 module does not pretend to: a track that settles immediately from its very
-first sample needs `passive_confirmation_frames` of sustained stillness
+first sample needs `passive_confirmation_seconds` of sustained stillness
 before it promotes, while a track that visibly moved and then settled needs
-only the much shorter `dwell_frames`, because motion-then-settle is strong
+only the much shorter `dwell_seconds`, because motion-then-settle is strong
 evidence that a placement genuinely just happened. Clip 4 ("object visible,
-never touched") is calibrated to be shorter than `passive_confirmation_frames`
+never touched") is calibrated to be shorter than `passive_confirmation_seconds`
 so a brief glance never promotes; clip 1 ("keys placed on a table") is staged
 to show the motion-then-settle transition so it promotes quickly.
 """
@@ -58,32 +58,27 @@ class StabilityConfig:
     Memory Service reports its `PromotionPolicy`, so an evaluation run can
     cite the threshold set it used.
 
-    **Every frame count here is meaningless without a frame rate.** The
-    defaults below are the plan's values at 24fps, the measured 6DoF-stable
-    ceiling on the X3 Pro -- but the frame rate this service actually sees is
-    the Media Gateway's `VMA_SAMPLE_FPS`, which relays a *sampled* stream at a
-    fraction of the capture rate. At 8fps these same numbers would mean an
-    11-second passive confirmation instead of 3.75. Nothing in a fixture can
-    catch that, since a fixture supplies its own timestamps.
-
-    So a service builds this with `from_durations()` from real durations and
-    the rate it is actually being fed, and the raw frame-count constructor
-    stays for tests and fixtures that control their own timeline. See
-    `vision_worker.main.build_stability_config`.
+    **Durations, not frame counts.** Earlier this machine counted frames, which
+    silently means a different real duration at every source rate: thresholds
+    built for 8fps mean a 7x-longer dwell when the relay actually delivers
+    ~1fps, and the relay's rate is device- and network-bound, not something the
+    service controls. So the thresholds are wall-clock seconds, compared
+    against the `captured_at` timestamps the samples already carry -- correct at
+    1fps or 24fps, and immune to the rate changing mid-track. The module stays
+    pure: the "clock" is always a sample's (or the current frame's) timestamp,
+    never `datetime.now()`.
     """
 
-    #: Frames of held position required to confirm "placed" after an observed
-    #: motion phase -- fast, because motion-then-settle is strong evidence.
-    #: 12 frames at 24fps is 0.5s.
-    dwell_frames: int = 12
-    #: Frames of held position required to confirm "placed" from a track's
+    #: Seconds of held position required to confirm "placed" after an observed
+    #: motion phase -- short, because motion-then-settle is strong evidence.
+    dwell_seconds: float = 0.5
+    #: Seconds of held position required to confirm "placed" from a track's
     #: very first sighting, with no observed motion beforehand. Deliberately
-    #: much larger than `dwell_frames` -- see the module docstring. 90 frames
-    #: at 24fps is 3.75s.
-    passive_confirmation_frames: int = 90
-    #: World-space metres of displacement per frame considered "moving", used
-    #: when both the current and reference sample carry a `world_point`
-    #: (depth and pose both available). Accounts for depth-estimate noise.
+    #: much larger than `dwell_seconds` -- see the module docstring.
+    passive_confirmation_seconds: float = 3.75
+    #: World-space metres of displacement considered "moving", used when both
+    #: the current and reference sample carry a `world_point` (depth and pose
+    #: both available). Accounts for depth-estimate noise.
     world_motion_threshold_m: float = 0.05
     #: Normalized image-space residual -- |object screen motion - background
     #: motion| -- considered "moving" on the image-space-only path. The
@@ -91,55 +86,17 @@ class StabilityConfig:
     #: frame while the background sweeps past; a resting object's screen
     #: motion tracks the background's, since both come from ego-motion alone.
     image_residual_threshold: float = 0.02
-    #: Frames a track may go undetected (occlusion, a missed frame) before its
-    #: state resets to "absent" rather than being treated as continuous. 45
-    #: frames at 24fps is 1.875s, sized for a brief hand occlusion.
-    reacquire_within_frames: int = 45
+    #: Seconds a track may go undetected (occlusion, a missed frame) before its
+    #: state resets to "absent" rather than being treated as continuous. Sized
+    #: for a brief hand occlusion.
+    reacquire_within_seconds: float = 1.875
     #: While a track continues moving, "carried" is re-emitted at most this
-    #: often -- a periodic ping rather than a candidate on every frame. 60
-    #: frames at 24fps is 2.5s.
-    carried_emit_interval_frames: int = 60
-
-    @classmethod
-    def from_durations(
-        cls,
-        *,
-        source_fps: float,
-        dwell_seconds: float = 0.5,
-        passive_confirmation_seconds: float = 3.75,
-        reacquire_within_seconds: float = 1.875,
-        carried_emit_interval_seconds: float = 2.5,
-        world_motion_threshold_m: float = 0.05,
-        image_residual_threshold: float = 0.02,
-    ) -> StabilityConfig:
-        """Convert real durations into frame counts at `source_fps`.
-
-        The durations are what a human actually reasons about ("half a second
-        of stillness confirms a placement"); the frame counts are what a
-        per-frame state machine can count. Keeping the conversion here rather
-        than in `config.py` keeps it pure and testable with no settings
-        object, and means the arithmetic that decides what a threshold *means*
-        lives next to the code that applies it.
-
-        Rounds to at least one frame: a duration shorter than one frame
-        interval cannot be represented, and silently producing a zero-frame
-        threshold would confirm a placement from a single sighting. A caller
-        that cares whether a duration survived the rounding compares the
-        result against its own inputs -- see `main.build_stability_config`,
-        which warns when it did not.
-        """
-        return cls(
-            dwell_frames=_frames_for(dwell_seconds, source_fps),
-            passive_confirmation_frames=_frames_for(passive_confirmation_seconds, source_fps),
-            world_motion_threshold_m=world_motion_threshold_m,
-            image_residual_threshold=image_residual_threshold,
-            reacquire_within_frames=_frames_for(reacquire_within_seconds, source_fps),
-            carried_emit_interval_frames=_frames_for(carried_emit_interval_seconds, source_fps),
-        )
+    #: often -- a periodic ping rather than a candidate on every frame.
+    carried_emit_interval_seconds: float = 2.5
 
 
-def _frames_for(seconds: float, fps: float) -> int:
-    return max(1, round(seconds * fps))
+def _elapsed(now: dt.datetime, since: dt.datetime) -> float:
+    return (now - since).total_seconds()
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,12 +110,20 @@ class TrackState:
     """
 
     motion_state: MotionState = "absent"
-    stable_frames: int = 0
-    frames_since_seen: int = 0
-    frames_since_last_emission: int = 0
+    #: `captured_at` of the first sample of the current uninterrupted stable
+    #: run -- the anchor the dwell / passive-confirmation durations are measured
+    #: from. `None` while moving or absent; reset whenever motion resumes.
+    settling_started_at: dt.datetime | None = None
+    #: `captured_at` of the most recent frame in which this track was detected.
+    #: The reacquire window is measured as (current frame time - this), so an
+    #: occlusion is timed in seconds regardless of frame rate.
+    last_seen_at: dt.datetime | None = None
+    #: `captured_at` of the last `carried`/`picked_up` emission, so the periodic
+    #: `carried` ping is spaced by a real duration, not a frame count.
+    last_emission_at: dt.datetime | None = None
     #: True once this settling phase followed an observed motion phase, which
-    #: is what makes the fast `dwell_frames` threshold apply instead of the
-    #: slow `passive_confirmation_frames` one.
+    #: is what makes the fast `dwell_seconds` threshold apply instead of the
+    #: slow `passive_confirmation_seconds` one.
     settled_from_motion: bool = False
     #: `captured_at` of the sample that began the current excursion out of
     #: "absent"/"at_rest" -- reset whenever the track first starts moving (or
@@ -239,7 +204,11 @@ def initial_state() -> TrackState:
 
 
 def step(
-    state: TrackState, sample: TrackSample | None, config: StabilityConfig | None = None
+    state: TrackState,
+    sample: TrackSample | None,
+    config: StabilityConfig | None = None,
+    *,
+    now: dt.datetime | None = None,
 ) -> StabilityStep:
     """Advance one track by one frame.
 
@@ -249,11 +218,17 @@ def step(
     the object moving (Memory keeps it `in_transit`) and a track disappearing
     while at rest leaves the confirmed placement standing -- both are already
     true from the last emitted action, so there is nothing new to tell Memory.
+
+    `now` is the current frame's `captured_at`. It is what times an absent
+    frame, which carries no sample of its own; for a present frame it defaults
+    to the sample's own timestamp, so a caller with one stream of frames can
+    pass it unconditionally (the pipeline does) or omit it (tests with only
+    present frames do).
     """
     config = config or StabilityConfig()
 
     if sample is None:
-        return _step_absent(state, config)
+        return _step_absent(state, config, now)
 
     if state.motion_state == "absent":
         return _step_first_sighting(sample)
@@ -262,7 +237,7 @@ def step(
         state,
         last_world_point=sample.world_point,
         last_centroid=sample.detection.centroid,
-        frames_since_seen=0,
+        last_seen_at=sample.captured_at,
     )
 
     stable = _is_stable(state, sample, config)
@@ -271,7 +246,7 @@ def step(
         # actually tell us something, rather than guessing.
         return StabilityStep(state=seen_state)
     if stable:
-        return _step_stable(seen_state, config)
+        return _step_stable(seen_state, sample, config)
     return _step_moving(seen_state, sample, config)
 
 
@@ -285,7 +260,8 @@ def _step_first_sighting(sample: TrackSample) -> StabilityStep:
     """
     next_state = TrackState(
         motion_state="settling",
-        stable_frames=1,
+        settling_started_at=sample.captured_at,
+        last_seen_at=sample.captured_at,
         settled_from_motion=False,
         reference_world_point=sample.world_point,
         last_world_point=sample.world_point,
@@ -296,46 +272,50 @@ def _step_first_sighting(sample: TrackSample) -> StabilityStep:
     return StabilityStep(state=next_state, action="observed")
 
 
-def _step_stable(state: TrackState, config: StabilityConfig) -> StabilityStep:
+def _step_stable(
+    state: TrackState, sample: TrackSample, config: StabilityConfig
+) -> StabilityStep:
     if state.motion_state == "at_rest":
         # Already confirmed and still not moving -- nothing new to say.
         return StabilityStep(state=state)
 
-    stable_frames = state.stable_frames + 1
+    # The stable run is anchored at its first frame; a run continuing from
+    # "moving" (where the anchor was cleared) starts it here.
+    settling_started_at = state.settling_started_at or sample.captured_at
+    held_for = _elapsed(sample.captured_at, settling_started_at)
     threshold = (
-        config.dwell_frames if state.settled_from_motion else config.passive_confirmation_frames
+        config.dwell_seconds if state.settled_from_motion else config.passive_confirmation_seconds
     )
-    if stable_frames >= threshold:
+    if held_for >= threshold:
         next_state = replace(
             state,
             motion_state="at_rest",
-            stable_frames=stable_frames,
+            settling_started_at=settling_started_at,
             last_emitted_action="placed",
-            frames_since_last_emission=0,
+            last_emission_at=sample.captured_at,
         )
         return StabilityStep(state=next_state, action="placed")
 
-    return StabilityStep(state=replace(state, motion_state="settling", stable_frames=stable_frames))
+    return StabilityStep(
+        state=replace(state, motion_state="settling", settling_started_at=settling_started_at)
+    )
 
 
 def _step_moving(state: TrackState, sample: TrackSample, config: StabilityConfig) -> StabilityStep:
     was_at_rest = state.motion_state == "at_rest"
     entering_motion = state.motion_state != "moving"
+    reset_emission = was_at_rest or entering_motion
 
     next_state = replace(
         state,
         motion_state="moving",
-        stable_frames=0,
+        settling_started_at=None,
         settled_from_motion=True,
         reference_world_point=state.last_world_point,
-        frames_since_last_emission=(
-            0 if (was_at_rest or entering_motion) else state.frames_since_last_emission + 1
-        ),
-        # A fresh motion phase starts its own window; continuing an existing
-        # one keeps the timestamp it already had.
-        state_started_at=(
-            sample.captured_at if (was_at_rest or entering_motion) else state.state_started_at
-        ),
+        # A fresh motion phase starts its own window and emission clock;
+        # continuing an existing one keeps the timestamps it already had.
+        state_started_at=(sample.captured_at if reset_emission else state.state_started_at),
+        last_emission_at=(sample.captured_at if reset_emission else state.last_emission_at),
     )
 
     if was_at_rest:
@@ -347,19 +327,25 @@ def _step_moving(state: TrackState, sample: TrackSample, config: StabilityConfig
 
     if (
         not entering_motion
-        and next_state.frames_since_last_emission >= config.carried_emit_interval_frames
+        and state.last_emission_at is not None
+        and _elapsed(sample.captured_at, state.last_emission_at) >= config.carried_emit_interval_seconds
     ):
         return StabilityStep(
-            state=replace(next_state, last_emitted_action="carried", frames_since_last_emission=0),
+            state=replace(next_state, last_emitted_action="carried", last_emission_at=sample.captured_at),
             action="carried",
         )
 
     return StabilityStep(state=next_state)
 
 
-def _step_absent(state: TrackState, config: StabilityConfig) -> StabilityStep:
-    frames_since_seen = state.frames_since_seen + 1
-    if frames_since_seen > config.reacquire_within_frames:
+def _step_absent(
+    state: TrackState, config: StabilityConfig, now: dt.datetime | None
+) -> StabilityStep:
+    if state.last_seen_at is None or now is None:
+        # No timing reference yet (a track that has only ever been absent, or a
+        # caller that did not supply the frame time): hold, do not retire.
+        return StabilityStep(state=state)
+    if _elapsed(now, state.last_seen_at) > config.reacquire_within_seconds:
         # An object that was **resting** and is now gone is the one absence
         # worth reporting. Everything else is already accounted for: a track
         # that was moving when it disappeared left the object in transit, and
@@ -388,7 +374,9 @@ def _step_absent(state: TrackState, config: StabilityConfig) -> StabilityStep:
         # next sighting must go through _step_first_sighting and announce
         # "observed" again rather than staying silent.
         return StabilityStep(state=TrackState(), retired=True)
-    return StabilityStep(state=replace(state, frames_since_seen=frames_since_seen))
+    # Still within the reacquire window: nothing to advance -- absence is timed
+    # from `last_seen_at`, which is already on the state.
+    return StabilityStep(state=state)
 
 
 class TrackRegistry:
@@ -420,11 +408,13 @@ class TrackRegistry:
         """Drop all track state. Call on every `epoch_started`."""
         self._tracks.clear()
 
-    def observe(self, track_id: str, sample: TrackSample | None) -> StabilityStep:
+    def observe(
+        self, track_id: str, sample: TrackSample | None, *, now: dt.datetime | None = None
+    ) -> StabilityStep:
         state = self._tracks.get(track_id, TrackState())
-        result = step(state, sample, self._config)
+        result = step(state, sample, self._config, now=now)
         if result.retired:
-            # Absent past `reacquire_within_frames`: its state is a clean
+            # Absent past `reacquire_within_seconds`: its state is a clean
             # TrackState now, so holding the entry buys nothing and a
             # never-shrinking dict costs per-frame work forever. A later
             # sighting of the same id starts from the same clean slate via
@@ -437,7 +427,7 @@ class TrackRegistry:
     def drop(self, track_id: str) -> None:
         """Stop tracking an id entirely -- e.g. the tracker itself reports it
         permanently lost, distinct from the transient absence `step` already
-        tolerates within `reacquire_within_frames`."""
+        tolerates within `reacquire_within_seconds`."""
         self._tracks.pop(track_id, None)
 
 

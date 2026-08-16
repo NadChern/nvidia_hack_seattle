@@ -212,7 +212,7 @@ async def drive(pipeline: Pipeline, frame_count: int, *, epoch_id: str = "TR_VCa
 async def test_keys_carried_in_and_set_down_confirms_a_placed_candidate() -> None:
     """Clip 1's shape: carried into frame, then settles -- a `placed`
     candidate should reach `on_confirmed` with real evidence attached."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     # Moving: 0.10 -> 0.16 -> 0.22 (well above the 0.02 residual threshold,
     # with the tracker's lowered iou_threshold still matching the overlap).
     # Then still at 0.22 for enough frames to cross dwell_frames.
@@ -255,7 +255,7 @@ async def test_a_track_that_only_ever_moves_never_confirms_a_placed_candidate() 
     level: an object that keeps moving must never produce a `placed`
     candidate just because a sighting happened.
     """
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10 + 0.06 * i)] for i in range(8)]
     sink = RecordingSink()
     pipeline = a_pipeline(script=script, sink=sink, stability_config=config)
@@ -272,7 +272,7 @@ async def test_an_object_merely_seen_produces_no_observation_at_all() -> None:
     harmless one. The state machine still reports the sighting -- the
     activity log shows it -- but nothing is verified, encoded, or uploaded.
     """
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     # Stationary from the very first frame and never long enough to cross
     # passive_confirmation_frames: indistinguishable from an object that was
     # simply always there.
@@ -299,7 +299,7 @@ async def test_frames_for_a_different_epoch_are_ignored() -> None:
     """A frame that arrives for an epoch this pipeline was never told about
     (e.g. right after a reset raced a stale in-flight message) must not be
     processed against the current epoch's state."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     sink = RecordingSink()
     pipeline = a_pipeline(script=[[a_detection(0.2)]], sink=sink, stability_config=config)
 
@@ -321,7 +321,7 @@ async def test_epoch_reset_treats_a_reused_track_id_as_a_new_sighting() -> None:
     "placed", which would mean the second epoch inherited the first's
     stability state instead of starting from a clean slate.
     """
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     sink = RecordingSink()
     pipeline = a_pipeline(
         script=[[a_detection(0.2)], [a_detection(0.2)]], sink=sink, stability_config=config
@@ -347,7 +347,7 @@ async def test_recent_events_records_every_verifier_outcome() -> None:
     """`/v1/events` (task #53) is backed by this -- a human watching the
     pipeline needs to see rejections and unverified outcomes too, not only
     what reached Memory."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [
         [a_detection(0.10)],
         [a_detection(0.16)],
@@ -374,8 +374,8 @@ async def test_a_configured_depth_estimator_annotates_the_confirmed_candidate() 
     """When a depth estimator is wired in, `depth_m` reaches the candidate
     Memory eventually sees -- task #39's low-cadence wiring, exercised with
     no GPU via `FixtureDepthEstimator`."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
-    # Moves, then holds long enough to cross dwell_frames=3 -- only a `placed`
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
+    # Moves, then holds long enough to cross dwell_seconds=1.5 / 24 -- only a `placed`
     # candidate reaches the sink, so the script has to actually produce one.
     script = [
         [a_detection(0.10)],
@@ -407,8 +407,8 @@ async def test_a_configured_depth_estimator_annotates_the_confirmed_candidate() 
 async def test_with_no_depth_estimator_configured_candidates_carry_no_depth() -> None:
     """The default shape -- `depth_estimator=None` -- must stay exactly what
     it always was: no `depth_m`, no `depth_model`, nothing silently implied."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
-    # Moves, then holds long enough to cross dwell_frames=3 -- only a `placed`
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
+    # Moves, then holds long enough to cross dwell_seconds=1.5 / 24 -- only a `placed`
     # candidate reaches the sink, so the script has to actually produce one.
     script = [
         [a_detection(0.10)],
@@ -438,7 +438,7 @@ async def test_observed_fps_measures_what_the_relay_actually_delivers() -> None:
     disagrees with the gateway's `VMA_SAMPLE_FPS` -- the stability thresholds
     just quietly come out scaled. This measurement is what catches it, and
     `/v1/status` is where a human sees it."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     sink = RecordingSink()
     pipeline = a_pipeline(script=[[]], sink=sink, stability_config=config)
 
@@ -458,7 +458,7 @@ async def test_a_rate_that_disagrees_with_the_configured_one_warns_once(
 ) -> None:
     """Configured for the gateway's default 2fps, fed a 24fps stream: every
     stability threshold is 12x shorter than intended. It says so."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     sink = RecordingSink()
     pipeline = a_pipeline(script=[[]], sink=sink, stability_config=config, source_fps=2.0)
 
@@ -473,7 +473,7 @@ async def test_a_rate_that_disagrees_with_the_configured_one_warns_once(
 async def test_the_epoch_reset_forgets_the_previous_epoch_s_rate() -> None:
     """A reconnect may come back at a different rate; averaging across the
     boundary would report neither."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     sink = RecordingSink()
     pipeline = a_pipeline(script=[[]], sink=sink, stability_config=config)
 
@@ -524,7 +524,7 @@ async def test_keys_that_settle_then_disappear_raise_a_question() -> None:
     service exists to prevent.
     """
     config = StabilityConfig(
-        dwell_frames=3, passive_confirmation_frames=999, reacquire_within_frames=3
+        dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24, reacquire_within_seconds=3.5 / 24
     )
     # Carried in, set down, then gone: the detector finds nothing at all.
     script = [
@@ -562,7 +562,7 @@ async def test_the_vanish_window_reaches_back_to_before_it_disappeared() -> None
     empty desk afterwards. A window containing only empty frames would give a
     verifier nothing to reason about."""
     config = StabilityConfig(
-        dwell_frames=3, passive_confirmation_frames=999, reacquire_within_frames=3
+        dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24, reacquire_within_seconds=3.5 / 24
     )
     script = [
         [a_detection(0.10)],
@@ -596,7 +596,7 @@ async def test_an_object_that_never_settled_raises_no_question_when_it_leaves() 
     """Only a *resting* object's disappearance changes anything. A track that
     was still moving is already in transit as far as memory is concerned."""
     config = StabilityConfig(
-        dwell_frames=3, passive_confirmation_frames=999, reacquire_within_frames=3
+        dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24, reacquire_within_seconds=3.5 / 24
     )
     script = [[a_detection(0.10 + 0.06 * i)] for i in range(6)] + [[]] * 5
     sink = RecordingSink()
@@ -651,7 +651,7 @@ async def test_a_slow_verifier_does_not_stall_frame_handling() -> None:
     So the measure is not that verification is fast. It is that frames keep
     being processed while a verification is stuck.
     """
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 10
     sink = RecordingSink()
     verifier = BlockingVerifier()
@@ -688,7 +688,7 @@ async def test_candidates_are_dropped_rather_than_stalling_the_stream() -> None:
     """A drop is a real event lost, so it is counted and surfaced at
     `/v1/status` -- but the alternative is blocking, which corrupts the state
     machine that produced the candidate."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     # Five objects, far enough apart to stay distinct tracks, all settling
     # together -- five candidates proposed within a frame or two of each other,
     # against a queue that can hold one.
@@ -729,7 +729,7 @@ async def test_candidates_are_dropped_rather_than_stalling_the_stream() -> None:
 async def test_no_overlay_sink_means_no_overlay_work_at_all() -> None:
     """The default, and the normal state of a deployed service: nothing is
     watching, so nothing is assembled."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 4
     sink = RecordingSink()
     pipeline = a_pipeline(script=script, sink=sink, stability_config=config)
@@ -745,7 +745,7 @@ async def test_every_tracked_object_is_published_including_ones_never_promoted()
     objects worth remembering would show an empty frame for the commonest case
     and look broken -- so overlays are collected above the promotion rules, not
     after them."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 4
     overlays: list[OverlayFrame] = []
     pipeline = a_pipeline(
@@ -766,7 +766,7 @@ async def test_every_tracked_object_is_published_including_ones_never_promoted()
 
 
 async def test_detection_output_is_bounded_before_overlay_and_depth_work() -> None:
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     frame = [
         a_detection(0.1 + index * 0.01).model_copy(update={"confidence": 0.5 + index * 0.01})
         for index in range(6)
@@ -788,7 +788,7 @@ async def test_detection_output_is_bounded_before_overlay_and_depth_work() -> No
 
 
 async def test_an_overlay_carries_what_a_viewer_needs_to_draw_it() -> None:
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 4
     overlays: list[OverlayFrame] = []
     pipeline = a_pipeline(
@@ -819,7 +819,7 @@ async def test_an_overlay_carries_what_a_viewer_needs_to_draw_it() -> None:
 async def test_a_broken_viewer_cannot_stop_the_pipeline() -> None:
     """The overlay stream is a debugging and demo surface. A bug in it, or in
     serializing a frame, must never cost the service its actual job."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 4
     sink = RecordingSink()
 
@@ -861,7 +861,7 @@ async def test_depth_is_not_measured_when_nobody_is_watching() -> None:
     """This sampling exists only to put a number on a box. A deployment with no
     viewer attached -- which is most of them, most of the time -- must not pay
     for a second model."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 6
     depth = CountingDepth()
     pipeline = a_pipeline(
@@ -880,7 +880,7 @@ async def test_depth_is_not_measured_when_nobody_is_watching() -> None:
 
 
 async def test_depth_reaches_the_overlay_and_carries_its_age() -> None:
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 6
     overlays: list[OverlayFrame] = []
     pipeline = a_pipeline(
@@ -904,7 +904,7 @@ async def test_depth_is_sampled_at_a_cadence_not_every_frame() -> None:
     """A second heavy model per frame costs far more than the measurement is
     worth for a quantity that changes slowly -- and on a machine already at its
     frame budget it would just cause more frames to be dropped."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 22
     depth = CountingDepth()
     pipeline = a_pipeline(
@@ -929,7 +929,7 @@ async def test_a_stale_reading_is_carried_forward_with_a_growing_age() -> None:
     """Between samples a track keeps its last reading. The age is what stops
     that being a lie: a number shown as live when it is seconds old is worse
     than showing none."""
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 20
     overlays: list[OverlayFrame] = []
     pipeline = a_pipeline(
@@ -958,7 +958,7 @@ async def test_a_depth_failure_leaves_the_pipeline_running() -> None:
             self.calls += 1
             raise RuntimeError("no depth today")
 
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 6
     overlays: list[OverlayFrame] = []
     pipeline = a_pipeline(
@@ -977,7 +977,7 @@ async def test_a_depth_failure_leaves_the_pipeline_running() -> None:
 
 
 async def test_strong_event_reads_the_cached_track_identity() -> None:
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 5
     sink = RecordingSink()
     resolver = StaticIdentityResolver(
@@ -1011,7 +1011,7 @@ async def test_strong_event_reads_the_cached_track_identity() -> None:
 
 
 async def test_identity_never_vetoes_candidate_availability() -> None:
-    config = StabilityConfig(dwell_frames=3, passive_confirmation_frames=999)
+    config = StabilityConfig(dwell_seconds=1.5 / 24, passive_confirmation_seconds=999 / 24)
     script = [[a_detection(0.10)], [a_detection(0.16)]] + [[a_detection(0.22)]] * 5
     baseline_sink = RecordingSink()
     identity_sink = RecordingSink()
@@ -1041,9 +1041,9 @@ async def test_identity_never_vetoes_candidate_availability() -> None:
 
 async def test_registered_track_end_emits_one_weak_last_seen() -> None:
     config = StabilityConfig(
-        dwell_frames=3,
-        passive_confirmation_frames=999,
-        reacquire_within_frames=1,
+        dwell_seconds=1.5 / 24,
+        passive_confirmation_seconds=999 / 24,
+        reacquire_within_seconds=1.5 / 24,
     )
     script = [[a_detection(0.5)]] * 3 + [[], [], []]
     resolver = StaticIdentityResolver(
@@ -1083,9 +1083,9 @@ async def test_registered_track_end_emits_one_weak_last_seen() -> None:
 
 async def test_unregistered_track_end_never_writes_last_seen() -> None:
     config = StabilityConfig(
-        dwell_frames=3,
-        passive_confirmation_frames=999,
-        reacquire_within_frames=1,
+        dwell_seconds=1.5 / 24,
+        passive_confirmation_seconds=999 / 24,
+        reacquire_within_seconds=1.5 / 24,
     )
     script = [[a_detection(0.5)]] * 3 + [[], [], []]
     resolver = StaticIdentityResolver(

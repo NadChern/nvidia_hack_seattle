@@ -46,7 +46,7 @@ class WorldProximityTracker:
 
     `max_age_frames` defaults to `GreedyIoUTracker`'s own default for the
     same reason documented there: this must stay at least as large as
-    `StabilityConfig.reacquire_within_frames`, or identity is lost here
+    `StabilityConfig.reacquire_within_seconds`, or identity is lost here
     before the stability machine's own occlusion tolerance gets a chance to
     apply.
     """

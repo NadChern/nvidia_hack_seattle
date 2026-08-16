@@ -464,12 +464,12 @@ class Pipeline:
         matched_ids = {track_id for track_id, _ in matches}
 
         # The registry is the single owner of which ids are still live: it
-        # drops a track once it has been absent past `reacquire_within_frames`
+        # drops a track once it has been absent past `reacquire_within_seconds`
         # (`StabilityStep.retired`), and this sweep shrinks with it. Keeping a
         # second set here instead would never shrink, so both the memory and
         # the per-frame work would grow with every id the tracker ever minted.
         for lost_track_id in self._track_registry.active_track_ids - matched_ids:
-            lost = self._track_registry.observe(lost_track_id, None)
+            lost = self._track_registry.observe(lost_track_id, None, now=frame.captured_at)
             if lost.action is not None:
                 # A confirmed placement disappearing asks the stronger
                 # `vanished` question. It must never also emit weak last-seen.
@@ -524,7 +524,7 @@ class Pipeline:
             )
             self._samples.setdefault(track_id, deque(maxlen=_SAMPLE_HISTORY_MAXLEN)).append(sample)
             self._maybe_schedule_identity(track_id, detection, rgb, epoch_id=epoch_id)
-            result = self._track_registry.observe(track_id, sample)
+            result = self._track_registry.observe(track_id, sample, now=frame.captured_at)
 
             # Collected here, above every `continue` below, because a viewer
             # wants to see *every* tracked object -- including the ones this

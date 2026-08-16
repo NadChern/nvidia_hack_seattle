@@ -175,10 +175,11 @@ class Settings(BaseSettings):
     fixture_depth_range_m: float = Field(default=1.5, gt=0)
 
     # --- Stability thresholds (see domain/stability.py) ----------------------
-    #: Expressed as durations, never as frame counts: a frame count only means
-    #: something against a known rate, and the rate is `source_fps` above.
-    #: `StabilityConfig.from_durations` does the conversion; `/v1/status`
-    #: reports both halves so an evaluation run can cite either.
+    #: Expressed as durations because the machine compares them directly against
+    #: the samples' own timestamps -- a frame count would silently mean a
+    #: different real duration at every source rate (the exact bug this avoids).
+    #: `/v1/status` reports the observed rate alongside, so an evaluation run can
+    #: see how densely samples fell inside each window.
     #:
     #: Defaults are the plan's values: 0.5s of held position confirms a
     #: placement *after* observed motion, because motion-then-settle is strong

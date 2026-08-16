@@ -84,17 +84,18 @@ def status(request: Request) -> dict[str, Any]:
                 round(observed, 2) if (observed := pipeline.observed_fps) is not None else None
             ),
         },
-        # The durations an operator configured, alongside the frame counts
-        # they became. An evaluation run can cite either; only the pair is
-        # unambiguous.
+        # The durations an operator configured. The machine compares these
+        # wall-clock seconds directly against sample timestamps, so there is no
+        # separate frame-count form to report -- the observed rate (above) only
+        # sets how densely samples fall inside each window.
         "stability_durations_s": {
             "dwell": settings.dwell_seconds,
             "passive_confirmation": settings.passive_confirmation_seconds,
             "reacquire_within": settings.reacquire_within_seconds,
             "carried_emit_interval": settings.carried_emit_interval_seconds,
         },
-        # The thresholds actually in effect, not just the settings that
-        # produced them -- an evaluation run cites this, not the code.
+        # The thresholds actually in effect (seconds), not just the settings
+        # that produced them -- an evaluation run cites this, not the code.
         "stability_thresholds": dataclasses.asdict(pipeline.track_registry.config),
         "verifier_thresholds": dataclasses.asdict(verifier_config),
         # The verifier actually in effect, which is not always the one

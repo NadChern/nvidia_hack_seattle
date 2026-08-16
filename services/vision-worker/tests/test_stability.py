@@ -23,17 +23,39 @@ from vision_worker.domain.stability import StabilityConfig, TrackRegistry
 T0 = dt.datetime(2026, 7, 29, 17, 42, 11, 240000, tzinfo=dt.UTC)
 FRAME_INTERVAL = dt.timedelta(seconds=1 / 24)
 
-#: A config with short thresholds so a test does not need hundreds of frames
-#: to reach a conclusion. Real values are the module defaults, tuned for a
-#: 24fps stream; these are proportionally smaller, not differently shaped.
+_FI = FRAME_INTERVAL.total_seconds()
+
+#: The scenarios are still written in frames (the sample stream is per-frame),
+#: so name the frame counts each short threshold corresponds to on this 24fps
+#: test timeline. The machine itself compares seconds; these `*_seconds` values
+#: are placed half a frame inside the boundary so a run promotes/retires on
+#: exactly the same frame it did when the machine counted frames -- keeping the
+#: scenario assertions unchanged while proving the durations, not the counts.
+DWELL_FRAMES = 3
+PASSIVE_CONFIRMATION_FRAMES = 6
+REACQUIRE_WITHIN_FRAMES = 4
+CARRIED_EMIT_INTERVAL_FRAMES = 3
+
 FAST = StabilityConfig(
-    dwell_frames=3,
-    passive_confirmation_frames=6,
+    dwell_seconds=(DWELL_FRAMES - 1.5) * _FI,
+    passive_confirmation_seconds=(PASSIVE_CONFIRMATION_FRAMES - 1.5) * _FI,
     world_motion_threshold_m=0.05,
     image_residual_threshold=0.02,
-    reacquire_within_frames=4,
-    carried_emit_interval_frames=3,
+    reacquire_within_seconds=(REACQUIRE_WITHIN_FRAMES + 0.5) * _FI,
+    carried_emit_interval_seconds=(CARRIED_EMIT_INTERVAL_FRAMES - 0.5) * _FI,
 )
+
+
+def feed_absent(
+    registry: TrackRegistry, track_id: str, first_frame: int, count: int
+) -> list:
+    """Observe `count` absent frames, timed continuing the 24fps timeline from
+    `first_frame` -- an absent frame has no sample of its own, so the current
+    frame's time is what the reacquire window is measured against."""
+    return [
+        registry.observe(track_id, None, now=T0 + (first_frame + i) * FRAME_INTERVAL)
+        for i in range(count)
+    ]
 
 
 def still(track_id: str, frame_index: int, *, x: float = 0.5, y: float = 0.5) -> TrackSample:
@@ -103,7 +125,7 @@ def test_keys_picked_up_and_carried_out_never_answers_with_the_last_sighting() -
     for i in range(3):
         samples.append(carried("track-42", frame, x=0.2 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.35))
         frame += 1
     # Picked back up and carried out of frame, never settling again.
@@ -130,13 +152,13 @@ def test_keys_carried_to_another_room_and_set_down_reports_the_new_location() ->
     for i in range(3):
         samples.append(carried("track-42", frame, x=0.1 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.25))
         frame += 1
     for i in range(4):
         samples.append(carried("track-42", frame, x=0.25 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.45))
         frame += 1
 
@@ -155,7 +177,7 @@ def test_an_object_visible_but_never_touched_produces_no_placement() -> None:
     looks exactly like an object that has always been there. Only "observed"
     may fire."""
     registry = TrackRegistry(FAST)
-    samples = [still("track-42", i, x=0.5) for i in range(FAST.passive_confirmation_frames - 1)]
+    samples = [still("track-42", i, x=0.5) for i in range(PASSIVE_CONFIRMATION_FRAMES - 1)]
 
     seen = actions(registry, "track-42", samples)
 
@@ -184,7 +206,7 @@ def test_a_sighting_while_moving_never_overwrites_a_confirmed_placement() -> Non
     for i in range(3):
         samples.append(carried("track-42", frame, x=0.2 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.35))
         frame += 1
 
@@ -209,16 +231,15 @@ def test_a_brief_occlusion_does_not_reset_a_confirmed_placement() -> None:
     for i in range(3):
         samples.append(carried("track-42", frame, x=0.2 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.35))
         frame += 1
 
     before_gap = actions(registry, "track-42", samples)
     assert before_gap == ["observed", "placed"]
 
-    # Occluded for fewer frames than reacquire_within_frames.
-    for _ in range(FAST.reacquire_within_frames - 1):
-        registry.observe("track-42", None)
+    # Occluded for fewer frames than the reacquire window.
+    feed_absent(registry, "track-42", frame, REACQUIRE_WITHIN_FRAMES - 1)
 
     reappearance = registry.observe("track-42", still("track-42", frame + 10, x=0.35))
     assert reappearance.action is None
@@ -235,7 +256,7 @@ def test_a_reconnect_reuses_the_track_id_but_the_epoch_reset_prevents_a_merge() 
     for i in range(3):
         samples.append(carried("track-1", frame, x=0.2 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-1", frame, x=0.35))
         frame += 1
 
@@ -257,8 +278,7 @@ def test_an_occlusion_longer_than_the_grace_period_is_treated_as_a_new_sighting(
     registry = TrackRegistry(FAST)
     registry.observe("track-42", still("track-42", 0, x=0.5))
 
-    for _ in range(FAST.reacquire_within_frames + 1):
-        registry.observe("track-42", None)
+    feed_absent(registry, "track-42", 1, REACQUIRE_WITHIN_FRAMES + 1)
 
     reappearance = registry.observe("track-42", still("track-42", 100, x=0.5))
     assert reappearance.action == "observed"
@@ -275,12 +295,12 @@ def test_carried_is_re_emitted_periodically_while_motion_continues() -> None:
     for i in range(3):
         samples.append(carried("track-42", frame, x=0.1 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         samples.append(still("track-42", frame, x=0.25))
         frame += 1
     # A long motion phase, long enough to cross the carried-ping interval
     # more than once.
-    for i in range(FAST.carried_emit_interval_frames * 2 + 2):
+    for i in range(CARRIED_EMIT_INTERVAL_FRAMES * 2 + 2):
         samples.append(carried("track-42", frame, x=0.25 + i * 0.05))
         frame += 1
 
@@ -311,7 +331,7 @@ def test_state_started_at_spans_the_whole_approach_not_just_the_final_stillness(
     approach_started_at_frame = 1
 
     result = None
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         result = registry.observe("track-42", still("track-42", frame, x=0.25))
         frame += 1
 
@@ -326,7 +346,7 @@ def test_picking_up_resets_state_started_at_to_the_pickup_frame() -> None:
     for i in range(3):
         registry.observe("track-42", carried("track-42", frame, x=0.1 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         registry.observe("track-42", still("track-42", frame, x=0.25))
         frame += 1
 
@@ -337,43 +357,74 @@ def test_picking_up_resets_state_started_at_to_the_pickup_frame() -> None:
     assert result.state.state_started_at == T0 + pickup_frame * FRAME_INTERVAL
 
 
-# --- Thresholds are durations, not frame counts ----------------------------
+# --- Thresholds are durations, independent of frame rate --------------------
 
 
-def test_from_durations_converts_at_the_configured_rate() -> None:
-    """The frame counts the state machine counts are meaningless without the
-    rate they were derived from -- the relay's, which is the gateway's
-    sampled rate and not the glasses' capture rate."""
-    at_24 = StabilityConfig.from_durations(source_fps=24.0)
-    assert at_24.dwell_frames == 12
-    assert at_24.passive_confirmation_frames == 90
-    assert at_24.reacquire_within_frames == 45
-    assert at_24.carried_emit_interval_frames == 60
-
-    # A deliberately slow source. The same durations, an entirely different
-    # set of frame counts -- which is the whole point of not hard-coding them.
-    at_2 = StabilityConfig.from_durations(source_fps=2.0)
-    assert at_2.dwell_frames == 1
-    assert at_2.passive_confirmation_frames == 8
-    assert at_2.reacquire_within_frames == 4
-    assert at_2.carried_emit_interval_frames == 5
-
-
-def test_from_durations_never_rounds_a_threshold_down_to_zero() -> None:
-    """A zero-frame threshold would confirm a placement from no evidence at
-    all. Callers that care about the rounding compare and warn -- see
-    `main.build_stability_config` -- but the floor is enforced here."""
-    config = StabilityConfig.from_durations(source_fps=0.5, dwell_seconds=0.1)
-
-    assert config.dwell_frames == 1
-
-
-def test_from_durations_passes_the_motion_thresholds_through_unscaled() -> None:
-    """Metres and normalized image displacement are per-frame quantities in
-    space, not in time -- a frame rate must not touch them."""
-    config = StabilityConfig.from_durations(
-        source_fps=24.0, world_motion_threshold_m=0.11, image_residual_threshold=0.07
+def _still_at(track_id: str, at: dt.datetime, *, x: float = 0.5) -> TrackSample:
+    """An unmoving sample at an arbitrary wall-clock time -- so a scenario can
+    be replayed at any frame interval, not just the 24fps `still` helper's."""
+    detection = Detection(
+        label="keys",
+        confidence=0.9,
+        box=BoundingBox(x_min=x - 0.02, y_min=0.48, x_max=x + 0.02, y_max=0.52),
+        centroid=Point2D(x=x, y=0.5),
     )
+    return TrackSample(
+        track_id=track_id,
+        frame_index=0,
+        captured_at=at,
+        detection=detection,
+        background_motion=Point2D(x=0.0, y=0.0),
+    )
+
+
+def _placed_after_holding_still(fps: float, still_seconds: float) -> bool:
+    """Feed a first-sighting-then-hold-still run at `fps`, holding for
+    `still_seconds` of wall clock, and report whether it ever promoted to
+    `placed`. The passive-confirmation duration is what should gate this, not
+    the number of frames -- which is the whole point of the exercise."""
+    config = StabilityConfig(
+        dwell_seconds=0.1,
+        passive_confirmation_seconds=0.5,
+        reacquire_within_seconds=5.0,
+        carried_emit_interval_seconds=5.0,
+    )
+    registry = TrackRegistry(config)
+    interval = dt.timedelta(seconds=1.0 / fps)
+    at = T0
+    placed = False
+    while at <= T0 + dt.timedelta(seconds=still_seconds):
+        sample = _still_at("t", at)
+        result = registry.observe("t", sample, now=sample.captured_at)
+        if result.action == "placed":
+            placed = True
+        at += interval
+    return placed
+
+
+def test_a_placement_gate_is_the_same_duration_at_any_frame_rate() -> None:
+    """The reason this machine measures seconds, not frames: a placement that
+    needs 0.5s of stillness needs half a second whether the relay delivers
+    24fps or the ~1fps a degraded glasses link actually sends. Only the number
+    of samples inside the window changes; the duration does not.
+
+    Held too briefly (0.3s < 0.5s), neither rate promotes. Held well past the
+    threshold (2s), both do -- the slow rate reaching the same verdict on a
+    tiny fraction of the samples. The old frame-counting machine failed this:
+    the same count meant 0.3s at one rate and 2s+ at another.
+    """
+    assert not _placed_after_holding_still(24.0, 0.3)
+    assert not _placed_after_holding_still(1.2, 0.3)
+
+    assert _placed_after_holding_still(24.0, 2.0)
+    assert _placed_after_holding_still(1.2, 2.0)
+
+
+def test_motion_thresholds_are_spatial_not_temporal() -> None:
+    """Metres and normalized image displacement are quantities in space, not
+    time -- unlike the dwell/confirmation durations, no frame rate touches
+    them."""
+    config = StabilityConfig(world_motion_threshold_m=0.11, image_residual_threshold=0.07)
 
     assert config.world_motion_threshold_m == 0.11
     assert config.image_residual_threshold == 0.07
@@ -390,12 +441,11 @@ def test_a_track_absent_past_the_reacquire_window_is_dropped_not_just_reset() ->
     registry.observe("track-42", still("track-42", 0))
     assert registry.active_track_ids == {"track-42"}
 
-    for _ in range(FAST.reacquire_within_frames):
-        result = registry.observe("track-42", None)
+    for result in feed_absent(registry, "track-42", 1, REACQUIRE_WITHIN_FRAMES):
         assert not result.retired
         assert registry.active_track_ids == {"track-42"}
 
-    result = registry.observe("track-42", None)
+    result = feed_absent(registry, "track-42", REACQUIRE_WITHIN_FRAMES + 1, 1)[0]
 
     assert result.retired
     assert registry.active_track_ids == frozenset()
@@ -407,8 +457,7 @@ def test_a_retired_track_id_seen_again_starts_from_a_clean_slate() -> None:
     it before the gap might not be the same physical object."""
     registry = TrackRegistry(FAST)
     registry.observe("track-42", still("track-42", 0))
-    for _ in range(FAST.reacquire_within_frames + 1):
-        registry.observe("track-42", None)
+    feed_absent(registry, "track-42", 1, REACQUIRE_WITHIN_FRAMES + 1)
 
     result = registry.observe("track-42", still("track-42", 50))
 
@@ -430,16 +479,16 @@ def test_a_resting_object_that_disappears_asks_rather_than_assuming() -> None:
     for i in range(3):
         registry.observe("track-42", carried("track-42", frame, x=0.1 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         result = registry.observe("track-42", still("track-42", frame, x=0.25))
         frame += 1
     assert result.action == "placed" and result.state.motion_state == "at_rest"
 
-    emitted = []
-    for _ in range(FAST.reacquire_within_frames + 1):
-        step = registry.observe("track-42", None)
-        if step.action is not None:
-            emitted.append(step.action)
+    emitted = [
+        step.action
+        for step in feed_absent(registry, "track-42", frame, REACQUIRE_WITHIN_FRAMES + 1)
+        if step.action is not None
+    ]
 
     assert emitted == ["vanished"]
     assert registry.active_track_ids == frozenset()
@@ -457,8 +506,8 @@ def test_an_object_that_was_moving_when_it_left_asks_nothing() -> None:
 
     emitted = [
         step.action
-        for _ in range(FAST.reacquire_within_frames + 1)
-        if (step := registry.observe("track-42", None)).action is not None
+        for step in feed_absent(registry, "track-42", frame, REACQUIRE_WITHIN_FRAMES + 1)
+        if step.action is not None
     ]
 
     assert emitted == []
@@ -472,14 +521,14 @@ def test_a_brief_occlusion_does_not_ask() -> None:
     for i in range(3):
         registry.observe("track-42", carried("track-42", frame, x=0.1 + i * 0.05))
         frame += 1
-    for _ in range(FAST.dwell_frames + 1):
+    for _ in range(DWELL_FRAMES + 1):
         registry.observe("track-42", still("track-42", frame, x=0.25))
         frame += 1
 
     emitted = [
         step.action
-        for _ in range(FAST.reacquire_within_frames)
-        if (step := registry.observe("track-42", None)).action is not None
+        for step in feed_absent(registry, "track-42", frame, REACQUIRE_WITHIN_FRAMES)
+        if step.action is not None
     ]
 
     assert emitted == []

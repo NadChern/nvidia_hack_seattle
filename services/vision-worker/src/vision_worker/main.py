@@ -232,20 +232,17 @@ async def build_identity_resolver(
 
 
 def build_stability_config(settings: Settings) -> StabilityConfig:
-    """Convert the configured durations into frame counts at `source_fps`.
+    """Build the stability thresholds directly from the configured durations.
 
-    The conversion itself is pure and lives in `domain/stability.py`. What
-    happens here is the part that needs a logger: reporting both halves, and
-    warning when a duration was too short to survive the rounding.
-
-    A `dwell_frames` of 1 means a single stable frame confirms a placement --
-    which is not a dwell at all, and any source rate at or below 1/`dwell_
-    seconds` produces exactly that. It is a legitimate configuration to run
-    with (the passive path still guards the genuinely ambiguous case), but it
-    is never one to arrive at by accident, so it says so.
+    The machine now compares wall-clock seconds against the samples' own
+    `captured_at` timestamps, so there is no frame-rate conversion to do and no
+    rounding to warn about -- a 3.75s passive confirmation means 3.75 seconds
+    whether the relay is delivering 1fps or 24. The observed rate still matters
+    for how *many* samples fall inside each window (few, at ~1fps), but that is
+    a sampling-density fact reported by the frame-rate monitor, not a threshold
+    that silently rescales.
     """
-    config = StabilityConfig.from_durations(
-        source_fps=settings.source_fps,
+    config = StabilityConfig(
         dwell_seconds=settings.dwell_seconds,
         passive_confirmation_seconds=settings.passive_confirmation_seconds,
         reacquire_within_seconds=settings.reacquire_within_seconds,
@@ -256,20 +253,12 @@ def build_stability_config(settings: Settings) -> StabilityConfig:
     logger.info(
         "stability thresholds resolved",
         extra={
-            "source_fps": settings.source_fps,
-            "dwell_frames": config.dwell_frames,
-            "passive_confirmation_frames": config.passive_confirmation_frames,
-            "reacquire_within_frames": config.reacquire_within_frames,
-            "carried_emit_interval_frames": config.carried_emit_interval_frames,
+            "dwell_seconds": config.dwell_seconds,
+            "passive_confirmation_seconds": config.passive_confirmation_seconds,
+            "reacquire_within_seconds": config.reacquire_within_seconds,
+            "carried_emit_interval_seconds": config.carried_emit_interval_seconds,
         },
     )
-    if config.dwell_frames < 2:
-        logger.warning(
-            "dwell_seconds rounds to a single frame at this source rate -- one "
-            "stable frame will confirm a placement; raise VMA_DWELL_SECONDS or "
-            "the gateway's VMA_SAMPLE_FPS",
-            extra={"source_fps": settings.source_fps, "dwell_seconds": settings.dwell_seconds},
-        )
     return config
 
 
@@ -327,10 +316,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     pipeline = Pipeline(
         detector=detector,
         detector_ref=detector_ref,
-        # Kept at least as large as the stability machine's own occlusion
-        # tolerance: if the tracker forgot an id first, identity would already
-        # be lost a layer below the machine that is willing to wait for it.
-        tracker=GreedyIoUTracker(max_age_frames=stability_config.reacquire_within_frames),
+        # The tracker is inherently frame-based (it matches per-frame
+        # detections), so its occlusion budget is still a frame count -- sized
+        # from the stability machine's reacquire *duration* at the configured
+        # rate. Kept at least as large as that tolerance: if the tracker forgot
+        # an id first, identity would already be lost a layer below the machine
+        # that is willing to wait for it. Since the machine now retires on
+        # elapsed time, an over-generous budget here is harmless -- the machine
+        # is the authority on when an absent track is really gone.
+        tracker=GreedyIoUTracker(
+            max_age_frames=max(1, round(settings.reacquire_within_seconds * settings.source_fps))
+        ),
         tracker_ref=tracker_ref,
         pose_source=ImageMotionPose(),
         track_registry=TrackRegistry(stability_config),

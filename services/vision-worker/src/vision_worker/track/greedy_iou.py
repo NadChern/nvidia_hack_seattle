@@ -60,12 +60,12 @@ class GreedyIoUTracker:
 
     `max_age_frames` is how long a track may go completely unmatched before
     its id is retired and a later reappearance mints a new one. Defaulted to
-    `vision_worker.domain.stability.StabilityConfig.reacquire_within_frames`'s
+    `vision_worker.domain.stability.StabilityConfig.reacquire_within_seconds`'s
     default (45): if this tracker forgot an id *before* the stability machine
     was willing to tolerate the gap, identity would already be lost at this
     layer and the physics state machine would never get a chance to apply its
     own occlusion tolerance. Keep this value at least as large as whatever
-    `reacquire_within_frames` is configured to.
+    `reacquire_within_seconds` is configured to.
     """
 
     def __init__(self, *, iou_threshold: float = 0.3, max_age_frames: int = 45) -> None:
