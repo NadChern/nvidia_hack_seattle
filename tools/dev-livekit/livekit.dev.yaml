@@ -23,5 +23,24 @@ rtc:
   # glasses publish but leaves the console viewer without video.
   force_tcp: false
 
+# A same-subnet host/srflx ICE candidate pair can still fail on a Wi-Fi
+# network that isolates clients from each other (common on venue/guest
+# networks): TCP signaling reaches the gateway fine, but the glasses and
+# any subscriber never complete a direct UDP path, so publisher_present
+# flaps and no frame ever arrives. TURN relays media through this server
+# instead of requiring a direct path, which routes around isolation.
+# Plain UDP (no domain/cert) is enough for LAN dev; a client only needs
+# TURNS/TLS to punch a corporate TCP-only egress, which does not apply here.
+turn:
+  enabled: true
+  udp_port: 3478
+  external_tls: false
+  # Default relay range is 30000-40000, a span Docker can't feasibly publish
+  # one-by-one on a dev machine. Pinned narrow so compose.dev.yaml can map it
+  # exactly; each relayed track/participant leg needs its own port from this
+  # pool, so keep it wide enough for one call's worth of legs, not just one.
+  relay_range_start: 30000
+  relay_range_end: 30200
+
 logging:
   level: info

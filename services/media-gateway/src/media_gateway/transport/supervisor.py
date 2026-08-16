@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from urllib.parse import urlparse
 
 from media_gateway.config import Settings
@@ -35,9 +36,16 @@ def livekit_endpoint(url: str) -> tuple[str, int]:
 class SessionSupervisor:
     """Joins a room per session and keeps the reachability probe fresh."""
 
-    def __init__(self, *, settings: Settings, sink: MediaSink) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        sink: MediaSink,
+        on_participant_left: Callable[[str, str], None] | None = None,
+    ) -> None:
         self._settings = settings
         self._sink = sink
+        self._on_participant_left = on_participant_left
         self._workers: dict[str, RoomWorker] = {}
         self._probe_task: asyncio.Task[None] | None = None
         self._reachable: bool | None = None
@@ -100,7 +108,12 @@ class SessionSupervisor:
         """Join the room for a session, replacing any existing worker."""
         await self.leave(session.session_id)
 
-        worker = RoomWorker(settings=self._settings, session=session, sink=self._sink)
+        worker = RoomWorker(
+            settings=self._settings,
+            session=session,
+            sink=self._sink,
+            on_participant_left=self._on_participant_left,
+        )
         await worker.start()
         self._workers[session.session_id] = worker
         return worker

@@ -178,6 +178,32 @@ export interface PairingCode {
   expires_at: string
 }
 
+/**
+ * Remote Assist: "she pressed the button" through accept and the resulting
+ * microphone-only room grant. `state` matches the gateway's `AssistState` and
+ * the HUD's `assist` device event one-for-one -- all three sides of docs/12's
+ * assist contract must agree on the same three words.
+ */
+export type AssistRequestState = "requested" | "accepted" | "ended"
+
+export interface AssistRequest {
+  request_id: string
+  session_id: string
+  device_id: string
+  state: AssistRequestState
+  requested_at: string
+  expires_at: string
+}
+
+export interface AssistRequestList {
+  requests: AssistRequest[]
+}
+
+export interface AssistAccepted {
+  state: "accepted"
+  helper_identity: string
+}
+
 export interface DeviceReplyEvent extends AgentAnswer {
   schema_version: "1.0"
   type: "reply"

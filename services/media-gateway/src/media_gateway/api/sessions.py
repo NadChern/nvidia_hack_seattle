@@ -15,14 +15,16 @@ from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, Field
 
 from media_gateway.deps import authorize_device_request, authorize_request
+from media_gateway.domain.assist import AssistRequestRegistry
 from media_gateway.domain.ids import new_session_id
 from media_gateway.domain.metrics import MetricsRegistry
 from media_gateway.domain.ratelimit import FixedWindowLimiter
 from media_gateway.domain.session import Session, SessionRegistry
-from media_gateway.errors import CapacityError, UnavailableError
+from media_gateway.errors import CapacityError, ConflictError, UnavailableError
 from media_gateway.transport.memory_sink import register_session
 from media_gateway.transport.tokens import (
     MintedToken,
+    helper_identity,
     mint_access_token,
     publisher_identity,
     viewer_identity,
@@ -58,13 +60,17 @@ class SessionSummary(BaseModel):
     created_at: dt.datetime
     last_seen_at: dt.datetime
     publisher_present: bool
+    #: True while a remote-assist call is accepted for this session -- the
+    #: Agent's hands-free listener must skip a session reporting this rather
+    #: than transcribing and possibly replying to the helper's voice.
+    assist_active: bool
 
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionSummary]
 
 
-def _summarize(session: Session) -> SessionSummary:
+def _summarize(session: Session, *, assist_active: bool) -> SessionSummary:
     return SessionSummary(
         session_id=session.session_id,
         device_id=session.device_id,
@@ -72,6 +78,7 @@ def _summarize(session: Session) -> SessionSummary:
         created_at=session.created_at,
         last_seen_at=session.last_seen_at,
         publisher_present=session.publisher_present,
+        assist_active=assist_active,
     )
 
 
@@ -237,12 +244,59 @@ def create_viewer_token(request: Request, session_id: str) -> SessionTokenRespon
     )
 
 
+@router.post("/{session_id}/helper", response_model=SessionTokenResponse)
+def create_helper_token(request: Request, session_id: str) -> SessionTokenResponse:
+    """Issue a microphone-publish, camera-forbidden grant for a remote helper.
+
+    Mirrors `create_viewer_token` exactly except for the role. Requires the
+    session's assist request to currently be `accepted` -- minting this
+    outside that window would hand out a room-join grant to anyone who could
+    authenticate as an operator, with no relationship to a call anyone
+    actually answered.
+    """
+    authorize_request(request)
+    settings = request.app.state.settings
+    sessions: SessionRegistry = request.app.state.sessions
+    sessions.sweep()
+    session = sessions.get(session_id)
+
+    assist: AssistRequestRegistry = request.app.state.assist_requests
+    if not assist.is_active(session_id):
+        raise ConflictError("no accepted assist request for this session", session_id=session_id)
+
+    minted = mint_access_token(
+        settings,
+        identity=helper_identity(session.session_id),
+        room=session.room,
+        role="helper",
+    )
+    request.app.state.metrics.tokens_issued += 1
+    logger.info(
+        "issued a helper token",
+        extra={
+            "session_id": session.session_id,
+            "device_id": session.device_id,
+            "identity": minted.identity,
+        },
+    )
+    return _token_response(
+        session=session,
+        minted=minted,
+        livekit_url=settings.client_livekit_url,
+    )
+
+
 @router.get("", response_model=SessionListResponse)
 def list_sessions(request: Request) -> SessionListResponse:
     authorize_request(request)
     sessions: SessionRegistry = request.app.state.sessions
     sessions.sweep()
-    return SessionListResponse(sessions=[_summarize(s) for s in sessions.active()])
+    assist: AssistRequestRegistry = request.app.state.assist_requests
+    return SessionListResponse(
+        sessions=[
+            _summarize(s, assist_active=assist.is_active(s.session_id)) for s in sessions.active()
+        ]
+    )
 
 
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -262,6 +316,7 @@ async def delete_session(request: Request, session_id: str) -> Response:
     )
     request.app.state.device_events.close_session(session.session_id, "session_ended")
     request.app.state.manual_triggers.clear(session.session_id)
+    request.app.state.assist_requests.clear(session.session_id)
     logger.info("session deleted", extra={"session_id": session.session_id})
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

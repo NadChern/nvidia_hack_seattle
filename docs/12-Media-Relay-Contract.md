@@ -175,9 +175,42 @@ still requires the same bounded where-question shape; it only bypasses the wake 
 This gives the X3 touchpad/UI a deterministic room-noise fallback without granting the
 device access to the Agent or allowing arbitrary text injection.
 
-## Versioning
+## Remote assist
 
-Additive optional fields are a minor bump and must not break pinned consumers. Removing a field, renaming one, changing a type, or changing the meaning of an enum value is a major bump and requires updating the provider, every consumer, and the shared fixtures together.
+A third grant role, `helper`, joins an existing room to see and be heard by the wearer — a
+grandson talking his grandmother through something over her glasses' camera, with no
+Kotlin involved on the demo path. It is not the media plane's viewer grant with a fig
+leaf: `helper` may publish, but the grant restricts it to `can_publish_sources:
+["microphone"]`, confirmed against the installed `livekit-server-sdk` by minting a token
+and decoding it. A helper can never publish a camera or the data channel; the room's
+video-publisher-of-one invariant that this document's Boundary section depends on is
+therefore unaffected by a helper joining.
+
+```text
+POST /v1/assist/{session_id}/request   device credential (like manual-trigger), or operator token
+GET  /v1/assist/requests               operator token
+WS   /v1/assist/events                 operator token; fans out assist_requested/accepted/ended
+POST /v1/assist/{session_id}/accept    consume-once, like the manual trigger
+POST /v1/sessions/{session_id}/helper  same response shape as /viewer; requires an accepted request
+```
+
+`state` is `requested | accepted | ended` everywhere it appears, including the `assist`
+event relayed on the existing `WS /v1/device/{session_id}/events` channel below — the
+request registry and the HUD event must agree on the same three words.
+
+The gateway's ingest path only admits tracks whose participant identity matches the
+session's own publisher (`device_id`). A helper's microphone is real media in the room but
+never reaches Vision, Speech, or the Agent through this relay; it is out-of-band to
+everything this document otherwise describes. The Agent additionally stops its hands-free
+listener for a session while its assist call is `accepted` (`assist_active` on `GET
+/v1/sessions`), so a live helper is never transcribed or replied to.
+
+**Open, not settled here:** whether `WS /v1/assist/events`'s "operator token" should
+instead be a device-scoped credential from the pairing flow, and whether the event stream
+should be scoped to a specific paired helper rather than global across every ringing
+session. See `role-prompts/Jacky-Remote-Assist.md`.
+
+## Device HUD events
 
 ## Related
 

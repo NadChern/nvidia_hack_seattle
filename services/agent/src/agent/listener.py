@@ -41,6 +41,10 @@ class SessionSummary(BaseModel):
 
     session_id: str
     publisher_present: bool
+    #: True while a remote-assist call is accepted for this session. Absent
+    #: from an older gateway reads as `False` (`extra="ignore"` covers the
+    #: reverse: a newer gateway field this Agent doesn't know yet).
+    assist_active: bool = False
 
 
 class SessionList(BaseModel):
@@ -212,7 +216,15 @@ class HandsFreeListener:
         response = await client.get("/v1/sessions")
         response.raise_for_status()
         listing = SessionList.model_validate(response.json())
-        return {item.session_id for item in listing.sessions if item.publisher_present}
+        # Excluding an assist-active session here is what stops listening:
+        # `run()`'s reconciliation loop cancels its STT task on the next poll
+        # because the session drops out of this set, and restarts one with no
+        # special-casing once the call ends and the session reappears in it.
+        return {
+            item.session_id
+            for item in listing.sessions
+            if item.publisher_present and not item.assist_active
+        }
 
     def _stt_url(self, session_id: str) -> str:
         base = self._settings.speech_base_url

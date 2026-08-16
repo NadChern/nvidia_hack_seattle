@@ -31,4 +31,6 @@ services:
       - "${VMA_BIND_ADDR:-127.0.0.1}:7880:7880"
       - "${VMA_BIND_ADDR:-127.0.0.1}:7881:7881"
       - "${VMA_BIND_ADDR:-127.0.0.1}:7882:7882/udp"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:3478:3478/udp"
+      - "${VMA_BIND_ADDR:-127.0.0.1}:30000-30200:30000-30200/udp"
     restart: unless-stopped
