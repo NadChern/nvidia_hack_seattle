@@ -388,7 +388,7 @@ python3 .agents/skills/visual-memory-repo-standards/scripts/validate_repo.py
 [NVIDIA Build models](https://build.nvidia.com/models?utm_source=luma) ·
 [VSS Spark Playbook](https://build.nvidia.com/spark/vss?utm_source=luma)
 
-## Participants
+## Our team
 
 - [Erin Shih](https://github.com/erinshih413)
 - [Jacky Huang](https://github.com/jack980180)
