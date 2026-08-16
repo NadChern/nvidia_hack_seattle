@@ -119,6 +119,27 @@ let previewElement: HTMLVideoElement | null = null
 let assistantElement: HTMLAudioElement | null = null
 let viewerVideoTrack: RemoteTrack | null = null
 
+/** Freeze the exact high-quality POV currently attached to VideoStage. */
+export async function capturePreviewJpeg(): Promise<Blob> {
+  const video = previewElement
+  if (!video || video.videoWidth < 1 || video.videoHeight < 1) {
+    throw new Error("The glasses video is not ready yet.")
+  }
+  const canvas = document.createElement("canvas")
+  canvas.width = video.videoWidth
+  canvas.height = video.videoHeight
+  const context = canvas.getContext("2d")
+  if (!context) throw new Error("This browser cannot capture the video frame.")
+  context.drawImage(video, 0, 0, canvas.width, canvas.height)
+  return await new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Could not encode the video frame."))),
+      "image/jpeg",
+      0.94,
+    )
+  })
+}
+
 export const useGlasses = create<GlassesStore>((set, get) => {
   const append = (message: string) =>
     set((s) => ({

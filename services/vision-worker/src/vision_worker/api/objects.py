@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 from typing import Any
 
 from fastapi import APIRouter, Request, status
@@ -29,6 +31,10 @@ class CreateObjectRequest(BaseModel):
 
 class CaptureRequest(BaseModel):
     capture_seconds: float | None = Field(default=None, gt=0)
+
+
+class ManualEnrollmentRequest(BaseModel):
+    views_base64: list[str] = Field(min_length=2, max_length=8)
 
 
 def _memory(request: Request) -> MemoryClient:
@@ -124,6 +130,39 @@ async def capture(
         raise ConflictError(str(exc), object_id=object_id) from exc
     except ValueError as exc:
         raise InvalidRequestError(str(exc), object_id=object_id) from exc
+    return progress.payload()
+
+
+@router.post("/{object_id}/manual")
+async def manual_enrollment(
+    object_id: str,
+    body: ManualEnrollmentRequest,
+    request: Request,
+) -> dict[str, object]:
+    """Persist operator-drawn crops only after explicit Console confirmation."""
+    authorize_request(request)
+    manager = _manager(request)
+    try:
+        enrolled = await asyncio.to_thread(_memory(request).get_object, object_id)
+    except MemoryError_ as exc:
+        raise _translate_memory_error(exc) from exc
+    label = _validate_label(request, enrolled.label)
+    crops: list[bytes] = []
+    for encoded in body.views_base64:
+        if len(encoded) > 3 * 1024 * 1024:
+            raise InvalidRequestError("manual reference image is too large")
+        try:
+            crops.append(base64.b64decode(encoded, validate=True))
+        except (binascii.Error, ValueError) as exc:
+            raise InvalidRequestError("manual reference image is not valid base64") from exc
+    try:
+        progress = await manager.submit_manual(
+            object_id=object_id,
+            label=label,
+            crops=crops,
+        )
+    except RuntimeError as exc:
+        raise ConflictError(str(exc), object_id=object_id) from exc
     return progress.payload()
 
 

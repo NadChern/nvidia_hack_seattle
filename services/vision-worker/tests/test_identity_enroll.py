@@ -196,6 +196,52 @@ async def test_rejected_physical_references_never_reach_the_gallery() -> None:
     assert gallery.refreshes == 0
 
 
+async def test_operator_crops_bypass_cosmos_and_store_only_after_submission() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=NoTemporalTargetLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+    )
+    crops = tuple(
+        frame(index, color).payload
+        for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
+    )
+
+    result = await enroller.enroll_manual(object_id="object_keys", crops=crops)
+
+    assert result.frames_total == 3
+    assert result.quality_passed >= 2
+    assert result.selected_views >= 2
+    assert len(memory.uploads) == result.selected_views
+    assert memory.deleted == []
+    assert gallery.refreshes == 1
+
+
+async def test_invalid_operator_crops_fail_without_a_gallery() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+    )
+
+    with pytest.raises(EnrollmentError, match="operator crops") as caught:
+        await enroller.enroll_manual(object_id="object_keys", crops=(b"bad", b"also-bad"))
+
+    assert caught.value.reason_code == "too_few_manual_quality_views"
+    assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
+
+
 async def test_capture_without_a_temporally_visible_target_fails_early() -> None:
     gallery = StubGallery()
     memory = RecordingMemory()

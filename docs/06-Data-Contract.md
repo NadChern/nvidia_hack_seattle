@@ -423,6 +423,14 @@ and farthest-point sampled to at most six suggestions. Fewer than two valid qual
 is an explicit failed registration, removes the empty object, and stores no weak gallery. No
 recording endpoint or video process is added to the Media Gateway.
 
+The Admin Console uses a separate operator-guided registration contract. The browser freezes the
+POV it already displays and keeps the full frame and pending crops local while the operator draws,
+previews, adds, or removes views. On explicit confirmation it creates the object and sends two to
+eight JPEG crops as `views_base64` to `POST /v1/objects/{object_id}/manual`. Vision checks image
+quality, embeds and diversity-ranks the crops with C-RADIO, and persists at least two or rolls back
+the new object. Cosmos neither chooses nor vetoes manual crops, and no pending crop is an active
+identity reference before confirmation.
+
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through
 `ReplyTransport`, create/arm/poll, then one fixed success or honest-failure line. Registration

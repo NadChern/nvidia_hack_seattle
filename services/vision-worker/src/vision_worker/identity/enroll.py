@@ -6,15 +6,18 @@ import asyncio
 import base64
 import datetime as dt
 import hashlib
+import io
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+from PIL import Image, ImageOps
 from visual_memory_media_contract.images import decode_video_payload
 from visual_memory_memory_contract.client import MemoryClient, MemoryError_
 from visual_memory_memory_contract.protocol import ObjectViewQuality, ObjectViewUpload
+from visual_memory_vision_contract.protocol import BoundingBox
 
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
 from vision_worker.identity.base import MaskedCrop, ObjectEmbedder
@@ -38,6 +41,8 @@ EnrollmentState = Literal["capturing", "extracting", "succeeded", "failed"]
 #: above the quality filter's floor -- the object being deliberately held up
 #: and rotated is, by construction, a confident presence.
 _ENROLL_CONFIDENCE = 0.9
+_MANUAL_BOX = BoundingBox(x_min=0.01, y_min=0.01, x_max=0.99, y_max=0.99)
+_MAX_MANUAL_CROP_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,10 +316,84 @@ class ObjectEnroller:
                 result=preliminary,
             )
 
-        embeddings = await self._embedder.embed([crop for crop, _ in passed])
+        return await self._persist_candidates(
+            object_id=object_id,
+            frames_total=frames_total,
+            detections=detections,
+            candidates=passed,
+        )
+
+    async def enroll_manual(
+        self,
+        *,
+        object_id: str,
+        crops: Sequence[bytes],
+    ) -> EnrollmentResult:
+        """Persist only operator-drawn crops submitted by explicit Confirm."""
+        if not self._config.min_views <= len(crops) <= 8:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "invalid_manual_view_count",
+                f"select between {self._config.min_views} and 8 views",
+                result=EnrollmentResult(len(crops), 0, 0, 0),
+            )
+
+        candidates: list[tuple[MaskedCrop, QualityScore]] = []
+        for payload in crops:
+            try:
+                rgb = _decode_manual_crop(payload)
+            except ValueError:
+                continue
+            mask = np.ones(rgb.shape[:2], dtype=np.bool_)
+            quality = score_quality(
+                rgb,
+                mask,
+                _MANUAL_BOX,
+                1.0,
+                angular_velocity=None,
+                config=self._config.quality,
+            )
+            try:
+                crop = prepare_masked_crop(rgb, mask, _MANUAL_BOX)
+            except ValueError:
+                continue
+            candidates.append((crop, quality))
+
+        relative_scores = apply_relative_sharpness(
+            [quality for _crop, quality in candidates], config=self._config.quality
+        )
+        passed = [
+            (crop, quality)
+            for (crop, _quality), quality in zip(candidates, relative_scores, strict=True)
+            if quality.accepted
+        ]
+        if len(passed) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_manual_quality_views",
+                f"only {len(passed)} operator crops passed image quality; "
+                f"need {self._config.min_views}",
+                result=EnrollmentResult(len(crops), len(candidates), len(passed), 0),
+            )
+        return await self._persist_candidates(
+            object_id=object_id,
+            frames_total=len(crops),
+            detections=len(candidates),
+            candidates=passed,
+        )
+
+    async def _persist_candidates(
+        self,
+        *,
+        object_id: str,
+        frames_total: int,
+        detections: int,
+        candidates: Sequence[tuple[MaskedCrop, QualityScore]],
+    ) -> EnrollmentResult:
+        embeddings = await self._embedder.embed([crop for crop, _ in candidates])
         embedded = tuple(
             EmbeddedCandidate(crop=crop, embedding=embedding, quality=quality)
-            for (crop, quality), embedding in zip(passed, embeddings, strict=True)
+            for (crop, quality), embedding in zip(candidates, embeddings, strict=True)
         )
         selected_views = select_diverse(
             embedded,
@@ -325,7 +404,7 @@ class ObjectEnroller:
         result = EnrollmentResult(
             frames_total=frames_total,
             detections=detections,
-            quality_passed=len(passed),
+            quality_passed=len(candidates),
             selected_views=len(selected_views),
         )
         if len(selected_views) < self._config.min_views:
@@ -364,8 +443,6 @@ class ObjectEnroller:
                 )
                 await asyncio.to_thread(self._memory.put_object_view, object_id, upload)
         except MemoryError_:
-            # A half-gallery fails silently forever. Remove the fresh object so
-            # the caller gets an honest retry rather than apparent success.
             try:
                 await asyncio.to_thread(self._memory.delete_object, object_id)
             except MemoryError_:
@@ -435,6 +512,42 @@ class EnrollmentManager:
         )
         return progress
 
+    async def submit_manual(
+        self,
+        *,
+        object_id: str,
+        label: str,
+        crops: Sequence[bytes],
+    ) -> EnrollmentProgress:
+        existing = self._tasks.get(object_id)
+        if existing is not None and not existing.done():
+            raise RuntimeError("registration capture is already active for this object")
+        now = dt.datetime.now(dt.UTC)
+        progress = EnrollmentProgress(
+            object_id=object_id,
+            label=label,
+            state="extracting",
+            started_at=now,
+            capture_ends_at=now,
+        )
+        self._progress[object_id] = progress
+        self.attempts += 1
+        try:
+            result = await self._enroller.enroll_manual(object_id=object_id, crops=crops)
+        except EnrollmentError as exc:
+            progress.state = "failed"
+            progress.reason_code = exc.reason_code
+            progress.message = str(exc)
+            _apply_result(progress, exc.result)
+            self.failed += 1
+        else:
+            progress.state = "succeeded"
+            progress.reason_code = "manual_enrollment_complete"
+            progress.message = "operator-confirmed reference gallery stored"
+            _apply_result(progress, result)
+            self.succeeded += 1
+        return progress
+
     def status(self, object_id: str) -> EnrollmentProgress | None:
         return self._progress.get(object_id)
 
@@ -488,6 +601,22 @@ class EnrollmentManager:
             progress.message = "reference suggestions ready for review"
             _apply_result(progress, result)
             self.succeeded += 1
+
+
+def _decode_manual_crop(payload: bytes) -> np.ndarray:
+    if not payload or len(payload) > _MAX_MANUAL_CROP_BYTES:
+        raise ValueError("manual crop has an invalid encoded size")
+    try:
+        with Image.open(io.BytesIO(payload)) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+            if image.width < 64 or image.height < 64:
+                raise ValueError("manual crop is too small")
+            if image.width > 4096 or image.height > 4096:
+                raise ValueError("manual crop dimensions are too large")
+            image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+            return np.asarray(image, dtype=np.uint8).copy()
+    except (Image.DecompressionBombError, OSError, ValueError) as exc:
+        raise ValueError("manual crop is not a usable image") from exc
 
 
 def _apply_result(progress: EnrollmentProgress, result: EnrollmentResult) -> None:

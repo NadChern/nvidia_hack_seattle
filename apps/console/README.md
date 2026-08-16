@@ -74,13 +74,14 @@ for the MiniCPM and OpenRouter free-model profiles.
 ## Enrollment review
 
 The Enroll tab uses Vision's configured registration allowlist as its picklist. With a published
-video session, **Start registration** creates a Memory object, arms Vision's bounded EvidenceRing
-capture, and polls capture/extraction progress. Cosmos localizes the selected object while the
-wearer rotates it; C-RADIO stores the strongest diverse reference crops. On success those crops
-are fetched through the authenticated Memory proxy and shown for review. Each suggestion is
-clickable and opens an enlarged, contained preview so the operator can inspect the complete crop
-before deciding. **Confirm** keeps the durable object; **Discard** deletes the object, vectors, and
-reference crops. Raw enrollment video is never sent to the console or persisted by this workflow.
+video session, **Freeze current POV** copies the displayed frame locally in the browser. The
+operator drags a tight crop around the physical object, stages two to six distinct angles, enlarges
+or removes any staged crop, and then chooses **Confirm and register**. No object or identity view is
+created before that explicit confirmation. Vision applies geometric image-quality checks and
+C-RADIO diversity ranking to the operator-selected crops, then writes only the surviving references
+to Memory. Cosmos does not choose or veto Console enrollment crops. Frozen full frames and pending
+crops remain browser-local; only confirmed crops cross the Vision API and become durable registry
+evidence.
 
 ## Cosmos pipeline receipts
 

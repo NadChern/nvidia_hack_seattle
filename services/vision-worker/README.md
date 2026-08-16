@@ -61,8 +61,14 @@ authority after a `written` result.
 
 ### Registration
 
-Registration creates a durable object in Memory and keeps the complete bounded capture at the
-Gateway's sampled relay rate (8 FPS by default, not the glasses' native camera rate). A coarse
+The Admin Console's default path is operator-guided: it freezes the browser's existing POV,
+lets the operator draw and review two to eight crops, and submits them only with explicit Confirm.
+Vision then applies geometric quality and C-RADIO diversity checks before persisting any view;
+Cosmos does not choose or veto those manual crops. This prevents an uncertain automatic box from
+ever becoming an active identity reference.
+
+The voice/API automatic path creates a durable object in Memory and keeps the complete bounded
+capture at the Gateway's sampled relay rate (8 FPS by default, not the glasses' native camera rate). A coarse
 Cosmos temporal search scans up to 16 evenly spaced frames in ordered four-frame batches and looks
 for the same deliberately presented object across time. Only original relay frames within 0.75
 seconds of those candidate moments enter the dynamically batched image-grounding pass, bounded at
@@ -89,8 +95,9 @@ hard-coded menu.
 | `GET /v1/status` | Reasoner cadence, registration allowlist, gallery state, queue health, and pipeline counters |
 | `GET /v1/events` | Recent Cosmos/identity outcomes for the Console demo feed |
 | `POST /v1/objects` · `GET /v1/objects` | Create/list personal objects through Memory's registry |
-| `POST /v1/objects/{id}/capture` | Start bounded registration capture |
-| `GET /v1/objects/{id}/status` | Poll capture, extraction, quality, and selected-view progress |
+| `POST /v1/objects/{id}/capture` | Start bounded automatic registration capture |
+| `POST /v1/objects/{id}/manual` | Validate and persist 2–8 explicitly confirmed operator crops |
+| `GET /v1/objects/{id}/status` | Poll automatic or manual quality and selected-view progress |
 
 There is no public video-upload or Memory-query API here. Ordinary frames arrive only through the
 Media Gateway relay; confirmed observations leave through `MemoryEmitter`.

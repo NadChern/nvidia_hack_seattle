@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import datetime as dt
 import json
 
@@ -25,6 +26,7 @@ class ActivePipeline:
 class RecordingManager:
     def __init__(self) -> None:
         self.progress: EnrollmentProgress | None = None
+        self.manual_crops: tuple[bytes, ...] = ()
 
     def arm(
         self, *, object_id: str, label: str, capture_seconds: float | None = None
@@ -36,6 +38,23 @@ class RecordingManager:
             state="capturing",
             started_at=now,
             capture_ends_at=now + dt.timedelta(seconds=capture_seconds or 6.0),
+        )
+        return self.progress
+
+    async def submit_manual(
+        self, *, object_id: str, label: str, crops: list[bytes]
+    ) -> EnrollmentProgress:
+        now = dt.datetime.now(dt.UTC)
+        self.manual_crops = tuple(crops)
+        self.progress = EnrollmentProgress(
+            object_id=object_id,
+            label=label,
+            state="succeeded",
+            started_at=now,
+            capture_ends_at=now,
+            frames_total=len(crops),
+            quality_passed=len(crops),
+            selected_views=len(crops),
         )
         return self.progress
 
@@ -114,6 +133,32 @@ async def test_create_capture_and_poll_registration() -> None:
     assert capture.json()["state"] == "capturing"
     assert progress.json()["object_id"] == "object_keys"
     assert manager.progress is not None
+
+
+async def test_manual_enrollment_decodes_operator_confirmed_crops() -> None:
+    app, manager, _ = app_for()
+    encoded = base64.b64encode(b"jpeg-bytes").decode()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/objects/object_keys/manual",
+            json={"views_base64": [encoded, encoded]},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["state"] == "succeeded"
+    assert manager.manual_crops == (b"jpeg-bytes", b"jpeg-bytes")
+
+
+async def test_manual_enrollment_rejects_invalid_base64() -> None:
+    app, _, _ = app_for()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/objects/object_keys/manual",
+            json={"views_base64": ["not base64!", "also invalid!@"]},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["code"] == "invalid_request"
 
 
 async def test_untrackable_label_is_rejected_before_promising_registration() -> None:
