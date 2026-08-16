@@ -65,11 +65,12 @@ Registration creates a durable object in Memory, captures a bounded frame window
 chosen label with a strict single-frame Cosmos prompt. Every geometrically usable crop gets an
 optional second localization; when it succeeds, the tighter box becomes the suggestion, but an
 abstention on the already-masked crop falls back to the valid first box instead of collapsing the
-registration to zero. A contrastive reference-quality check is enforced when it independently
-approves at least the minimum gallery and otherwise remains diagnostic for human review. C-RADIO
-removes near-duplicates and stores two to four suggestions for enlarged Console inspection. Fewer
-than two first-pass quality views fails explicitly and deletes the empty object. The live identity
-path applies the same optional two-stage crop transform before gallery matching.
+registration to zero. The keys prompt explicitly excludes computer keyboards and screen images,
+which otherwise dominate a desk scene when the requested label is ambiguous. A contrastive
+reference-quality check remains a hard gate: explicitly rejected crops never enter C-RADIO.
+C-RADIO removes near-duplicates and stores two to four valid suggestions for enlarged Console
+inspection. Fewer than two valid quality views fails explicitly and deletes the empty object. The
+live identity path applies the same optional two-stage crop transform before gallery matching.
 
 The registration allowlist is `VMA_DETECTION_LABELS`. `/v1/status` exposes it as
 `config.registration_labels` so the Console uses the same server-enforced list rather than a

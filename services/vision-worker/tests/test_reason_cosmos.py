@@ -14,6 +14,7 @@ import pytest
 
 from vision_worker.reason.cosmos import (
     CosmosReasoner,
+    _localize_prompt,
     _parse_action_tail,
     _parse_boxes,
 )
@@ -54,6 +55,14 @@ def test_boxes_are_clamped_and_reordered() -> None:
 
 def test_degenerate_boxes_are_dropped() -> None:
     assert _parse_boxes("<ref>keys</ref><box>[500, 500, 500, 500]</box>") == []
+
+
+def test_keys_localization_explicitly_excludes_computer_keyboards() -> None:
+    prompt = _localize_prompt("keys")
+
+    assert "Computer keyboard keys" in prompt
+    assert "metal key blade" in prompt
+    assert "image displayed on a monitor" in prompt
 
 
 def test_the_action_tail_is_read_even_after_grounding_tags() -> None:

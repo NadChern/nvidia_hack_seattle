@@ -410,14 +410,15 @@ window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `ex
 `succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
 window is decoded in the enrollment service and localized with a strict single-frame prompt. Each
 geometrically usable first crop gets an optional second localization; a valid tighter box refines
-the suggestion, while a second-pass abstention preserves the first crop rather than erasing it. A
-separate contrastive quality judgment is enforced only when it independently approves at least the
-minimum gallery; otherwise it remains diagnostic and enlarged human review is authoritative. The
-review candidates are filtered relative to their own sharpness median, embedded through the same
-optional two-stage mask-to-crop transform used for live matching, and farthest-point sampled. Fewer
-than two first-pass quality/diverse views is an explicit failed registration, removes the empty
-object, and stores no weak gallery. No recording endpoint or video process is added to the Media
-Gateway.
+the suggestion, while a second-pass abstention preserves the first crop rather than erasing it. Label-specific grounding
+disambiguates physical personal objects from common homonyms; notably, portable keys explicitly
+exclude computer keyboard keys and screen images. A separate contrastive quality judgment remains
+a hard safety gate, so any crop the model identifies as the wrong physical object cannot become a
+C-RADIO reference. Valid candidates are filtered relative to their own sharpness median, embedded
+through the same optional two-stage mask-to-crop transform used for live matching, and
+farthest-point sampled. Fewer than two valid quality/diverse views is an explicit failed
+registration, removes the empty object, and stores no weak gallery. No recording endpoint or video
+process is added to the Media Gateway.
 
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through

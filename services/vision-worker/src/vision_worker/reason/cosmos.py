@@ -53,7 +53,7 @@ PROMPT_VERSION = "cosmos-reason-v1"
 #: happened across time, while enrollment must abstain unless the crop contains
 #: the physical target itself. Keeping the versions separate avoids pretending
 #: an enrollment-only safety change moved event semantics.
-LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v2"
+LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v3"
 REFERENCE_PROMPT_VERSION = "cosmos-enrollment-reference-v1"
 
 #: The model's own action vocabulary. The first three are memory events; the
@@ -86,13 +86,26 @@ Use "placed" only if the object is set down and left at rest during these frames
 "nothing_happened" if it just sits there untouched -- that is a correct and expected \
 answer, not a failure. Report only objects you actually see. Do not invent anything."""
 
+_LOCALIZE_REQUIREMENTS = {
+    "keys": """KEYS means portable metal house, apartment, office, or vehicle keys, possibly \
+on a keyring. Computer keyboard keys, piano keys, keypad buttons, laptop parts, and images of keys \
+on a screen are NOT the target. A valid box must include a recognizable physical metal key blade; \
+a keyboard must produce NO_OBJECT.""",
+    "wallet": "WALLET means the physical wallet body, not a card, phone, or image on a screen.",
+    "glasses": "GLASSES means wearable eyeglasses or sunglasses, not glassware or a screen image.",
+    "mug": "MUG means the physical drinking vessel body, not a screen image or isolated handle.",
+}
+
 _LOCALIZE_PROMPT = """You are validating one reference image for personal-object \
 registration. The target label is: {label}.
 
+Target-specific meaning:
+{requirements}
+
 Find the physical target object itself. A valid box must tightly enclose pixels that make \
 the target visually recognizable. Do not substitute an attached cord, lanyard, strap, the \
-holder's hand, or the surrounding floor, wall, table, or other background. If a recognizable \
-{label} is not clearly visible, output exactly NO_OBJECT.
+holder's hand, an image displayed on a monitor, or the surrounding floor, wall, table, or other \
+background. If a recognizable {label} is not clearly visible, output exactly NO_OBJECT.
 
 If a recognizable {label} is clearly visible, output exactly one line and nothing else:
 <ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
@@ -116,6 +129,16 @@ exactly VALID or REJECT.
 {requirements}
 
 Blur, severe occlusion, or a tiny partial target is REJECT. When uncertain, REJECT."""
+
+
+def _localize_prompt(label: str) -> str:
+    normalized = label.strip().casefold()
+    requirements = _LOCALIZE_REQUIREMENTS.get(
+        normalized,
+        f"The target is the physical {label} itself, not text, a related object, "
+        "or an image displayed on a screen.",
+    )
+    return _LOCALIZE_PROMPT.format(label=label, requirements=requirements)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +263,7 @@ class CosmosReasoner:
 
     def _ask_localize_blocking(self, frame: bytes, label: str) -> str:
         content: list[dict[str, Any]] = [
-            {"type": "text", "text": _LOCALIZE_PROMPT.format(label=label)},
+            {"type": "text", "text": _localize_prompt(label)},
             {
                 "type": "image_url",
                 "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(frame).decode()}"},

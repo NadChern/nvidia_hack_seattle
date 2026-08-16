@@ -222,10 +222,12 @@ class ObjectEnroller:
             review_candidates.append((refined_crop, refined_quality))
             refined_count += 1
 
-        # Keep the contrastive judgment as diagnostic evidence and enforce it
-        # only when it independently approves enough views. Cosmos currently
-        # false-rejects visible keys on small masked crops; the human review is
-        # the final registration authority, not a brittle third model vote.
+        # The contrastive judgment is a hard safety gate. Optional refinement
+        # above prevents a second-pass abstention from erasing a usable first
+        # crop, but a crop explicitly rejected as the wrong physical object
+        # must never become a C-RADIO identity reference. In particular, the
+        # keys prompt can otherwise confuse the prominent laptop keyboard with
+        # the portable keys being enrolled.
         reference_results = await asyncio.gather(
             *(
                 self._localizer.validate_reference(encode_jpeg(crop.image), label)
@@ -237,9 +239,7 @@ class ObjectEnroller:
             for candidate, valid in zip(review_candidates, reference_results, strict=True)
             if valid
         ]
-        passed = (
-            model_approved if len(model_approved) >= self._config.min_views else review_candidates
-        )
+        passed = model_approved
         logger.info(
             "registration crop review completed",
             extra={
@@ -249,9 +249,17 @@ class ObjectEnroller:
                 "physical_quality": len(physically_usable),
                 "refined": refined_count,
                 "reference_valid": len(model_approved),
-                "review_fallback": len(model_approved) < self._config.min_views,
             },
         )
+        preliminary = EnrollmentResult(len(sampled), detections, len(passed), 0)
+        if len(passed) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_valid_references",
+                f"only {len(passed)} frames clearly showed the physical target; "
+                f"need {self._config.min_views}",
+                result=preliminary,
+            )
 
         embeddings = await self._embedder.embed([crop for crop, _ in passed])
         embedded = tuple(

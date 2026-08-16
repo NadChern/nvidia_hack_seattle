@@ -150,7 +150,7 @@ async def test_second_pass_abstention_falls_back_to_reviewable_first_crops() -> 
     assert gallery.refreshes == 1
 
 
-async def test_reference_false_negatives_do_not_zero_human_review() -> None:
+async def test_rejected_physical_references_never_reach_the_gallery() -> None:
     gallery = StubGallery()
     memory = RecordingMemory()
     enroller = ObjectEnroller(
@@ -166,13 +166,15 @@ async def test_reference_false_negatives_do_not_zero_human_review() -> None:
         for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
     )
 
-    result = await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+    with pytest.raises(EnrollmentError, match="physical target") as caught:
+        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
 
-    assert result.detections == 3
-    assert result.quality_passed == 3
-    assert result.selected_views >= 2
-    assert len(memory.uploads) == result.selected_views
-    assert memory.deleted == []
+    assert caught.value.reason_code == "too_few_valid_references"
+    assert caught.value.result.detections == 3
+    assert caught.value.result.quality_passed == 0
+    assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
+    assert gallery.refreshes == 0
 
 
 async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:
