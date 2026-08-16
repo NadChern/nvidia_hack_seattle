@@ -176,6 +176,9 @@ async def test_llm_timeout_is_independent_from_local_dependency_timeout(
 
     assert responses
     assert captured["timeout"] == 120
+    assert captured["max_tokens"] == settings.llm_max_output_tokens
+    assert captured["max_retries"] == 0
+    assert captured["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
     assert settings.request_timeout_s == 7
 
 

@@ -85,6 +85,14 @@ def test_loopback_endpoint_is_local(base_url: str) -> None:
     assert settings.endpoint_scope == "local"
 
 
+def test_voice_generation_is_bounded_without_timeout_retries() -> None:
+    settings = Settings()
+
+    assert settings.llm_max_output_tokens == 256
+    assert settings.llm_max_retries == 0
+    assert not settings.llm_local_enable_thinking
+
+
 def test_api_key_is_never_rendered() -> None:
     secret = "sk-this-must-never-be-rendered"
     settings = Settings(llm_api_key=SecretStr(secret))

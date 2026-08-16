@@ -25,8 +25,13 @@ unchanged.
 ## Truthfulness guard
 
 Nemotron reasoning parts marked as private thought are discarded before reply
-handling; only its final answer can reach the HUD or TTS. A model rewrite of a
-Memory result remains untrusted. Rules run in order:
+handling; only its final answer can reach the HUD or TTS. The local voice profile
+also disables chat-template thinking and bounds output to 256 tokens. This is a
+latency requirement, not merely presentation: an unconstrained reasoning turn
+was measured hitting the 30-second socket timeout, and the OpenAI client's two
+default retries made the glasses appear frozen for 91 seconds. Voice requests
+therefore use no timeout retries. A model rewrite of a Memory result remains
+untrusted. Rules run in order:
 
 1. A bounded, non-empty general-assistant answer may pass without a Memory result;
    empty or oversized output receives a fixed failure line.
@@ -77,6 +82,9 @@ All variables use the `VMA_` prefix.
 | `LLM_API_KEY` | unset |
 | `ALLOW_EXTERNAL_LLM` | `false` |
 | `LLM_TIMEOUT_S` | `30` |
+| `LLM_MAX_OUTPUT_TOKENS` | `256` |
+| `LLM_MAX_RETRIES` | `0` |
+| `LLM_LOCAL_ENABLE_THINKING` | `false` |
 | `REQUEST_TIMEOUT_S` | `30` |
 | `MAX_TURNS_KEPT` | `6` |
 

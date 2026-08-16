@@ -75,13 +75,22 @@ def create_agent(
             if settings.llm_api_key is not None
             else "local-no-key"
         )
-        model = LiteLlm(
-            model=settings.llm_model,
-            api_base=settings.llm_base_url,
-            api_key=api_key,
-            timeout=settings.llm_timeout_s,
-            temperature=0,
-        )
+        model_args: dict[str, Any] = {
+            "model": settings.llm_model,
+            "api_base": settings.llm_base_url,
+            "api_key": api_key,
+            "timeout": settings.llm_timeout_s,
+            "temperature": 0,
+            "max_tokens": settings.llm_max_output_tokens,
+            "max_retries": settings.llm_max_retries,
+        }
+        if settings.endpoint_scope == "local":
+            model_args["extra_body"] = {
+                "chat_template_kwargs": {
+                    "enable_thinking": settings.llm_local_enable_thinking,
+                }
+            }
+        model = LiteLlm(**model_args)
 
     return LlmAgent(
         name="visual_memory_agent",

@@ -102,6 +102,16 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
     allow_external_llm: bool = False
     llm_timeout_s: float = Field(default=30.0, gt=0.0, le=300.0)
+    # Voice turns must be bounded independently of model context capacity.
+    # Nemotron's private reasoning counts against this budget even though it is
+    # removed before HUD/TTS output.
+    llm_max_output_tokens: int = Field(default=256, ge=32, le=2_048)
+    # OpenAI clients otherwise retry a 30-second read timeout twice, making a
+    # single bad turn look like a 90-second frozen assistant.
+    llm_max_retries: int = Field(default=0, ge=0, le=2)
+    # Applied only to loopback OpenAI-compatible servers. vLLM's Nemotron chat
+    # template supports this flag and remains tool-capable without reasoning.
+    llm_local_enable_thinking: bool = False
 
     # Bounds local service HTTP and WebSocket setup. LLM inference has its own
     # timeout because a slow free route must not make Memory or audio look hung.
