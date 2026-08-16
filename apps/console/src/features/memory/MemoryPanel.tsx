@@ -1,9 +1,20 @@
 import { useState } from "react"
-import { Search } from "lucide-react"
+import { Search, Trash2 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { post } from "@/lib/api"
 import type { AnswerStatus, QueryAnswer } from "@/lib/contracts"
 
@@ -45,6 +56,23 @@ export function MemoryPanel() {
   const [answer, setAnswer] = useState<QueryAnswer | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [asking, setAsking] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+
+  const clearMemory = async () => {
+    setClearing(true)
+    try {
+      await post("memory", "/v1/maintenance/reset")
+      setAnswer(null)
+      setError(null)
+      setConfirmOpen(false)
+      toast.success("Memory cleared. Registry, galleries, and placements are empty.")
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : "Could not clear memory.")
+    } finally {
+      setClearing(false)
+    }
+  }
 
   const ask = async () => {
     setAsking(true)
@@ -63,8 +91,44 @@ export function MemoryPanel() {
 
   return (
     <Card className="flex h-full flex-col">
-      <CardHeader className="space-y-0">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
         <CardTitle className="text-base">Ask memory</CardTitle>
+        <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+          <DialogTrigger asChild>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="text-destructive hover:text-destructive"
+            >
+              <Trash2 /> Clear memory
+            </Button>
+          </DialogTrigger>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Clear all memory?</DialogTitle>
+              <DialogDescription>
+                Permanently deletes every registered object, reference gallery,
+                observation, and placement, and purges stored evidence. This cannot
+                be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline" size="sm">
+                  Cancel
+                </Button>
+              </DialogClose>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={clearing}
+                onClick={() => void clearMemory()}
+              >
+                {clearing ? "Clearing…" : "Clear memory"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </CardHeader>
 
       <CardContent className="flex flex-1 flex-col gap-3">

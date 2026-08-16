@@ -26,6 +26,7 @@ from application_memory.api import (
     evidence,
     health,
     lifecycle,
+    maintenance,
     objects,
     observations,
     query,
@@ -163,6 +164,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         objects,
         status,
         events,
+        maintenance,
     ):
         app.include_router(module.router)
 

@@ -110,6 +110,32 @@ def registry_version(db: DbSession) -> int:
     return state.version if state is not None else 0
 
 
+def reset_all(db: DbSession) -> int:
+    """Delete every persisted memory row and bump the registry version.
+
+    A maintenance/demo reset: clears observations, lifecycle signals, object
+    state, evidence rows, the tracker->object identity map, the enrolled
+    gallery and its views, sessions, and the audit log. Everything except the
+    `registry_state` counter, which is *bumped* (not reset) so the vision
+    gallery cache sees a newer -- now empty -- gallery on its next poll and
+    clears itself without a restart. Children before parents so a foreign key
+    never blocks the delete. Returns the new registry version.
+    """
+    for table in (
+        models.ObjectViewRow,
+        models.EnrolledObjectRow,
+        models.Observation,
+        models.LifecycleSignal,
+        models.ObjectStateRow,
+        models.EvidenceRow,
+        models.ObjectIdentity,
+        models.AuditRow,
+        models.Session,
+    ):
+        db.execute(delete(table))
+    return _next_registry_version(db)
+
+
 def create_enrolled_object(
     db: DbSession, *, label: str, idempotency_key: str
 ) -> tuple[protocol.EnrolledObject, bool]:
@@ -830,6 +856,7 @@ __all__ = [
     "record_lifecycle",
     "record_observation",
     "registry_version",
+    "reset_all",
     "resolve_identity",
     "sessions_older_than",
     "state_of",
