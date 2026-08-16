@@ -1,4 +1,4 @@
-"""Wake-prefix-gated hands-free transcript listener."""
+"""Hands-free transcript listener with return-audio and assist-call gates."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterable
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,10 +41,11 @@ class SessionSummary(BaseModel):
 
     session_id: str
     publisher_present: bool
-    #: True while a remote-assist call is accepted for this session. Absent
-    #: from an older gateway reads as `False` (`extra="ignore"` covers the
-    #: reverse: a newer gateway field this Agent doesn't know yet).
+    #: Backward-compatible accepted-call signal from an older Gateway.
     assist_active: bool = False
+    #: Pending and accepted requests both suppress model-bound audio. The
+    #: Gateway reports null after an ended or expired request.
+    assist_state: Literal["requested", "accepted", "ended"] | None = None
 
 
 class SessionList(BaseModel):
@@ -103,6 +104,17 @@ class HandsFreeListener:
         self._metrics = metrics or AgentMetrics()
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._suppress_until: dict[str, float] = {}
+        self._assist_suppressed: set[str] = set()
+
+    def _set_assist_suppressed(self, session_id: str, suppressed: bool) -> None:
+        if suppressed and session_id not in self._assist_suppressed:
+            self._assist_suppressed.add(session_id)
+            self._metrics.record_assist_gate_closed()
+            logger.info("remote-assist audio gate closed", extra={"session_id": session_id})
+        elif not suppressed and session_id in self._assist_suppressed:
+            self._assist_suppressed.remove(session_id)
+            self._metrics.record_assist_gate_opened()
+            logger.info("remote-assist audio gate opened", extra={"session_id": session_id})
 
     def _headers(self) -> dict[str, str]:
         token = self._settings.internal_api_token
@@ -158,7 +170,15 @@ class HandsFreeListener:
             )
 
     async def process(self, transcript: Transcript) -> bool:
-        """Forward every completed transcript to the model-owned intent router."""
+        """Forward a transcript only while its remote-assist gate is open."""
+        if transcript.session_id in self._assist_suppressed:
+            self._metrics.record_assist_transcript_suppressed()
+            logger.info(
+                "transcript ignored during remote-assist audio suppression",
+                extra={"session_id": transcript.session_id},
+            )
+            return False
+
         await self._send_transcript_event(transcript)
         if time.monotonic() < self._suppress_until.get(transcript.session_id, 0.0):
             self._metrics.record_hands_free_ignored()
@@ -177,11 +197,21 @@ class HandsFreeListener:
         try:
             started = time.perf_counter()
             draft = await self._backend.query(question, transcript.session_id)
+            if draft.assist_requested:
+                # Close locally before acknowledgement audio or another queued
+                # transcript can race the Gateway's next session-state poll.
+                self._set_assist_suppressed(transcript.session_id, True)
+                self._metrics.record_assist_request_started()
             if draft.registration_started:
                 # The tool-owned background workflow speaks its own fixed
                 # prompt and terminal line. Sending the model draft here would
                 # duplicate audio and incorrectly guard it as a where-answer.
                 return True
+            if transcript.session_id in self._assist_suppressed and not draft.assist_requested:
+                # A Console-created request may become visible while this model
+                # turn is in flight. Never speak its stale reply over a human call.
+                self._metrics.record_assist_transcript_suppressed()
+                return False
             guarded = guard_reply(draft.text, draft.tool_result)
             latency_ms = max(0, round((time.perf_counter() - started) * 1000))
             self._metrics.record_guard(guarded.verdict)
@@ -195,9 +225,10 @@ class HandsFreeListener:
                 latency_ms=latency_ms,
             )
             await self._reply.send(transcript.session_id, guarded.reply)
-            self._suppress_until[transcript.session_id] = (
-                time.monotonic() + self._settings.reply_echo_suppression_s
-            )
+            if not draft.assist_requested:
+                self._suppress_until[transcript.session_id] = (
+                    time.monotonic() + self._settings.reply_echo_suppression_s
+                )
             self._metrics.record_hands_free_reply()
             logger.info(
                 "hands-free reply sent",
@@ -216,15 +247,23 @@ class HandsFreeListener:
         response = await client.get("/v1/sessions")
         response.raise_for_status()
         listing = SessionList.model_validate(response.json())
-        # Excluding an assist-active session here is what stops listening:
-        # `run()`'s reconciliation loop cancels its STT task on the next poll
-        # because the session drops out of this set, and restarts one with no
-        # special-casing once the call ends and the session reappears in it.
-        return {
-            item.session_id
-            for item in listing.sessions
-            if item.publisher_present and not item.assist_active
-        }
+        active: set[str] = set()
+        reported: set[str] = set()
+        for item in listing.sessions:
+            reported.add(item.session_id)
+            assist_suppresses = item.assist_state in {"requested", "accepted"}
+            # ``assist_active`` preserves safety with a Gateway that predates
+            # the additive state field and only knows accepted calls.
+            assist_suppresses = assist_suppresses or item.assist_active
+            self._set_assist_suppressed(item.session_id, assist_suppresses)
+            if item.publisher_present and not assist_suppresses:
+                active.add(item.session_id)
+
+        # Absence from the authoritative active-session listing means the
+        # session ended; do not retain one suppression entry per old session.
+        for session_id in self._assist_suppressed - reported:
+            self._set_assist_suppressed(session_id, False)
+        return active
 
     def _stt_url(self, session_id: str) -> str:
         base = self._settings.speech_base_url
@@ -249,6 +288,10 @@ class HandsFreeListener:
                 if transcript.session_id != session_id:
                     continue
                 await self.process(transcript)
+                if session_id in self._assist_suppressed:
+                    # Close the STT socket immediately instead of waiting for
+                    # the next Gateway polling interval.
+                    return
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -264,7 +307,7 @@ class HandsFreeListener:
                 )
 
     async def _listen(self, session_id: str) -> None:
-        while True:
+        while session_id not in self._assist_suppressed:
             try:
                 async with connect(
                     self._stt_url(session_id),
@@ -273,6 +316,8 @@ class HandsFreeListener:
                     open_timeout=self._settings.request_timeout_s,
                 ) as websocket:
                     await self._consume_messages(session_id, websocket)
+                    if session_id in self._assist_suppressed:
+                        return
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -315,6 +360,7 @@ class HandsFreeListener:
             tasks = list(self._tasks.values())
             self._tasks.clear()
             self._suppress_until.clear()
+            self._assist_suppressed.clear()
             for task in tasks:
                 task.cancel()
             if tasks:

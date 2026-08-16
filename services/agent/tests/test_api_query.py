@@ -8,6 +8,7 @@ from agent.config import Settings
 from agent.guard import NO_TOOL_REPLY, registration_message
 from agent.main import create_app
 from agent.stub import DraftAnswer, StubLlm
+from agent.tools.assist import ASSIST_REQUESTED_REPLY, AssistRequestOutcome, AssistTool
 from agent.tools.memory import MemoryTool
 
 pytestmark = pytest.mark.anyio
@@ -67,6 +68,30 @@ async def test_registration_query_returns_only_the_fixed_prompt() -> None:
     assert response.json()["reply"] == registration_message("prompt", "keys")
     assert response.json()["guard"] == "registration:prompt"
     assert response.json()["answer_status"] is None
+
+
+async def test_remote_assist_query_returns_only_the_fixed_acknowledgement() -> None:
+    calls: list[str] = []
+
+    async def request(session_id: str) -> AssistRequestOutcome:
+        calls.append(session_id)
+        return AssistRequestOutcome(True, session_id, "assist_01", "requested", "requested")
+
+    settings = Settings(environment="ci", agent_backend="stub")
+    memory = MemoryTool(settings, ask_memory=lambda _label, _session: confirmed_answer())
+    assist = AssistTool(settings, request_operation=request)
+    app = create_app(settings, backend=StubLlm(memory, assist=assist))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/agent/query",
+            json={"text": "Call my remote assistant", "session_id": "sess_01"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == ASSIST_REQUESTED_REPLY
+    assert response.json()["guard"] == "passed"
+    assert response.json()["answer_status"] is None
+    assert calls == ["sess_01"]
 
 
 async def test_general_model_answer_passes_without_memory_status() -> None:

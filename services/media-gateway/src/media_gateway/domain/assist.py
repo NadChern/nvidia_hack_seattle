@@ -109,10 +109,16 @@ class AssistRequestRegistry:
         request.state = "ended"
         return request
 
-    def is_active(self, session_id: str) -> bool:
-        """True while a call is accepted -- what the Agent must stay quiet for."""
+    def state(self, session_id: str) -> AssistState | None:
+        """Return live request state after expiring a request that never connected."""
+        now = self._now()
+        self._sweep(now=now)
         request = self._requests.get(session_id)
-        return request is not None and request.state == "accepted"
+        return request.state if request is not None else None
+
+    def is_active(self, session_id: str) -> bool:
+        """True only while a helper call is accepted and connected logically."""
+        return self.state(session_id) == "accepted"
 
     def clear(self, session_id: str) -> None:
         self._requests.pop(session_id, None)

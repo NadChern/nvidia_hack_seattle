@@ -19,6 +19,7 @@ from agent.logging import configure_logging
 from agent.metrics import AgentMetrics
 from agent.reply import ReplyTransport
 from agent.stub import QueryBackend, StubLlm
+from agent.tools.assist import AssistTool
 from agent.tools.memory import MemoryTool
 from agent.tools.register import RegisterTool
 from agent.workflow import RegistrationWorkflow
@@ -65,20 +66,24 @@ def _select_backend(
     settings: Settings, metrics: AgentMetrics
 ) -> tuple[QueryBackend, RegistrationWorkflow]:
     memory = MemoryTool(settings)
+    assist = AssistTool(settings)
     registration = RegistrationWorkflow(
         RegisterTool(settings),
         ReplyTransport(settings),
         metrics=metrics,
     )
     if settings.agent_backend == "stub":
-        return StubLlm(memory, registration), registration
+        return StubLlm(memory, registration, assist), registration
 
     # Imported only on the model path so health/config tooling for the stub
     # does not initialize ADK or LiteLLM as a side effect.
     from agent.agent import create_agent
     from agent.runner import AdkRunnerBackend
 
-    return AdkRunnerBackend(settings, create_agent(settings, memory, registration)), registration
+    return (
+        AdkRunnerBackend(settings, create_agent(settings, memory, registration, assist)),
+        registration,
+    )
 
 
 def create_app(

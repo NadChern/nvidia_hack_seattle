@@ -2,8 +2,10 @@
 
 ## Status
 
-Proposed implementation plan. This document does not authorize a merge or deployment by itself.
-Hermes is explicitly out of scope and is tracked in the [Product Backlog](17-Product-Backlog.md).
+Implemented on `integration/personal-memory-remote-assist`; automated validation is complete.
+Physical GN100, glasses, and helper-app testing remains pending, and the integration branch must
+not be merged into `main` until that manual gate is completed by the release owner. Hermes is
+explicitly out of scope and is tracked in the [Product Backlog](17-Product-Backlog.md).
 
 ## Goal
 

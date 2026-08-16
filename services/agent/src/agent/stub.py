@@ -13,6 +13,7 @@ from typing import Protocol
 
 from visual_memory_memory_contract import QueryResponse
 
+from agent.tools.assist import ASSIST_REQUESTED_REPLY, AssistTool
 from agent.tools.memory import MemoryTool
 
 
@@ -21,6 +22,7 @@ class DraftAnswer:
     text: str
     tool_result: QueryResponse | None
     registration_started: bool = False
+    assist_requested: bool = False
 
 
 class RegistrationStarter(Protocol):
@@ -30,6 +32,12 @@ class RegistrationStarter(Protocol):
 class QueryBackend(Protocol):
     async def query(self, text: str, session_id: str | None) -> DraftAnswer: ...
 
+
+_REMOTE_ASSIST_PATTERN = re.compile(
+    r"\b(?:call|contact|connect(?:\s+me)?\s+to|get)\s+"
+    r"(?:my\s+)?(?:remote\s+assistant|human\s+helper|caregiver|helper)\b",
+    re.IGNORECASE,
+)
 
 _REGISTRATION_PATTERN = re.compile(
     r"\b(?:remember|scan|learn)\s+(?:my|our|the|this)?\s*(?P<label>.+?)\s*[?.!]*$",
@@ -78,11 +86,24 @@ def registration_label(text: str) -> str | None:
 class StubLlm:
     """Offline backend used by Phase 0 and the endpoint test suite."""
 
-    def __init__(self, memory: MemoryTool, registration: RegistrationStarter | None = None) -> None:
+    def __init__(
+        self,
+        memory: MemoryTool,
+        registration: RegistrationStarter | None = None,
+        assist: AssistTool | None = None,
+    ) -> None:
         self._memory = memory
         self._registration = registration
+        self._assist = assist
 
     async def query(self, text: str, session_id: str | None) -> DraftAnswer:
+        if _REMOTE_ASSIST_PATTERN.search(" ".join(text.split())) is not None and self._assist:
+            outcome = await self._assist.request(session_id or "")
+            return DraftAnswer(
+                text=ASSIST_REQUESTED_REPLY if outcome.requested else "",
+                tool_result=None,
+                assist_requested=outcome.requested,
+            )
         register = registration_label(text)
         if register is not None and self._registration is not None and session_id is not None:
             return DraftAnswer(

@@ -17,6 +17,10 @@ class AgentMetrics:
     hands_free_triggered: int = 0
     hands_free_replies: int = 0
     hands_free_errors: int = 0
+    assist_requests_started: int = 0
+    assist_transcripts_suppressed: int = 0
+    assist_gate_closed: int = 0
+    assist_gate_opened: int = 0
     registrations_started: int = 0
     registrations_succeeded: int = 0
     registrations_failed: int = 0
@@ -48,6 +52,22 @@ class AgentMetrics:
         with self._lock:
             self.hands_free_errors += 1
 
+    def record_assist_request_started(self) -> None:
+        with self._lock:
+            self.assist_requests_started += 1
+
+    def record_assist_transcript_suppressed(self) -> None:
+        with self._lock:
+            self.assist_transcripts_suppressed += 1
+
+    def record_assist_gate_closed(self) -> None:
+        with self._lock:
+            self.assist_gate_closed += 1
+
+    def record_assist_gate_opened(self) -> None:
+        with self._lock:
+            self.assist_gate_opened += 1
+
     def record_registration_started(self) -> None:
         with self._lock:
             self.registrations_started += 1
@@ -70,6 +90,10 @@ class AgentMetrics:
                 "hands_free_triggered": self.hands_free_triggered,
                 "hands_free_replies": self.hands_free_replies,
                 "hands_free_errors": self.hands_free_errors,
+                "assist_requests_started": self.assist_requests_started,
+                "assist_transcripts_suppressed": self.assist_transcripts_suppressed,
+                "assist_gate_closed": self.assist_gate_closed,
+                "assist_gate_opened": self.assist_gate_opened,
                 "registrations_started": self.registrations_started,
                 "registrations_succeeded": self.registrations_succeeded,
                 "registrations_failed": self.registrations_failed,

@@ -6,6 +6,7 @@ from conftest import confirmed_answer
 from agent.config import Settings
 from agent.listener import HandsFreeListener, Transcript
 from agent.stub import DraftAnswer
+from agent.tools.assist import ASSIST_REQUESTED_REPLY
 
 pytestmark = pytest.mark.anyio
 
@@ -30,6 +31,16 @@ class RegistrationBackend(FakeBackend):
         self.calls.append((text, session_id))
         return DraftAnswer(
             text="model text must not be spoken", tool_result=None, registration_started=True
+        )
+
+
+class AssistBackend(FakeBackend):
+    async def query(self, text: str, session_id: str | None) -> DraftAnswer:
+        self.calls.append((text, session_id))
+        return DraftAnswer(
+            text=ASSIST_REQUESTED_REPLY,
+            tool_result=None,
+            assist_requested=True,
         )
 
 
@@ -139,6 +150,36 @@ async def test_registration_workflow_owns_audio_without_a_duplicate_model_reply(
     assert backend.calls == [("remember my keys", "sess_01")]
     assert reply.calls == []
     assert events.replies == []
+
+
+async def test_remote_assist_request_closes_audio_before_a_queued_transcript() -> None:
+    backend = AssistBackend()
+    reply = FakeReply()
+    events = FakeEvents()
+    listener = HandsFreeListener(Settings(environment="ci"), backend, reply, events)
+
+    async def messages():  # type: ignore[no-untyped-def]
+        yield transcript("Call my remote assistant").model_dump_json()
+        yield transcript("This must not reach the model").model_dump_json()
+
+    await listener._consume_messages("sess_01", messages())
+
+    assert backend.calls == [("call my remote assistant", "sess_01")]
+    assert reply.calls == [("sess_01", ASSIST_REQUESTED_REPLY)]
+    assert [item["text"] for item in events.transcripts] == ["Call my remote assistant"]
+
+
+async def test_assist_suppression_blocks_direct_processing_and_hud_transcripts() -> None:
+    backend = FakeBackend()
+    events = FakeEvents()
+    listener = HandsFreeListener(Settings(environment="ci"), backend, FakeReply(), events)
+    listener._set_assist_suppressed("sess_01", True)  # noqa: SLF001
+
+    handled = await listener.process(transcript("private human conversation"))
+
+    assert handled is False
+    assert backend.calls == []
+    assert events.transcripts == []
 
 
 async def test_transient_query_failure_does_not_stop_the_stt_message_stream() -> None:

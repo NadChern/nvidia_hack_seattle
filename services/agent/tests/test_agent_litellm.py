@@ -12,6 +12,7 @@ from litellm import ModelResponse
 from agent.agent import create_agent
 from agent.config import Settings
 from agent.runner import APP_NAME, USER_ID, AdkRunnerBackend
+from agent.tools.assist import ASSIST_REQUESTED_REPLY, AssistRequestOutcome, AssistTool
 from agent.tools.memory import MemoryTool
 
 pytestmark = pytest.mark.anyio
@@ -69,6 +70,55 @@ class RegistrationLiteLlmClient(LiteLLMClient):
                     "index": 0,
                     "finish_reason": "stop",
                     "message": {"role": "assistant", "content": "Starting now."},
+                }
+            ]
+        )
+
+
+class AssistLiteLlmClient(LiteLLMClient):
+    def __init__(self, *, fail_after_tool: bool = False) -> None:
+        self.calls = 0
+        self.fail_after_tool = fail_after_tool
+
+    async def acompletion(
+        self, model: Any, messages: Any, tools: Any, **kwargs: Any
+    ) -> ModelResponse:
+        del model, messages, tools, kwargs
+        self.calls += 1
+        if self.calls == 1:
+            return ModelResponse(
+                choices=[
+                    {
+                        "index": 0,
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "role": "assistant",
+                            "content": None,
+                            "tool_calls": [
+                                {
+                                    "id": "assist-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "call_remote_assistant",
+                                        "arguments": "{}",
+                                    },
+                                }
+                            ],
+                        },
+                    }
+                ]
+            )
+        if self.fail_after_tool:
+            raise RuntimeError("post-tool model failure")
+        return ModelResponse(
+            choices=[
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "A helper is already connected.",
+                    },
                 }
             ]
         )
@@ -239,6 +289,36 @@ async def test_fake_litellm_routes_remember_intent_to_registration_tool() -> Non
     assert result.registration_started is True
     assert result.tool_result is None
     assert registration.calls == [("keys", "sess_01")]
+
+
+@pytest.mark.parametrize("fail_after_tool", [False, True])
+async def test_remote_assist_uses_hidden_session_and_fixed_acknowledgement(
+    fail_after_tool: bool,
+) -> None:
+    calls: list[str] = []
+
+    async def request(session_id: str) -> AssistRequestOutcome:
+        calls.append(session_id)
+        return AssistRequestOutcome(True, session_id, "assist_01", "requested", "requested")
+
+    settings = Settings(environment="ci")
+    model = LiteLlm(
+        model="openai/test",
+        llm_client=AssistLiteLlmClient(fail_after_tool=fail_after_tool),
+    )
+    memory = MemoryTool(settings, ask_memory=lambda _label, _session: confirmed_answer())
+    assist = AssistTool(settings, request_operation=request)
+    backend = AdkRunnerBackend(
+        settings,
+        create_agent(settings, memory, assist=assist, model=model),
+    )
+
+    result = await backend.query("Call my remote assistant", "sess_01")
+
+    assert result.assist_requested is True
+    assert result.text == ASSIST_REQUESTED_REPLY
+    assert result.tool_result is None
+    assert calls == ["sess_01"]
 
 
 async def test_session_history_is_bounded_by_turn_not_raw_event_count() -> None:

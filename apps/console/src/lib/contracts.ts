@@ -167,6 +167,8 @@ export interface GatewaySessionSummary {
   created_at: string
   last_seen_at: string
   publisher_present: boolean
+  assist_active: boolean
+  assist_state: AssistRequestState | null
 }
 
 export interface GatewaySessionList {
@@ -180,7 +182,8 @@ export interface PairingCode {
 
 /**
  * Remote Assist: "she pressed the button" through accept and the resulting
- * microphone-only room grant. `state` matches the gateway's `AssistState` and
+ * helper room grant. The shipped client publishes microphone only, but the
+ * current server token does not enforce a source restriction. `state` matches the gateway's `AssistState` and
  * the HUD's `assist` device event one-for-one -- all three sides of docs/12's
  * assist contract must agree on the same three words.
  */

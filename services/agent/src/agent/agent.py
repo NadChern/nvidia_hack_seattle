@@ -1,4 +1,4 @@
-"""Google ADK agent construction and the single grounded tool."""
+"""Google ADK agent construction and bounded trusted tools."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from google.adk.models.lite_llm import LiteLlm
 from google.adk.tools import FunctionTool, ToolContext
 
 from agent.config import Settings
+from agent.tools.assist import AssistTool
 from agent.tools.memory import MemoryTool
 from agent.workflow import RegistrationWorkflow
 
@@ -33,6 +34,11 @@ needs them:
   once with only X as the label. Registration is a background scripted workflow;
   do not invent progress or confirmation text and do not call where_is for that
   request.
+- When the wearer explicitly asks for a remote person, human helper, caregiver,
+  or remote assistant, call call_remote_assistant exactly once with no arguments.
+  Do not call it merely because an ordinary request contains the word "help".
+  A requested call is not connected yet; never invent a helper name, arrival
+  estimate, or connection state.
 
 A visual-memory tool result is authoritative. Return a short spoken answer that
 preserves its answer_status and all uncertainty or invalidation. If answer_status
@@ -46,6 +52,7 @@ def create_agent(
     settings: Settings,
     memory: MemoryTool,
     registration: RegistrationWorkflow | None = None,
+    assist: AssistTool | None = None,
     *,
     model: LiteLlm | None = None,
 ) -> LlmAgent:
@@ -68,6 +75,20 @@ def create_agent(
             else False
         )
         return {"started": started, "label": label.strip(), "background": True}
+
+    async def call_remote_assistant(tool_context: ToolContext) -> dict[str, object]:
+        """Request a trusted remote human for the authenticated glasses session."""
+        raw_session_id = tool_context.state.get(REQUEST_SESSION_STATE, "")
+        session_id = str(raw_session_id) if raw_session_id else ""
+        if assist is None:
+            return {
+                "requested": False,
+                "session_id": session_id or None,
+                "request_id": None,
+                "state": None,
+                "reason_code": "tool_unavailable",
+            }
+        return (await assist.request(session_id)).to_payload()
 
     if model is None:
         api_key = (
@@ -92,16 +113,18 @@ def create_agent(
             }
         model = LiteLlm(**model_args)
 
+    tools: list[Any] = [FunctionTool(where_is)]
+    if registration is not None:
+        tools.append(FunctionTool(start_registration))
+    if assist is not None:
+        tools.append(FunctionTool(call_remote_assistant))
+
     return LlmAgent(
         name="visual_memory_agent",
-        description="Grounded find and personal-object registration orchestration",
+        description="Grounded memory, object registration, and remote-human orchestration",
         model=model,
         instruction=INSTRUCTION,
-        tools=(
-            [FunctionTool(where_is), FunctionTool(start_registration)]
-            if registration is not None
-            else [FunctionTool(where_is)]
-        ),
+        tools=tools,
     )
 
 

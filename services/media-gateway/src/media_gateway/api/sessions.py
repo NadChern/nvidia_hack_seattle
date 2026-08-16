@@ -14,8 +14,12 @@ import logging
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel, Field
 
-from media_gateway.deps import authorize_device_request, authorize_request
-from media_gateway.domain.assist import AssistRequestRegistry
+from media_gateway.deps import (
+    authorize_device_request,
+    authorize_helper_request,
+    authorize_request,
+)
+from media_gateway.domain.assist import AssistRequestRegistry, AssistState
 from media_gateway.domain.ids import new_session_id
 from media_gateway.domain.metrics import MetricsRegistry
 from media_gateway.domain.ratelimit import FixedWindowLimiter
@@ -60,17 +64,18 @@ class SessionSummary(BaseModel):
     created_at: dt.datetime
     last_seen_at: dt.datetime
     publisher_present: bool
-    #: True while a remote-assist call is accepted for this session -- the
-    #: Agent's hands-free listener must skip a session reporting this rather
-    #: than transcribing and possibly replying to the helper's voice.
+    #: Backward-compatible accepted-call indicator.
     assist_active: bool
+    #: Pending and accepted requests both suppress Agent-bound audio. ``ended``
+    #: is emitted as an event; after cleanup the current state is null.
+    assist_state: AssistState | None = None
 
 
 class SessionListResponse(BaseModel):
     sessions: list[SessionSummary]
 
 
-def _summarize(session: Session, *, assist_active: bool) -> SessionSummary:
+def _summarize(session: Session, *, assist_state: AssistState | None) -> SessionSummary:
     return SessionSummary(
         session_id=session.session_id,
         device_id=session.device_id,
@@ -78,7 +83,8 @@ def _summarize(session: Session, *, assist_active: bool) -> SessionSummary:
         created_at=session.created_at,
         last_seen_at=session.last_seen_at,
         publisher_present=session.publisher_present,
-        assist_active=assist_active,
+        assist_active=assist_state == "accepted",
+        assist_state=assist_state,
     )
 
 
@@ -246,15 +252,17 @@ def create_viewer_token(request: Request, session_id: str) -> SessionTokenRespon
 
 @router.post("/{session_id}/helper", response_model=SessionTokenResponse)
 def create_helper_token(request: Request, session_id: str) -> SessionTokenResponse:
-    """Issue a microphone-publish, camera-forbidden grant for a remote helper.
+    """Issue the accepted call's room grant to an authenticated helper.
 
-    Mirrors `create_viewer_token` exactly except for the role. Requires the
+    The helper app publishes only microphone audio, but the current LiveKit
+    compatibility workaround does not enforce source restriction in the token;
+    see ``HELPER_PUBLISH_SOURCES``. Requires the
     session's assist request to currently be `accepted` -- minting this
     outside that window would hand out a room-join grant to anyone who could
     authenticate as an operator, with no relationship to a call anyone
     actually answered.
     """
-    authorize_request(request)
+    authorize_helper_request(request)
     settings = request.app.state.settings
     sessions: SessionRegistry = request.app.state.sessions
     sessions.sweep()
@@ -293,9 +301,7 @@ def list_sessions(request: Request) -> SessionListResponse:
     sessions.sweep()
     assist: AssistRequestRegistry = request.app.state.assist_requests
     return SessionListResponse(
-        sessions=[
-            _summarize(s, assist_active=assist.is_active(s.session_id)) for s in sessions.active()
-        ]
+        sessions=[_summarize(s, assist_state=assist.state(s.session_id)) for s in sessions.active()]
     )
 
 

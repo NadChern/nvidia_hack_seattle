@@ -18,6 +18,7 @@ from agent.agent import REQUEST_SESSION_STATE
 from agent.config import Settings
 from agent.errors import AgentServiceError, DependencyUnavailableError
 from agent.stub import DraftAnswer
+from agent.tools.assist import ASSIST_REQUESTED_REPLY
 
 APP_NAME = "visual-memory-agent"
 USER_ID = "wearer"
@@ -112,6 +113,7 @@ class AdkRunnerBackend:
             reply = ""
             tool_result: QueryResponse | None = None
             registration_started = False
+            assist_requested = False
             try:
                 events = self._runner.run_async(
                     user_id=USER_ID,
@@ -133,6 +135,9 @@ class AdkRunnerBackend:
                         elif response.name == "start_registration" and isinstance(payload, dict):
                             registration_payload = cast("dict[str, Any]", payload)
                             registration_started = bool(registration_payload.get("started", False))
+                        elif response.name == "call_remote_assistant" and isinstance(payload, dict):
+                            assist_payload = cast("dict[str, Any]", payload)
+                            assist_requested = bool(assist_payload.get("requested", False))
                     if event.is_final_response() and event.content and event.content.parts:
                         # Nemotron exposes chain-of-thought as text-bearing
                         # parts marked ``thought=True``. It is neither wearer
@@ -145,9 +150,11 @@ class AdkRunnerBackend:
                         if text_parts:
                             reply = "".join(text_parts).strip()
             except AgentServiceError:
-                raise
+                if not assist_requested:
+                    raise
             except Exception as exc:
-                raise DependencyUnavailableError("language model is unavailable") from exc
+                if not assist_requested:
+                    raise DependencyUnavailableError("language model is unavailable") from exc
             finally:
                 self._sessions.trim_to_turns(
                     app_name=APP_NAME,
@@ -156,10 +163,13 @@ class AdkRunnerBackend:
                     max_turns=self._settings.max_turns_kept,
                 )
 
+            if assist_requested:
+                reply = ASSIST_REQUESTED_REPLY
             return DraftAnswer(
                 text=reply,
                 tool_result=tool_result,
                 registration_started=registration_started,
+                assist_requested=assist_requested,
             )
 
 

@@ -13,6 +13,7 @@ from media_gateway.main import create_app
 pytestmark = pytest.mark.anyio
 
 SECRET = "a-livekit-secret-of-at-least-32-chars"
+INTERNAL = "an-internal-token-of-at-least-32-chars"
 
 
 @pytest.fixture
@@ -81,6 +82,48 @@ async def test_the_two_tab_flow_request_accept_then_helper_token() -> None:
     # for the xfail tracking a proper fix.
     assert "canPublishSources" not in grants
     assert viewer.status_code == 200
+
+
+async def test_paired_helper_can_accept_and_mint_its_room_token() -> None:
+    app = create_app(livekit_settings(internal_api_token=INTERNAL))
+    operator = {"authorization": f"Bearer {INTERNAL}"}
+
+    async with app.router.lifespan_context(app):
+        async with await client_for(app) as http:
+            wearer_code = (await http.post("/v1/pairing", headers=operator)).json()["pairing_code"]
+            wearer = (
+                await http.post(
+                    "/v1/pairing/claim",
+                    json={"pairing_code": wearer_code, "device_id": "glasses-01"},
+                )
+            ).json()["credential"]
+            created = (
+                await http.post(
+                    "/v1/sessions",
+                    json={"device_id": "glasses-01"},
+                    headers={"authorization": f"Bearer {wearer}"},
+                )
+            ).json()
+            session_id = created["session_id"]
+            await http.post(
+                f"/v1/assist/{session_id}/request",
+                headers={"authorization": f"Bearer {wearer}"},
+            )
+
+            helper_code = (await http.post("/v1/pairing", headers=operator)).json()["pairing_code"]
+            helper_credential = (
+                await http.post(
+                    "/v1/pairing/claim",
+                    json={"pairing_code": helper_code, "device_id": "helper-01"},
+                )
+            ).json()["credential"]
+            helper_auth = {"authorization": f"Bearer {helper_credential}"}
+            accepted = await http.post(f"/v1/assist/{session_id}/accept", headers=helper_auth)
+            helper = await http.post(f"/v1/sessions/{session_id}/helper", headers=helper_auth)
+
+    assert accepted.status_code == 200
+    assert helper.status_code == 200
+    assert helper.json()["identity"] == f"helper-{session_id}"
 
 
 async def test_accepting_twice_leaves_only_one_helper_token_mintable() -> None:

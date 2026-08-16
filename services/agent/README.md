@@ -5,17 +5,17 @@ personal assistant that answers ordinary questions directly and uses bounded
 visual-memory tools when a request needs remembered object state. Port: **8086**.
 
 The default backend is a Google ADK 2.6 `Runner` with one `LlmAgent`, one
-LiteLLM model, and two bounded tools: `where_is` and `start_registration`.
-Nemotron owns intent selection: general questions receive a direct model answer,
-while personal-object location and registration requests use the appropriate
-tool. `StubLlm` remains available for deterministic, fully offline development;
+LiteLLM model, and three bounded tools: `where_is`, `start_registration`, and
+`call_remote_assistant`. Nemotron owns intent selection: general questions receive
+a direct model answer, while personal-object location, registration, and explicit
+remote-human requests use the appropriate tool. `StubLlm` remains available for deterministic, fully offline development;
 it recognizes bounded “where” questions and returns Memory's `spoken_answer`
 unchanged.
 
 ## What it refuses to do
 
 - It may answer general questions from model knowledge, but never treats raw vision output or model knowledge as remembered personal-object state.
-- It exposes only `where_is` and `start_registration`; there is no open chat or history tool.
+- It exposes only `where_is`, `start_registration`, and `call_remote_assistant`; there is no open history, shell, or browser tool.
 - It never lets a model create or choose a `session_id`.
 - It does not send transcripts to a non-loopback model endpoint unless
   `VMA_ALLOW_EXTERNAL_LLM=true` is explicitly configured.
@@ -45,6 +45,9 @@ A veto is a successful safety outcome, not an endpoint error. The response uses
 `spoken_answer` byte-for-byte and reports `guard: "vetoed:<rule>"`. Registration
 never passes model prose through this guard: its prompt and terminal lines come
 from a fixed vocabulary and carry `registration:prompt|succeeded|failed` verdicts.
+Remote assistance similarly replaces model prose with the fixed acknowledgement,
+"I've sent a request to your remote assistant." A request is never described as
+an accepted or connected call.
 
 ## API
 
@@ -199,6 +202,15 @@ post-reply cooldown are dropped to prevent the glasses speaker from recursively
 querying the Agent through its microphone; this is timing suppression, not an
 intent regex.
 
+A successful remote-assist request immediately closes a local per-session audio
+gate and the current STT socket. Both Gateway states `requested` and `accepted`
+keep the gate closed, so neither queued wearer audio nor the human conversation
+reaches Nemotron. Only the fixed request acknowledgement may play after the gate
+closes. The gate fails closed across Gateway polling errors and reopens only when
+an authoritative session summary reports no pending/active request, following a
+helper disconnect or unanswered-request expiration. Helper tracks are also
+excluded from Gateway inference ingest.
+
 Every completed transcript is also posted to the Gateway's bounded device-event channel.
 A guarded answer is posted there with `answer_status`, object ID, guard verdict, and
 latency, then synthesized through Speech's WAV endpoint, validated and resampled to the
@@ -225,10 +237,10 @@ uv run pytest
 |---|---|
 | `test_guard.py` | Every guard rule vetoes unsafe text and accepts grounded text |
 | `test_config.py` | External egress is opt-in and secrets remain redacted |
-| `test_tools_memory.py` / `test_tools_register.py` | Complete query state and bounded registration polling are preserved |
+| `test_tools_memory.py` / `test_tools_register.py` / `test_tools_assist.py` | Trusted session scope and bounded tool side effects are preserved |
 | `test_api_query.py` | Offline end-to-end query and no-tool behavior |
 | `test_agent_litellm.py` | Fake tool-calling completion, bounded ADK sessions, opt-in real model |
-| `test_listener.py` | Wake-prefix/intent gate prevents unwanted model calls and duplicate registration audio |
+| `test_listener.py` / `test_listener_assist_active.py` | Echo and assist gates prevent recursive or human-call audio from reaching the model |
 | `test_workflow.py` | Registration always reaches a fixed prompt and terminal success/failure line |
 | `test_reply.py` | WAV validation, resampling, and PCM-only return transport |
 | `test_health.py` / `test_status.py` | Operational and trust-boundary reporting |
