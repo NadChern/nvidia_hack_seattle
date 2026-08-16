@@ -212,7 +212,7 @@ async def test_a_repeat_within_cooldown_is_deduped() -> None:
     assert pipeline.metrics.events_deduped == 1
 
 
-async def test_distinct_actions_for_one_object_both_pass() -> None:
+async def test_motion_events_are_suppressed_by_default() -> None:
     reasoner = FixtureReasoner(script=[(_event("picked_up"),), (_event("placed"),)])
     gallery = StubGallery(labels={"keys"}, score=_match())
     recorder = Recorder()
@@ -221,7 +221,24 @@ async def test_distinct_actions_for_one_object_both_pass() -> None:
     await _feed(pipeline, [_frame(0, sequence=1), _frame(3, sequence=2)])
 
     actions = [candidate.action for candidate, _ in recorder.calls]
+    assert actions == ["placed"]
+    assert pipeline.metrics.events_detected == 2
+    assert pipeline.metrics.motion_events_suppressed == 1
+    assert pipeline.metrics.identity_matched == 1
+    assert pipeline.recent_events[0].outcome == "suppressed_by_policy"
+
+
+async def test_motion_events_can_be_promoted_with_the_config_toggle() -> None:
+    reasoner = FixtureReasoner(script=[(_event("picked_up"),), (_event("placed"),)])
+    gallery = StubGallery(labels={"keys"}, score=_match())
+    recorder = Recorder()
+    pipeline = _pipeline(reasoner, gallery, recorder, promote_motion_events=True)
+
+    await _feed(pipeline, [_frame(0, sequence=1), _frame(3, sequence=2)])
+
+    actions = [candidate.action for candidate, _ in recorder.calls]
     assert actions == ["picked_up", "placed"]
+    assert pipeline.metrics.motion_events_suppressed == 0
 
 
 class LateGallery:

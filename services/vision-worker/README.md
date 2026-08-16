@@ -54,13 +54,27 @@ the relay connection is live.
 | Endpoint | Purpose |
 |---|---|
 | `GET /health/live` · `GET /health/ready` | Process health; readiness reflects whether the relay task is alive, never whether an object is in view |
-| `GET /v1/status` | Configuration, identity/registration counters, stability thresholds, and pipeline counters |
+| `GET /v1/status` | Reasoner/promotion configuration, identity/registration state, and pipeline counters |
 | `POST /v1/objects` · `GET /v1/objects` | Create/list personal objects through Memory's registry |
 | `POST /v1/objects/{id}/capture` · `GET /v1/objects/{id}/status` | Arm and poll bounded registration capture |
 
 There is no video ingestion or memory-query endpoint here. The registration
 routes are bounded control operations; ordinary observations are still posted
 to `application-memory`'s `/v1/observations` via `MemoryEmitter`.
+
+### Placement promotion policy
+
+`VMA_PROMOTE_MOTION_EVENTS=false` is the default. Cosmos can still report
+`picked_up` and `carried`, and those labels remain visible as
+`suppressed_by_policy` diagnostics, but only identity-matched `placed` events
+are written to Memory. This prevents one false motion label from invalidating a
+confirmed placement on the current sparse glasses uplink. `/v1/status` exposes
+the active toggle and `metrics.motion_events_suppressed`.
+
+Set `VMA_PROMOTE_MOTION_EVENTS=true` to restore the canonical full timeline once
+motion classification has been validated at the deployed frame rate. The
+toggle changes Vision promotion only; it does not change the observation or
+Memory contracts.
 
 ### The whole stack, with the real models
 

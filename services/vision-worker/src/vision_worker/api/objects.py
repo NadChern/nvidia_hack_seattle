@@ -50,6 +50,7 @@ def _validate_label(request: Request, label: str) -> str:
     configured = request.app.state.settings.detection_labels
     if not configured:
         return resolved
+
     # A spoken label ("key", "these keys") rarely reproduces a detection prompt
     # verbatim, and STT drift makes it worse, so match loosely and register
     # under the CANONICAL detection label: normalized exact first, then

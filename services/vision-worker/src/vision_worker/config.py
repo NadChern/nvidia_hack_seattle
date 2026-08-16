@@ -187,6 +187,13 @@ class Settings(BaseSettings):
     #: How long the same (object, action) is suppressed after a write, so
     #: overlapping windows do not re-report one placement many times.
     event_cooldown_seconds: float = Field(default=20.0, gt=0)
+    #: Whether picked_up/carried are written to memory alongside placed. Off by
+    #: default: at ~1fps Cosmos hallucinates handling on a resting object, and a
+    #: single false pickup flips a confirmed placement to "moved afterward" -- so
+    #: only `placed` is promoted, and "where is it" always reflects the last
+    #: confirmed location. Turn on to record the full movement timeline once the
+    #: frame rate is high enough for motion classification to be reliable.
+    promote_motion_events: bool = False
     #: Cosmos boxes run tight/noisy on small objects; the identity crop pads the
     #: box by this fraction on each side before cropping (no segmenter -- SAM3
     #: is gated), keeping the object inside the frame the embedder sees.

@@ -82,8 +82,7 @@ async def test_analyze_pairs_a_box_with_its_action(monkeypatch: pytest.MonkeyPat
 
 async def test_boxes_for_unrequested_labels_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     reply = (
-        "<ref>laptop</ref><box>[100, 100, 200, 200]</box>\n"
-        '[{"label":"laptop","action":"carried"}]'
+        '<ref>laptop</ref><box>[100, 100, 200, 200]</box>\n[{"label":"laptop","action":"carried"}]'
     )
     reasoner = CosmosReasoner()
     monkeypatch.setattr(reasoner, "_ask_blocking", lambda frames, labels: reply)

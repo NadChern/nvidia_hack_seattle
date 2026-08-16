@@ -92,4 +92,14 @@ class Localizer(Protocol):
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None: ...
 
 
-__all__ = ["Localizer", "ReasonAction", "WindowEvent", "WindowReasoner"]
+class ReasonerLocalizer(WindowReasoner, Localizer, Protocol):
+    """The shared Cosmos/fixture adapter used by tracking and enrollment."""
+
+
+__all__ = [
+    "Localizer",
+    "ReasonAction",
+    "ReasonerLocalizer",
+    "WindowEvent",
+    "WindowReasoner",
+]

@@ -69,6 +69,7 @@ def status(request: Request) -> dict[str, Any]:
             "interval_seconds": settings.reason_interval_seconds,
             "max_frames": settings.reason_max_frames,
             "event_cooldown_seconds": settings.event_cooldown_seconds,
+            "promote_motion_events": settings.promote_motion_events,
         },
         # The identity gate: only objects matching a registered gallery entry
         # are written. `min_cosine` is the accept threshold; the gallery counts

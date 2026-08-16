@@ -242,6 +242,11 @@ services:
       # converted into a frame count at this rate. /v1/status reports the
       # measured rate alongside this one; they should agree.
       VMA_SOURCE_FPS: "${VMA_SAMPLE_FPS:-8}"
+      # The sparse glasses uplink makes Cosmos motion labels noisier than its
+      # placements. Keep picked_up/carried diagnostic-only by default so one
+      # false motion label cannot invalidate a confirmed placement. Set true
+      # only after motion classification is validated at the deployed FPS.
+      VMA_PROMOTE_MOTION_EVENTS: "${VMA_PROMOTE_MOTION_EVENTS:-false}"
     ports:
       # Operator overlay/status API. The laptop-hosted GN100 console proxies
       # this trusted-LAN port; inference consumers still use the private

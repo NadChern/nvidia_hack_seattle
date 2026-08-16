@@ -8,8 +8,8 @@ of a vision-language model over a short sliding window:
                                                        │  {label, box, action, location}
                         box ▶ crop ▶ C-RADIOv4 ▶ gallery match ──▶ IdentityMatch
                                                        │
-                              match ─▶ emit Observation (object_id, action, location)
-                              no match ─▶ skip
+                  promotion policy ─▶ identity gate ─▶ emit Observation
+                  (placed-only by default)       no match ─▶ skip
 
 Implements `consume.relay.FrameSink`. `video_frame` only pushes to the
 `EvidenceRing` and, on a cadence, snapshots a window and hands it to the
@@ -85,6 +85,8 @@ class PipelineMetrics:
     identity_matched: int = 0
     #: Events with no gallery match -- deliberately not written (the write gate).
     identity_skipped: int = 0
+    #: Motion events withheld by the placed-only promotion policy.
+    motion_events_suppressed: int = 0
     #: Matched events suppressed as a repeat of a recent (object, action).
     events_deduped: int = 0
     #: Observations actually written to memory.
@@ -122,6 +124,7 @@ class Pipeline:
         identity_summary_weight: float = 0.5,
         box_padding: float = 0.12,
         event_cooldown_s: float = 20.0,
+        promote_motion_events: bool = False,
         work_queue_depth: int = 4,
     ) -> None:
         self._reasoner = reasoner
@@ -137,6 +140,7 @@ class Pipeline:
         self._identity_summary_weight = identity_summary_weight
         self._box_padding = box_padding
         self._event_cooldown_s = event_cooldown_s
+        self._promote_motion_events = promote_motion_events
 
         self._current_epoch_id: str | None = None
         self._current_session_id: str | None = None
@@ -280,15 +284,23 @@ class Pipeline:
         self.metrics.windows_analyzed += 1
         events = await self._reasoner.analyze([f.payload for f in window], labels=labels)
         memory_events = [event for event in events if event.is_memory_event]
-        if not memory_events:
+        self.metrics.events_detected += len(memory_events)
+
+        promoted_events: list[WindowEvent] = []
+        for event in memory_events:
+            if event.action != "placed" and not self._promote_motion_events:
+                self.metrics.motion_events_suppressed += 1
+                self._record(event, None, "suppressed_by_policy", None)
+                continue
+            promoted_events.append(event)
+        if not promoted_events:
             return
 
         last = window[-1]
         rgb = decode_video_payload(
             last.payload, encoding="jpeg", width=last.width, height=last.height, pixel_format="rgb"
         )
-        for event in memory_events:
-            self.metrics.events_detected += 1
+        for event in promoted_events:
             await self._handle_event(
                 event=event,
                 rgb=rgb,

@@ -30,7 +30,7 @@ from vision_worker.identity.selection import QualityConfig
 from vision_worker.logging import configure_logging
 from vision_worker.pipeline import Pipeline
 from vision_worker.readiness import Readiness
-from vision_worker.reason.base import WindowReasoner
+from vision_worker.reason.base import ReasonerLocalizer
 from vision_worker.reason.cosmos import CosmosReasoner, CosmosReasonerConfig
 from vision_worker.reason.fixture import FixtureReasoner
 
@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 PIPELINE_VERSION = "vision-reasoner-v1"
 
 
-def build_reasoner(settings: Settings) -> WindowReasoner:
+def build_reasoner(settings: Settings) -> ReasonerLocalizer:
     """Construct the configured window reasoner.
 
     `fixture` needs no GPU and no Cosmos -- it returns a scripted empty result,
@@ -114,6 +114,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         identity_summary_weight=settings.identity_summary_weight,
         box_padding=settings.identity_box_padding,
         event_cooldown_s=settings.event_cooldown_seconds,
+        promote_motion_events=settings.promote_motion_events,
         work_queue_depth=settings.verification_queue_depth,
     )
 

@@ -68,6 +68,7 @@ async def test_status_reports_configuration_and_the_reasoner() -> None:
     # run can cite what was actually in effect, not what was merely configured.
     assert body["reasoner"]["window_seconds"] > 0
     assert body["reasoner"]["interval_seconds"] > 0
+    assert body["reasoner"]["promote_motion_events"] is False
     assert 0.0 <= body["identity"]["min_cosine"] <= 1.0
     assert body["identity"]["gallery"]["gallery_objects"] == 0
     assert body["metrics"]["frames_processed"] == 0

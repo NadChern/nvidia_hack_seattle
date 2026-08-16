@@ -270,7 +270,8 @@ def _parse_action_tail(reply: str) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for item in cast("list[Any]", parsed):
         if isinstance(item, dict) and "label" in item:
-            out[str(item["label"]).strip().lower()] = cast("dict[str, Any]", item)
+            typed_item = cast("dict[str, Any]", item)
+            out[str(typed_item["label"]).strip().lower()] = typed_item
     return out
 
 
