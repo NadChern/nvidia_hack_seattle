@@ -58,7 +58,7 @@ VMA_LLM_TIMEOUT_S=120 \
 
 Free routes may be rate-limited, temporarily unavailable, or subject to provider routing and retention policies. They are evaluation options, never automatic fallbacks. The exact Nemotron route has been validated against OpenRouter's model metadata; the automated LiteLLM test validates provider routing only, not route existence or capabilities. A live integration run still requires an OpenRouter credential.
 
-Keep the `:free` suffix. The paid `nvidia/nemotron-3.5-lightning` route currently does not advertise tool support, so dropping the suffix is not a safe rate-limit workaround. If the selected route stops calling `where_is`, guard rule 1 replaces every answer with the canonical unknown wording; a rising `metrics.guard_vetoed["vetoed:1"]` value on `/v1/status` is the operational signal.
+Keep the `:free` suffix. The paid `nvidia/nemotron-3.5-lightning` route currently does not advertise tool support, so dropping the suffix is not a safe rate-limit workaround. A route without tools may still answer general-assistant questions, but it cannot reliably answer personal visual-memory requests and therefore does not satisfy the deployment profile.
 
 ## Confirm the selected provider
 

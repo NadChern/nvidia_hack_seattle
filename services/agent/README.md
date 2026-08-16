@@ -1,20 +1,20 @@
 # Agent Service
 
-The conversational boundary for the Visual Memory Assistant. It accepts a
-question, calls the deterministic Memory query API, and supervises any wording
-before returning it. Port: **8086**.
+The conversational boundary for the Visual Memory Assistant. It is a concise
+personal assistant that answers ordinary questions directly and uses bounded
+visual-memory tools when a request needs remembered object state. Port: **8086**.
 
 The default backend is a Google ADK 2.6 `Runner` with one `LlmAgent`, one
-LiteLLM model, and two bounded tools: `where_is` and `start_registration`. If the
-model omits `where_is` for a deterministically recognized location question, the
-runner performs that same bounded Memory call and uses Memory's canonical answer;
-unsupported conversation still cannot reach Memory. `StubLlm` remains available
-for deterministic, fully offline development; it recognizes bounded “where”
-questions and returns Memory's `spoken_answer` unchanged.
+LiteLLM model, and two bounded tools: `where_is` and `start_registration`.
+Nemotron owns intent selection: general questions receive a direct model answer,
+while personal-object location and registration requests use the appropriate
+tool. `StubLlm` remains available for deterministic, fully offline development;
+it recognizes bounded “where” questions and returns Memory's `spoken_answer`
+unchanged.
 
 ## What it refuses to do
 
-- It does not answer from model knowledge or raw vision output.
+- It may answer general questions from model knowledge, but never treats raw vision output or model knowledge as remembered personal-object state.
 - It exposes only `where_is` and `start_registration`; there is no open chat or history tool.
 - It never lets a model create or choose a `session_id`.
 - It does not send transcripts to a non-loopback model endpoint unless
@@ -26,9 +26,8 @@ questions and returns Memory's `spoken_answer` unchanged.
 
 A model rewrite is untrusted. Rules run in order:
 
-1. No Memory result produces a fixed unknown response. A recognized location
-   question whose model-selected tool call was omitted first receives the bounded
-   deterministic Memory fallback described above.
+1. A bounded, non-empty general-assistant answer may pass without a Memory result;
+   empty or oversized output receives a fixed failure line.
 2. An unknown Memory answer may name no place.
 3. `last_confirmed_only` must preserve an explicit uncertainty marker.
 4. `ambiguous_object` must name every candidate and preserve ambiguity.
@@ -152,8 +151,8 @@ because this repository has no OpenRouter key.
 
 Do not drop `:free` as a rate-limit workaround: the paid
 `nvidia/nemotron-3.5-lightning` route currently does not advertise tools. A
-route that omits the `where_is` call causes guard rule 1 to replace each reply;
-watch `metrics.guard_vetoed["vetoed:1"]` on `/v1/status` for that signal.
+route without tool support can still answer general questions, but it cannot
+reliably satisfy personal-memory requests and is not a valid deployment profile.
 
 ### GN100 Cosmos3 switch boundary
 
@@ -183,9 +182,9 @@ is no listener regex, wake-prefix requirement, or manual-trigger requirement;
 convenience but is not an authorization gate.
 
 This deliberately trades the previous ambient-speech filter for model-owned
-intent routing. Unsupported conversation receives no Memory authority: without
-a Memory result, the deterministic guard still prevents a location claim. Since
-barge-in is unsupported, transcripts finalized during the configured short
+intent routing. General conversation may be answered from model knowledge, but
+only a Memory tool result is treated as authoritative personal visual memory.
+Since barge-in is unsupported, transcripts finalized during the configured short
 post-reply cooldown are dropped to prevent the glasses speaker from recursively
 querying the Agent through its microphone; this is timing suppression, not an
 intent regex.

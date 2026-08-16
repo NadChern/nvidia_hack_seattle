@@ -75,7 +75,7 @@ class RegistrationLiteLlmClient(LiteLLMClient):
 
 
 class NoToolLiteLlmClient(LiteLLMClient):
-    """Model response that omits the required Memory tool call."""
+    """Model response that answers directly without a Memory tool call."""
 
     async def acompletion(
         self, model: Any, messages: Any, tools: Any, **kwargs: Any
@@ -88,7 +88,7 @@ class NoToolLiteLlmClient(LiteLLMClient):
                     "finish_reason": "stop",
                     "message": {
                         "role": "assistant",
-                        "content": "I do not have a memory of that.",
+                        "content": "Here is a concise general answer.",
                     },
                 }
             ]
@@ -190,7 +190,7 @@ async def test_fake_litellm_calls_where_is_and_preserves_the_whole_result() -> N
     client = FakeLiteLlmClient()
     model = LiteLlm(model="openai/test", llm_client=client)
     memory = MemoryTool(settings, ask_memory=ask)
-    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model), memory)
+    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model))
 
     result = await backend.query("Where did I leave my keys?", "sess_01")
 
@@ -201,27 +201,7 @@ async def test_fake_litellm_calls_where_is_and_preserves_the_whole_result() -> N
     assert client.calls == 2
 
 
-async def test_supported_where_question_falls_back_when_model_omits_tool() -> None:
-    expected = confirmed_answer()
-    calls: list[tuple[str, str | None]] = []
-
-    def ask(label: str, session_id: str | None):  # type: ignore[no-untyped-def]
-        calls.append((label, session_id))
-        return expected
-
-    settings = Settings(environment="ci")
-    memory = MemoryTool(settings, ask_memory=ask)
-    model = LiteLlm(model="openai/test", llm_client=NoToolLiteLlmClient())
-    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model), memory)
-
-    result = await backend.query("Where is my keys?", "sess_01")
-
-    assert result.text == expected.spoken_answer
-    assert result.tool_result == expected
-    assert calls == [("keys", "sess_01")]
-
-
-async def test_unsupported_question_does_not_use_memory_fallback() -> None:
+async def test_general_question_uses_model_answer_without_memory() -> None:
     calls: list[tuple[str, str | None]] = []
 
     def ask(label: str, session_id: str | None):  # type: ignore[no-untyped-def]
@@ -231,10 +211,11 @@ async def test_unsupported_question_does_not_use_memory_fallback() -> None:
     settings = Settings(environment="ci")
     memory = MemoryTool(settings, ask_memory=ask)
     model = LiteLlm(model="openai/test", llm_client=NoToolLiteLlmClient())
-    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model), memory)
+    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model))
 
-    result = await backend.query("Tell me a joke.", "sess_01")
+    result = await backend.query("Explain photosynthesis briefly.", "sess_01")
 
+    assert result.text == "Here is a concise general answer."
     assert result.tool_result is None
     assert calls == []
 
@@ -247,7 +228,6 @@ async def test_fake_litellm_routes_remember_intent_to_registration_tool() -> Non
     backend = AdkRunnerBackend(
         settings,
         create_agent(settings, memory, registration, model=model),  # type: ignore[arg-type]
-        memory,
     )
 
     result = await backend.query("Remember my keys", "sess_01")
@@ -262,7 +242,7 @@ async def test_session_history_is_bounded_by_turn_not_raw_event_count() -> None:
     client = FakeLiteLlmClient()
     model = LiteLlm(model="openai/test", llm_client=client)
     memory = MemoryTool(settings, ask_memory=lambda _label, _session: confirmed_answer())
-    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model), memory)
+    backend = AdkRunnerBackend(settings, create_agent(settings, memory, model=model))
 
     for _ in range(4):
         await backend.query("Where are my keys?", "sess_bounded")
@@ -292,7 +272,7 @@ async def test_real_model_answers_a_known_question() -> None:
         allow_external_llm=allow_external,
     )
     memory = MemoryTool(settings, ask_memory=lambda _label, _session: confirmed_answer())
-    backend = AdkRunnerBackend(settings, create_agent(settings, memory), memory)
+    backend = AdkRunnerBackend(settings, create_agent(settings, memory))
 
     result = await backend.query("Where did I leave my keys?", "sess_real_model")
 

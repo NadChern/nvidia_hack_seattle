@@ -31,12 +31,19 @@ def test_registration_guard_replaces_non_scripted_text() -> None:
     assert guarded.verdict == "registration:succeeded"
 
 
-def test_rule_1_vetoes_a_reply_without_a_tool_call() -> None:
-    result = guard_reply("They are in the kitchen.", None)
+def test_rule_1_accepts_a_bounded_general_answer_without_a_tool_call() -> None:
+    result = guard_reply("Photosynthesis converts light into chemical energy.", None)
+
+    assert result.verdict == "passed"
+    assert result.reply == "Photosynthesis converts light into chemical energy."
+    assert result.answer_status is None
+
+
+def test_rule_1_vetoes_an_empty_general_answer() -> None:
+    result = guard_reply("", None)
 
     assert result.verdict == "vetoed:1"
     assert result.reply == NO_TOOL_REPLY
-    assert result.answer_status is None
 
 
 def test_rule_1_does_not_apply_when_memory_was_called() -> None:

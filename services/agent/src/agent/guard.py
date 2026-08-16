@@ -1,8 +1,8 @@
-"""Deterministic supervision for model-rewritten memory answers.
+"""Deterministic supervision for personal-assistant and memory answers.
 
-The model is never the authority on location. This module is deliberately pure:
-it receives a draft and the exact Memory query result, and either accepts the
-draft or returns ``spoken_answer`` byte-for-byte.
+General-assistant drafts may pass without a Memory result. Once a visual-memory
+tool is used, Memory is the sole authority: this module either accepts the
+bounded rewrite or returns ``spoken_answer`` byte-for-byte.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from visual_memory_memory_contract import AnswerStatus, QueryResponse
 
 from agent.models import GuardVerdict, RegistrationStep
 
-NO_TOOL_REPLY = "I do not have a memory of that."
+NO_TOOL_REPLY = "I couldn't answer that."
 DEFAULT_MAX_REPLY_CHARS = 400
 
 _REGISTRATION_MESSAGES = {
@@ -225,13 +225,23 @@ def guard_reply(
     max_reply_chars: int = DEFAULT_MAX_REPLY_CHARS,
 ) -> GuardResult:
     """Apply the six guard rules in their specified order."""
-    # Rule 1: without a Memory tool result there is no source of truth.
+    # Rule 1: general-assistant answers need no Memory authority. Empty or
+    # unbounded model output still fails closed to a short spoken line. When a
+    # visual-memory tool *was* used, the remaining rules constrain every claim
+    # to its authoritative result.
     if tool_result is None:
+        if not draft.strip() or len(draft) > max_reply_chars:
+            return GuardResult(
+                reply=NO_TOOL_REPLY,
+                answer_status=None,
+                object_id=None,
+                verdict="vetoed:1",
+            )
         return GuardResult(
-            reply=NO_TOOL_REPLY,
+            reply=draft,
             answer_status=None,
             object_id=None,
-            verdict="vetoed:1",
+            verdict="passed",
         )
 
     claimed_locations = _claimed_location_tokens(draft)

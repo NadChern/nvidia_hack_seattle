@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from agent.config import Settings
 from agent.guard import NO_TOOL_REPLY, registration_message
 from agent.main import create_app
-from agent.stub import StubLlm
+from agent.stub import DraftAnswer, StubLlm
 from agent.tools.memory import MemoryTool
 
 pytestmark = pytest.mark.anyio
@@ -69,7 +69,30 @@ async def test_registration_query_returns_only_the_fixed_prompt() -> None:
     assert response.json()["answer_status"] is None
 
 
-async def test_no_tool_call_yields_the_fixed_line() -> None:
+async def test_general_model_answer_passes_without_memory_status() -> None:
+    class DirectBackend:
+        async def query(self, text: str, session_id: str | None) -> DraftAnswer:
+            assert text == "Why is the sky blue?"
+            assert session_id == "sess_01"
+            return DraftAnswer(
+                text="Air scatters blue light more strongly than red light.",
+                tool_result=None,
+            )
+
+    app = create_app(Settings(environment="ci"), backend=DirectBackend())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/v1/agent/query",
+            json={"text": "Why is the sky blue?", "session_id": "sess_01"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "Air scatters blue light more strongly than red light."
+    assert response.json()["answer_status"] is None
+    assert response.json()["guard"] == "passed"
+
+
+async def test_empty_no_tool_response_yields_the_fixed_line() -> None:
     async with AsyncClient(
         transport=ASGITransport(app=app_with_stub()),
         base_url="http://test",

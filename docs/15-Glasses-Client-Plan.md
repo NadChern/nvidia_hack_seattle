@@ -228,8 +228,9 @@ variants. The Gateway and Android HUD may still expose the consume-once manual-t
 interaction as user feedback, but the Agent listener does not require or inspect it. Since
 barge-in is unsupported, a short post-reply timing cooldown drops return-audio echo before
 it can recursively query the model; it does not inspect transcript content. The trust
-boundary remains downstream: only Memory can authorize a location, and the deterministic
-reply guard rejects an ungrounded model answer.
+boundary remains downstream: general-assistant answers may use model knowledge, while a
+visual-memory tool result is authoritative and deterministically guarded whenever the
+model answers from remembered personal-object state.
 
 ## Module layout
 

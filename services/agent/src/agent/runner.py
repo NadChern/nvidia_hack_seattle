@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import uuid
 from collections import OrderedDict
 from typing import Any, cast
@@ -18,10 +17,7 @@ from visual_memory_memory_contract import QueryResponse
 from agent.agent import REQUEST_SESSION_STATE
 from agent.config import Settings
 from agent.errors import AgentServiceError, DependencyUnavailableError
-from agent.stub import DraftAnswer, object_label
-from agent.tools.memory import MemoryTool
-
-logger = logging.getLogger(__name__)
+from agent.stub import DraftAnswer
 
 APP_NAME = "visual-memory-agent"
 USER_ID = "wearer"
@@ -58,12 +54,10 @@ class AdkRunnerBackend:
         self,
         settings: Settings,
         agent: LlmAgent,
-        memory: MemoryTool,
         *,
         sessions: BoundedSessionService | None = None,
     ) -> None:
         self._settings = settings
-        self._memory = memory
         self._sessions = sessions or BoundedSessionService()
         self._runner = Runner(
             app_name=APP_NAME,
@@ -154,23 +148,6 @@ class AdkRunnerBackend:
                     session_id=adk_session_id,
                     max_turns=self._settings.max_turns_kept,
                 )
-
-            # Tool selection by an OpenAI-compatible model is advisory, not a
-            # reliability boundary. A supported location question is already
-            # recognized deterministically by the same bounded grammar used by
-            # the offline backend. If the model omits ``where_is``, perform that
-            # one trusted call here and use Memory's canonical wording. This
-            # preserves Nemotron as the Agent while preventing a valid wearer
-            # question from being converted to guard rule 1 by routing drift.
-            if tool_result is None and not registration_started:
-                label = object_label(text)
-                if label is not None:
-                    tool_result = await self._memory.where_is(label, session_id)
-                    reply = tool_result.spoken_answer
-                    logger.warning(
-                        "model omitted where_is; deterministic memory fallback used",
-                        extra={"session_id": session_id},
-                    )
 
             return DraftAnswer(
                 text=reply,
