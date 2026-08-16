@@ -203,6 +203,7 @@ export interface QueryAnswer {
   evidence?: { url: string; media_type: string } | null
 }
 
+
 export interface SpeechBackend {
   name: string
   /**
@@ -250,6 +251,7 @@ export interface AgentAnswer {
 export interface EnrolledObject {
   object_id: string
   label: string
+  created_at?: string
   registry_version: number
 }
 

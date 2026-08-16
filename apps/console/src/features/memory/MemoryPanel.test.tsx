@@ -1,15 +1,21 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { afterEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MemoryPanel } from "@/features/memory/MemoryPanel"
 
-const api = vi.hoisted(() => ({ post: vi.fn() }))
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock("@/lib/api", () => api)
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 vi.mock("sonner", () => ({ toast }))
+
+const EMPTY_GALLERY = { registry_version: 0, unchanged: false, objects: [], views: [] }
+
+beforeEach(() => {
+  api.get.mockResolvedValue(EMPTY_GALLERY)
+})
 
 afterEach(() => {
   cleanup()
@@ -42,5 +48,28 @@ describe("MemoryPanel clear memory", () => {
     fireEvent.click(screen.getByRole("button", { name: /cancel/i }))
 
     expect(api.post).not.toHaveBeenCalled()
+  })
+
+  it("lists registered objects and locates one by label on row click", async () => {
+    const now = new Date().toISOString()
+    api.get.mockResolvedValue({
+      registry_version: 3,
+      unchanged: false,
+      objects: [
+        { object_id: "obj_1", label: "a set of keys", created_at: now, updated_at: now, registry_version: 3 },
+      ],
+      views: [
+        { view_id: "v1", object_id: "obj_1", view_index: 0 },
+        { view_id: "v2", object_id: "obj_1", view_index: 1 },
+      ],
+    })
+    api.post.mockResolvedValue({ answer_status: "confirmed", spoken_answer: "on the desk" })
+    render(<MemoryPanel />)
+
+    fireEvent.click(await screen.findByText("a set of keys"))
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith("memory", "/v1/query", { label: "a set of keys" }),
+    )
   })
 })
