@@ -1,4 +1,4 @@
-# NEMO - Visual Memory Assistant
+# MEMO - Visual Memory Assistant
 
 A local-first wearable assistant that remembers personal objects, answers everyday questions, and
 connects a trusted person when human help is needed. RayNeo X3 Pro glasses stream first-person
@@ -17,14 +17,14 @@ Built for the NVIDIA Spark Hackathon, Seattle.
 
 ## Why
 
-We are building NEMO for our parents.
+We are building MEMO for our parents.
 
-NEMO helps them keep track of important belongings, such as keys or a wallet, so they can ask where
+MEMO helps them keep track of important belongings, such as keys or a wallet, so they can ask where
 something is and receive its last confirmed location. It also gives them a simple, hands-free way to
 ask everyday questions.
 
 But not every situation should be left to AI. When judgment, reassurance, or human reasoning is
-especially valuable, NEMO connects our parents with family members they know and trust. It does not
+especially valuable, MEMO connects our parents with family members they know and trust. It does not
 try to replace family support—it keeps that support within reach.
 
 Our goal is to give our parents greater confidence and independence while giving their families
