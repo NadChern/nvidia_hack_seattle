@@ -409,12 +409,14 @@ proxies object minting to Memory. `POST /v1/objects/{id}/capture` arms a bounded
 window and returns `202`; `GET /v1/objects/{id}/status` reports `capturing`, `extracting`,
 `succeeded`, or `failed` plus frame/detection/quality/selection counts and a reason code. The
 window is decoded in the enrollment service and localized with a strict single-frame prompt. Each
-geometrically usable crop is localized a second time so a sharp crop containing only an accessory,
-hand, or background cannot enter the gallery. Surviving crops are filtered relative to their own
-sharpness median, embedded through the same mask-to-crop function used for matching, and
-farthest-point sampled. Fewer than two semantically valid quality/diverse views is an explicit
-failed registration and stores no weak gallery. No recording endpoint or video process is added to
-the Media Gateway.
+geometrically usable crop is localized a second time, and that tighter box is used to build the
+actual reference. A separate contrastive quality check rejects a crop that grounds an accessory,
+hand, or background as the target; label-specific checks may be stricter, such as requiring a
+visible metal key blade rather than a ring or fob alone. Surviving crops are filtered relative to
+their own sharpness median, embedded through the same two-stage mask-to-crop transform used for
+live matching, and farthest-point sampled. Fewer than two semantically valid quality/diverse views
+is an explicit failed registration, removes the empty object, and stores no weak gallery. No
+recording endpoint or video process is added to the Media Gateway.
 
 The Agent exposes `start_registration(label)` beside `where_is(label)`. The model only routes the
 intent; a background workflow owns all side effects and narration: fixed prompt through

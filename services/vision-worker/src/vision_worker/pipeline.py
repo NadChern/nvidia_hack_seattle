@@ -53,9 +53,9 @@ from visual_memory_vision_contract.protocol import (
 
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
 from vision_worker.identity.base import ObjectEmbedder
-from vision_worker.identity.crop import box_to_mask, prepare_masked_crop
+from vision_worker.identity.crop import box_to_mask, encode_jpeg, prepare_masked_crop
 from vision_worker.identity.gallery import GalleryCache, GalleryScore
-from vision_worker.reason.base import WindowEvent, WindowReasoner
+from vision_worker.reason.base import ReasonerLocalizer, WindowEvent
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ class Pipeline:
     def __init__(
         self,
         *,
-        reasoner: WindowReasoner,
+        reasoner: ReasonerLocalizer,
         embedder: ObjectEmbedder,
         gallery: GalleryCache,
         evidence_ring: EvidenceRing,
@@ -348,20 +348,32 @@ class Pipeline:
     async def _resolve_identity(
         self, rgb: NDArray[np.uint8], event: WindowEvent
     ) -> GalleryScore | None:
-        """Crop the reasoner's box, embed it, and match the gallery.
+        """Refine the event box, embed the tight crop, and match the gallery.
 
-        The box is padded before cropping: Cosmos boxes run tight/noisy on small
-        objects, and a padded crop plus the shared transform's own context
-        margin keeps the object inside the frame the embedder sees.
+        Event grounding and enrollment both start with one box, then run the
+        strict single-crop localizer and embed its tighter result. Keeping that
+        two-stage transform on both sides prevents a key ring or table around a
+        small key from becoming the personal identity signal.
         """
         if not self._embedder.is_ready:
             return None
         height, width = rgb.shape[:2]
-        mask = box_to_mask(event.box, height, width, padding=self._box_padding)
-        if not mask.any():
+        first_mask = box_to_mask(event.box, height, width, padding=self._box_padding)
+        if not first_mask.any():
             return None
         try:
-            crop = prepare_masked_crop(rgb, mask, event.box)
+            first_crop = prepare_masked_crop(rgb, first_mask, event.box)
+            semantic_box = await self._reasoner.localize(encode_jpeg(first_crop.image), event.label)
+            if semantic_box is None:
+                return None
+            crop_height, crop_width = first_crop.image.shape[:2]
+            semantic_mask = box_to_mask(
+                semantic_box,
+                crop_height,
+                crop_width,
+                padding=self._box_padding,
+            )
+            crop = prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
             vectors = await self._embedder.embed([crop])
         except Exception:
             logger.exception("identity embedding failed; event left unmatched")

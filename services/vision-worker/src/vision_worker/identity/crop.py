@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import io
+
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
@@ -33,6 +35,13 @@ def box_to_mask(
     mask = np.zeros((height, width), dtype=np.bool_)
     mask[y0:y1, x0:x1] = True
     return mask
+
+
+def encode_jpeg(image: NDArray[np.uint8]) -> bytes:
+    """Encode an RGB crop for a model adapter without persisting it."""
+    output = io.BytesIO()
+    Image.fromarray(image).save(output, format="JPEG", quality=92)
+    return output.getvalue()
 
 
 def prepare_masked_crop(
@@ -119,4 +128,4 @@ def prepare_masked_crop(
     return MaskedCrop(image=resized_image, mask=resized_mask)
 
 
-__all__ = ["box_to_mask", "prepare_masked_crop"]
+__all__ = ["box_to_mask", "encode_jpeg", "prepare_masked_crop"]

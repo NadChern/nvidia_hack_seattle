@@ -23,10 +23,13 @@ BOX = BoundingBox(x_min=0.25, y_min=0.25, x_max=0.75, y_max=0.75)
 
 
 class BoxLocalizer:
-    """Stands in for the Cosmos reasoner: the object is always the center box."""
+    """Stands in for Cosmos: every box and final reference is valid."""
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         return BOX
+
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        return True
 
 
 class RejectingCropLocalizer:
@@ -35,6 +38,14 @@ class RejectingCropLocalizer:
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         with Image.open(io.BytesIO(frame)) as image:
             return BOX if image.size == (64, 64) else None
+
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        return True
+
+
+class RejectingReferenceLocalizer(BoxLocalizer):
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        return False
 
 
 class StubGallery:
@@ -136,7 +147,33 @@ async def test_semantically_wrong_crops_are_rejected_before_embedding() -> None:
     assert caught.value.result.detections == 3
     assert caught.value.result.quality_passed == 0
     assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
     assert gallery.refreshes == 0
+
+
+async def test_grounded_but_unrecognizable_references_are_rejected() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=RejectingReferenceLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+    )
+    frames = tuple(
+        frame(index, color)
+        for index, color in enumerate(((220, 30, 30), (30, 220, 30), (30, 30, 220)))
+    )
+
+    with pytest.raises(EnrollmentError, match="passed quality") as caught:
+        await enroller.enroll(object_id="object_keys", label="keys", frames=frames)
+
+    assert caught.value.result.detections == 3
+    assert caught.value.result.quality_passed == 0
+    assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
 
 
 async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:
@@ -157,6 +194,7 @@ async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:
 
     assert caught.value.reason_code == "too_few_quality_frames"
     assert memory.uploads == []
+    assert memory.deleted == ["object_keys"]
 
 
 async def test_enrollment_and_matching_use_the_identical_crop_transform() -> None:

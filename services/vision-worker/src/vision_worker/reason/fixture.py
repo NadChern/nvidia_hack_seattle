@@ -38,11 +38,13 @@ class FixtureReasoner:
         default: Sequence[WindowEvent] = (),
         ref: DetectorRef = _FIXTURE_REF,
         localize_box: BoundingBox | None = _CENTER_BOX,
+        reference_valid: bool = True,
     ) -> None:
         self._script: deque[Sequence[WindowEvent]] = deque(script)
         self._default = tuple(default)
         self._ref = ref
         self._localize_box = localize_box
+        self._reference_valid = reference_valid
         self.calls: list[tuple[int, tuple[str, ...]]] = []
 
     @property
@@ -59,6 +61,9 @@ class FixtureReasoner:
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None:
         return self._localize_box
+
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        return self._reference_valid
 
 
 __all__ = ["FixtureReasoner"]

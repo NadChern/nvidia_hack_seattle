@@ -6,21 +6,19 @@ import asyncio
 import base64
 import datetime as dt
 import hashlib
-import io
 import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
-from PIL import Image
 from visual_memory_media_contract.images import decode_video_payload
 from visual_memory_memory_contract.client import MemoryClient, MemoryError_
 from visual_memory_memory_contract.protocol import ObjectViewQuality, ObjectViewUpload
 
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
 from vision_worker.identity.base import MaskedCrop, ObjectEmbedder
-from vision_worker.identity.crop import box_to_mask, prepare_masked_crop
+from vision_worker.identity.crop import box_to_mask, encode_jpeg, prepare_masked_crop
 from vision_worker.identity.gallery import GalleryCache
 from vision_worker.identity.selection import (
     EmbeddedCandidate,
@@ -173,24 +171,64 @@ class ObjectEnroller:
             if quality.accepted
         ]
 
-        # A sharp, reasonably sized box can still be semantically wrong. The
-        # failed live keys capture that motivated this gate produced one crop
-        # containing keys and three crisp crops containing only cord/floor;
-        # geometric quality assigned all four high scores. Ask the strict
-        # enrollment localizer to recognize the target again inside each crop.
-        # This second pass cannot make a crop good -- it can only abstain -- and
-        # fewer than two surviving views fails without persisting a poisoned
-        # personal-object gallery.
+        # A sharp, reasonably sized first box can still contain mostly a key
+        # ring, fob, hand, or floor. Localize inside that crop, then build the
+        # crop that will actually be embedded from the second, tighter box.
+        # This is also the transform used for live identity below, preserving
+        # enrollment/query crop parity instead of validating one box and storing
+        # the broader, known-bad one.
         semantic_boxes = await asyncio.gather(
             *(
-                self._localizer.localize(_jpeg(crop.image), label)
+                self._localizer.localize(encode_jpeg(crop.image), label)
                 for crop, _quality in physically_usable
+            )
+        )
+        refined: list[tuple[MaskedCrop, QualityScore]] = []
+        for (first_crop, _first_quality), semantic_box in zip(
+            physically_usable, semantic_boxes, strict=True
+        ):
+            if semantic_box is None:
+                continue
+            height, width = first_crop.image.shape[:2]
+            mask = box_to_mask(semantic_box, height, width, padding=self._box_padding)
+            quality = score_quality(
+                first_crop.image,
+                mask,
+                semantic_box,
+                _ENROLL_CONFIDENCE,
+                angular_velocity=None,
+                config=self._config.quality,
+            )
+            try:
+                crop = prepare_masked_crop(first_crop.image, mask, semantic_box)
+            except ValueError:
+                continue
+            refined.append((crop, quality))
+
+        refined_scores = apply_relative_sharpness(
+            [quality for _, quality in refined], config=self._config.quality
+        )
+        semantically_localized = [
+            (crop, quality)
+            for (crop, _), quality in zip(refined, refined_scores, strict=True)
+            if quality.accepted
+        ]
+
+        # Grounding answers where the model thinks an object might be. A
+        # separate contrastive QC question is intentionally stricter: for keys,
+        # for example, a ring/fob without a visible metal blade is REJECT. This
+        # caught all three bad suggestions from the second physical retry even
+        # though grounding had returned boxes for them.
+        reference_results = await asyncio.gather(
+            *(
+                self._localizer.validate_reference(encode_jpeg(crop.image), label)
+                for crop, _quality in semantically_localized
             )
         )
         passed = [
             candidate
-            for candidate, semantic_box in zip(physically_usable, semantic_boxes, strict=True)
-            if semantic_box is not None
+            for candidate, valid in zip(semantically_localized, reference_results, strict=True)
+            if valid
         ]
         logger.info(
             "registration semantic crop gate completed",
@@ -199,11 +237,13 @@ class ObjectEnroller:
                 "label": label,
                 "localized": detections,
                 "physical_quality": len(physically_usable),
-                "semantic_quality": len(passed),
+                "semantic_localized": len(semantically_localized),
+                "reference_valid": len(passed),
             },
         )
         preliminary = EnrollmentResult(len(sampled), detections, len(passed), 0)
         if len(passed) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
             raise EnrollmentError(
                 "too_few_quality_frames",
                 f"only {len(passed)} frames passed quality; need {self._config.min_views}",
@@ -228,6 +268,7 @@ class ObjectEnroller:
             selected_views=len(selected_views),
         )
         if len(selected_views) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
             raise EnrollmentError(
                 "too_few_diverse_views",
                 f"only {len(selected_views)} diverse views; need {self._config.min_views}",
@@ -236,7 +277,7 @@ class ObjectEnroller:
 
         try:
             for view_index, candidate in enumerate(selected_views):
-                crop_bytes = _jpeg(candidate.crop.image)
+                crop_bytes = encode_jpeg(candidate.crop.image)
                 digest = hashlib.sha256(crop_bytes).hexdigest()
                 quality = candidate.quality
                 upload = ObjectViewUpload(
@@ -272,6 +313,16 @@ class ObjectEnroller:
 
         await self._gallery.refresh(force=True)
         return result
+
+    async def _rollback_failed_object(self, object_id: str) -> None:
+        """Remove an object whose capture produced no usable gallery."""
+        try:
+            await asyncio.to_thread(self._memory.delete_object, object_id)
+        except MemoryError_:
+            logger.exception(
+                "failed to remove object after rejected registration",
+                extra={"object_id": object_id},
+            )
 
 
 class EnrollmentManager:
@@ -390,12 +441,6 @@ def _subsample(frames: Sequence[BufferedFrame], limit: int) -> tuple[BufferedFra
         return tuple(frames)
     indexes = np.linspace(0, len(frames) - 1, limit).round().astype(int)
     return tuple(frames[int(index)] for index in dict.fromkeys(indexes.tolist()))
-
-
-def _jpeg(image: np.ndarray) -> bytes:
-    output = io.BytesIO()
-    Image.fromarray(image).save(output, format="JPEG", quality=92)
-    return output.getvalue()
 
 
 __all__ = [

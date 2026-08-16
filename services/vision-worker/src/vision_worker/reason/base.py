@@ -91,6 +91,10 @@ class Localizer(Protocol):
 
     async def localize(self, frame: bytes, label: str) -> BoundingBox | None: ...
 
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        """Whether a proposed enrollment crop clearly shows the target itself."""
+        ...
+
 
 class ReasonerLocalizer(WindowReasoner, Localizer, Protocol):
     """The shared Cosmos/fixture adapter used by tracking and enrollment."""

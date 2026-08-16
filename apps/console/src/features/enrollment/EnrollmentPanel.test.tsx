@@ -126,6 +126,16 @@ describe("EnrollmentPanel", () => {
     )
   })
 
+  it("opens an enlarged preview for a suggested reference", async () => {
+    await completeRegistration()
+
+    fireEvent.click(screen.getByRole("button", { name: "Enlarge selected reference 1" }))
+
+    expect(await screen.findByRole("dialog")).toBeTruthy()
+    expect(screen.getByRole("heading", { name: "Suggested reference 1" })).toBeTruthy()
+    expect(screen.getByAltText("Enlarged selected reference 1")).toBeTruthy()
+  })
+
   it("confirms by keeping the durable object", async () => {
     await completeRegistration()
 

@@ -77,9 +77,10 @@ The Enroll tab uses Vision's configured registration allowlist as its picklist. 
 video session, **Start registration** creates a Memory object, arms Vision's bounded EvidenceRing
 capture, and polls capture/extraction progress. Cosmos localizes the selected object while the
 wearer rotates it; C-RADIO stores the strongest diverse reference crops. On success those crops
-are fetched through the authenticated Memory proxy and shown for review. **Confirm** keeps the
-durable object; **Discard** deletes the object, vectors, and reference crops. Raw enrollment video
-is never sent to the console or persisted by this workflow.
+are fetched through the authenticated Memory proxy and shown for review. Each suggestion is
+clickable and opens an enlarged, contained preview so the operator can inspect the complete crop
+before deciding. **Confirm** keeps the durable object; **Discard** deletes the object, vectors, and
+reference crops. Raw enrollment video is never sent to the console or persisted by this workflow.
 
 ## Cosmos pipeline receipts
 

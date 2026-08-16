@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { Camera, Check, RotateCcw, Trash2 } from "lucide-react"
+import { Camera, Check, RotateCcw, Trash2, ZoomIn } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { delChecked, get, getBlob, post } from "@/lib/api"
 import type {
   EnrolledObject,
@@ -25,6 +32,7 @@ export function EnrollmentPanel() {
   const [objectId, setObjectId] = useState<string | null>(null)
   const [initialProgress, setInitialProgress] = useState<EnrollmentProgress | null>(null)
   const [thumbnailUrls, setThumbnailUrls] = useState<string[]>([])
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -49,6 +57,7 @@ export function EnrollmentPanel() {
     retry: false,
   })
   const progress = progressQuery.data ?? initialProgress
+  const previewUrl = previewIndex === null ? null : (thumbnailUrls[previewIndex] ?? null)
 
   useEffect(() => {
     if (progress?.state !== "succeeded" || !objectId || thumbnailUrls.length > 0) return
@@ -81,6 +90,7 @@ export function EnrollmentPanel() {
   const reset = () => {
     thumbnailUrls.forEach((url) => URL.revokeObjectURL(url))
     setThumbnailUrls([])
+    setPreviewIndex(null)
     setObjectId(null)
     setInitialProgress(null)
     setError(null)
@@ -185,14 +195,24 @@ export function EnrollmentPanel() {
         {thumbnailUrls.length > 0 ? (
           <div className="space-y-2">
             <div className="text-xs font-medium">Selected reference views</div>
-            <div className="flex gap-2 overflow-x-auto">
+            <div className="flex gap-2 overflow-x-auto pb-1">
               {thumbnailUrls.map((url, index) => (
-                <img
+                <button
                   key={url}
-                  src={url}
-                  alt={`Selected reference ${index + 1}`}
-                  className="size-24 rounded-md border object-cover"
-                />
+                  type="button"
+                  aria-label={`Enlarge selected reference ${index + 1}`}
+                  onClick={() => setPreviewIndex(index)}
+                  className="group relative shrink-0 overflow-hidden rounded-md border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <img
+                    src={url}
+                    alt={`Selected reference ${index + 1}`}
+                    className="size-24 object-cover transition-transform group-hover:scale-105"
+                  />
+                  <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-black/65 py-1 text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                    <ZoomIn className="size-3" /> Preview
+                  </span>
+                </button>
               ))}
             </div>
           </div>
@@ -225,6 +245,33 @@ export function EnrollmentPanel() {
             {error ?? (progressQuery.error instanceof Error ? progressQuery.error.message : "Status unavailable")}
           </p>
         ) : null}
+
+        <Dialog
+          open={previewUrl !== null}
+          onOpenChange={(open) => {
+            if (!open) setPreviewIndex(null)
+          }}
+        >
+          <DialogContent className="sm:max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>
+                Suggested reference {previewIndex === null ? "" : previewIndex + 1}
+              </DialogTitle>
+              <DialogDescription>
+                Confirm only when the target object itself is sharp and clearly visible.
+              </DialogDescription>
+            </DialogHeader>
+            {previewUrl ? (
+              <div className="flex max-h-[75vh] min-h-64 items-center justify-center overflow-hidden rounded-lg bg-muted/40 p-3">
+                <img
+                  src={previewUrl}
+                  alt={`Enlarged selected reference ${(previewIndex ?? 0) + 1}`}
+                  className="max-h-[70vh] max-w-full object-contain"
+                />
+              </div>
+            ) : null}
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   )

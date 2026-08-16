@@ -123,6 +123,39 @@ async def test_enrollment_localize_ignores_a_box_for_the_wrong_label(
     assert await reasoner.localize(b"jpeg", "keys") is None
 
 
+async def test_reference_validation_accepts_only_exact_valid(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_reference_blocking",
+        lambda crop, label: "VALID",
+    )
+
+    assert await reasoner.validate_reference(b"jpeg", "keys")
+
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_reference_blocking",
+        lambda crop, label: "VALID because it looks close",
+    )
+    assert not await reasoner.validate_reference(b"jpeg", "keys")
+
+
+async def test_reference_validation_rejects_model_abstention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reasoner = CosmosReasoner()
+    monkeypatch.setattr(
+        reasoner,
+        "_ask_reference_blocking",
+        lambda crop, label: "REJECT",
+    )
+
+    assert not await reasoner.validate_reference(b"jpeg", "keys")
+
+
 async def test_boxes_for_unrequested_labels_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     reply = (
         '<ref>laptop</ref><box>[100, 100, 200, 200]</box>\n[{"label":"laptop","action":"carried"}]'

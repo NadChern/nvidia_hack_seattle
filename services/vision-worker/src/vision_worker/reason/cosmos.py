@@ -54,6 +54,7 @@ PROMPT_VERSION = "cosmos-reason-v1"
 #: the physical target itself. Keeping the versions separate avoids pretending
 #: an enrollment-only safety change moved event semantics.
 LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v2"
+REFERENCE_PROMPT_VERSION = "cosmos-enrollment-reference-v1"
 
 #: The model's own action vocabulary. The first three are memory events; the
 #: last two are how it declines. `carried` covers an object in transit.
@@ -96,6 +97,25 @@ holder's hand, or the surrounding floor, wall, table, or other background. If a 
 If a recognizable {label} is clearly visible, output exactly one line and nothing else:
 <ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
 Coordinates are 0 to 1000, top-left origin."""
+
+_REFERENCE_REQUIREMENTS = {
+    "keys": """VALID requires a clearly visible metal key blade with its shaft and cut \
+teeth or grooves. A ring, fob, tag, tracker, cord, lanyard, or colored accessory without a \
+clearly visible metal key blade is REJECT.""",
+    "wallet": """VALID requires the wallet body to be clearly visible. A hand, card, phone, \
+or surrounding surface without the wallet body is REJECT.""",
+    "glasses": """VALID requires recognizable lenses and frame. A case, strap, hand, or \
+reflection without the glasses themselves is REJECT.""",
+    "mug": """VALID requires the mug body or its body and handle. A hand, coaster, table, \
+or isolated handle without the mug body is REJECT.""",
+}
+_REFERENCE_PROMPT = """Act as a strict quality-control inspector, not an object detector. \
+Decide whether this image is suitable as a personal reference photo for {label}. Reply with \
+exactly VALID or REJECT.
+
+{requirements}
+
+Blur, severe occlusion, or a tiny partial target is REJECT. When uncertain, REJECT."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +191,20 @@ class CosmosReasoner:
                 return box
         return None
 
+    async def validate_reference(self, crop: bytes, label: str) -> bool:
+        """Accept only a crop where the target itself is clearly recognizable."""
+        if not crop or not label:
+            return False
+        try:
+            reply = await asyncio.to_thread(self._ask_reference_blocking, crop, label)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.warning(
+                "Cosmos unreachable; enrollment reference rejected",
+                extra={"error": str(exc)},
+            )
+            return False
+        return reply.strip().upper() == "VALID"
+
     # ------ Parsing --------------------------------------------------------
 
     def _parse(self, reply: str, labels: Sequence[str]) -> tuple[WindowEvent, ...]:
@@ -221,6 +255,36 @@ class CosmosReasoner:
                 "label": label,
                 "prompt_version": LOCALIZE_PROMPT_VERSION,
                 "found": bool(_parse_boxes(reply)),
+            },
+        )
+        return reply
+
+    def _ask_reference_blocking(self, crop: bytes, label: str) -> str:
+        normalized = label.strip().casefold()
+        requirements = _REFERENCE_REQUIREMENTS.get(
+            normalized,
+            f"VALID requires the physical {label} itself to be clearly recognizable. "
+            "An accessory, hand, or background without the target is REJECT.",
+        )
+        content: list[dict[str, Any]] = [
+            {
+                "type": "text",
+                "text": _REFERENCE_PROMPT.format(label=label, requirements=requirements),
+            },
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(crop).decode()}"},
+            },
+        ]
+        started = time.perf_counter()
+        reply = self._complete_blocking(content, max_tokens=16)
+        logger.info(
+            "Cosmos enrollment reference validated",
+            extra={
+                "latency_ms": (time.perf_counter() - started) * 1000.0,
+                "label": label,
+                "prompt_version": REFERENCE_PROMPT_VERSION,
+                "valid": reply.strip().upper() == "VALID",
             },
         )
         return reply
@@ -333,6 +397,7 @@ def _parse_action_tail(reply: str) -> dict[str, dict[str, Any]]:
 __all__ = [
     "LOCALIZE_PROMPT_VERSION",
     "PROMPT_VERSION",
+    "REFERENCE_PROMPT_VERSION",
     "CosmosReasoner",
     "CosmosReasonerConfig",
 ]
