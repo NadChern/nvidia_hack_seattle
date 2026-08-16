@@ -15,11 +15,17 @@ from ulid import ULID
 
 SESSION_PREFIX = "sess"
 SIGNAL_PREFIX = "lc"
+ASSIST_REQUEST_PREFIX = "assist"
 
 
 def new_session_id() -> str:
     """Mint a session identifier, e.g. `sess_01JAB...`."""
     return f"{SESSION_PREFIX}_{ULID()}"
+
+
+def new_assist_request_id() -> str:
+    """Mint a remote-assist request identifier, e.g. `assist_01JAB...`."""
+    return f"{ASSIST_REQUEST_PREFIX}_{ULID()}"
 
 
 def new_signal_id() -> str:
@@ -39,9 +45,11 @@ def lifecycle_idempotency_key(
 
 
 __all__ = [
+    "ASSIST_REQUEST_PREFIX",
     "SESSION_PREFIX",
     "SIGNAL_PREFIX",
     "lifecycle_idempotency_key",
+    "new_assist_request_id",
     "new_session_id",
     "new_signal_id",
 ]

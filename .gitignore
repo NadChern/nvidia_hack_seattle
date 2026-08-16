@@ -38,3 +38,7 @@ logs/
 node_modules/
 **/node_modules/
 apps/console/dist/
+
+# Claude Code role/task prompt files -- planning scratch for driving an
+# agent through a feature, not project source. Local to whoever wrote them.
+role-prompts/

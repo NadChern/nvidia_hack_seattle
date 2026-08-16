@@ -57,6 +57,7 @@ class RoomWorker:
         settings: Settings,
         session: Session,
         sink: MediaSink,
+        on_participant_left: Callable[[str, str], None] | None = None,
     ) -> None:
         self._settings = settings
         self._session = session
@@ -64,6 +65,12 @@ class RoomWorker:
         self._room = rtc.Room()
         self._tasks: set[asyncio.Task[None]] = set()
         self._connected = False
+        #: Called with (session_id, participant_identity) whenever a
+        #: participant other than the session's own publisher disconnects --
+        #: today that is only ever a remote-assist helper. Lets the caller
+        #: (main.py) end an accepted assist request without this worker
+        #: knowing anything about the assist domain.
+        self._on_participant_left = on_participant_left
         self.return_audio = ReturnAudio(
             sample_rate=settings.audio_sample_rate,
             channels=settings.audio_channels,
@@ -162,6 +169,22 @@ class RoomWorker:
         publication: rtc.RemoteTrackPublication,
         participant: rtc.RemoteParticipant,
     ) -> None:
+        # Ingest only the session's own publisher. A room with a remote-assist
+        # helper in it has a second participant able to publish a microphone
+        # (docs/12's `helper` grant); without this check that track would
+        # start a new audio epoch and reach Speech/the Agent, which would
+        # transcribe and might reply to the helper instead of the wearer.
+        if participant.identity != self._session.device_id:
+            logger.info(
+                "ignored a track from a non-publisher participant",
+                extra={
+                    "session_id": self._session.session_id,
+                    "participant_identity": participant.identity,
+                    "track_kind": "video" if track.kind == rtc.TrackKind.KIND_VIDEO else "audio",
+                },
+            )
+            return
+
         # A new track SID is a new media epoch even when the participant
         # identity is unchanged. That is the spike's central finding.
         if track.kind == rtc.TrackKind.KIND_VIDEO:
@@ -187,13 +210,20 @@ class RoomWorker:
         )
 
     def _on_participant_connected(self, participant: rtc.RemoteParticipant) -> None:
-        del participant
+        # A helper joining must not be mistaken for the wearer (re)connecting
+        # -- same identity check as the track filter above, for the same
+        # reason: this room can now hold a second participant.
+        if participant.identity != self._session.device_id:
+            return
         self._session.publisher_present = True
         self._session.ever_published = True
         self._session.touch()
 
     def _on_participant_disconnected(self, participant: rtc.RemoteParticipant) -> None:
-        del participant
+        if participant.identity != self._session.device_id:
+            if self._on_participant_left is not None:
+                self._on_participant_left(self._session.session_id, participant.identity)
+            return
         self._session.publisher_present = False
         for kind in ("video", "audio"):
             self._sink.epoch_ended(

@@ -23,8 +23,37 @@ from media_gateway.errors import UnavailableError
 #: `publisher` is the glasses client: it publishes camera and microphone, and
 #: subscribes so it can hear the assistant's return audio. `worker` is the
 #: gateway itself: it subscribes to media and publishes synthesized speech.
-#: `viewer` is the operator console and may only subscribe.
-GrantRole = Literal["publisher", "viewer", "worker"]
+#: `viewer` is the operator console and may only subscribe. `helper` is a
+#: remote-assist participant (docs/12): it subscribes like a viewer but may
+#: additionally publish exactly one thing, a microphone -- never a camera,
+#: which would break the single-video-publisher assumption the relay's
+#: dimension guard depends on (SG-C's simulcast-collapse finding).
+GrantRole = Literal["publisher", "viewer", "worker", "helper"]
+
+#: LiveKit's own vocabulary for what a participant may publish. `VideoGrants
+#: .can_publish_sources` is typed `List[str]` and `AccessToken.to_jwt()`
+#: serializes it verbatim -- passing the raw `api.TrackSource.MICROPHONE`
+#: enum (which is just the bare int `2`) encodes as `canPublishSources: [2]`,
+#: which the LiveKit Go server then rejects as a malformed token ("cannot
+#: unmarshal number into ... of type string"). Passing the proto enum's
+#: *name* instead (`"MICROPHONE"`) fixes that -- the token is accepted and
+#: the grant round-trips correctly (confirmed server-side in the room-join
+#: log: `"CanPublishSources": ["MICROPHONE"]`) -- but a live LiveKit
+#: 1.13.4 server then still logs `"no permission to publish track"` and
+#: silently drops the actual audio AddTrackRequest for that participant a
+#: few dozen ms later, with no further detail. Whatever string (or other
+#: representation) its runtime publish-permission check actually wants,
+#: it is not this one, and nothing in the client-visible protocol says
+#: what would satisfy it. Left unrestricted (`None`, same as `publisher`)
+#: until someone can dig into the server's own source.
+#:
+#: This is not risk-free: a compromised or buggy `helper` client could now
+#: publish a camera track, which the relay's one-video-publisher assumption
+#: does not expect. The mitigation until this is revisited is entirely
+#: client-side -- CallScreen.tsx never enables the camera for a helper --
+#: which is exactly the discipline-not-grant situation this constant was
+#: introduced to avoid.
+HELPER_PUBLISH_SOURCES = None
 
 
 class MintedToken:
@@ -80,6 +109,9 @@ def mint_access_token(
         room_list=False,
         room_record=False,
         can_update_own_metadata=False,
+        # Unset (None): see HELPER_PUBLISH_SOURCES above for why `helper`
+        # isn't narrowed to microphone-only at the grant level right now.
+        can_publish_sources=HELPER_PUBLISH_SOURCES,
     )
 
     token = (
@@ -119,9 +151,20 @@ def worker_identity(session_id: str) -> str:
     return f"gateway-{session_id}"
 
 
+def helper_identity(session_id: str) -> str:
+    """Stable identity for the one remote-assist participant on a session.
+
+    `room_worker.py`'s ingest filter and participant-lifecycle handling key
+    off this exact prefix to recognize a helper as *not* the wearer.
+    """
+    return f"helper-{session_id}"
+
+
 __all__ = [
+    "HELPER_PUBLISH_SOURCES",
     "GrantRole",
     "MintedToken",
+    "helper_identity",
     "mint_access_token",
     "publisher_identity",
     "viewer_identity",

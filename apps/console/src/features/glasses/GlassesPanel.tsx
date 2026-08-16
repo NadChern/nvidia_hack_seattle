@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Eye,
+  LifeBuoy,
   Mic,
   MicOff,
   QrCode,
@@ -65,6 +66,7 @@ export function GlassesPanel() {
     toggleMic,
     speak,
     attachAssistantAudio,
+    askForHelp,
   } = useGlasses()
 
   useEffect(() => {
@@ -72,7 +74,7 @@ export function GlassesPanel() {
     return () => attachAssistantAudio(null)
   }, [attachAssistantAudio])
 
-  const connected = state === "publishing" || state === "viewing"
+  const connected = state === "publishing" || state === "viewing" || state === "helping"
   const publishing = state === "publishing"
   const [selectedSession, setSelectedSession] = useState("")
   const [pairing, setPairing] = useState<PairingCode | null>(null)
@@ -229,6 +231,15 @@ export function GlassesPanel() {
         <div className="flex flex-wrap gap-2">
           <Button size="sm" onClick={() => void publish()} disabled={connected}>
             Publish
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void askForHelp()}
+            disabled={!publishing && state !== "viewing"}
+            title="Raise a remote-assist request for the current session (this machine's virtual glasses, or real glasses selected above via Watch)"
+          >
+            <LifeBuoy /> Ask for help
           </Button>
           <Button
             size="sm"

@@ -144,7 +144,7 @@ async def test_refresh_reuses_the_session_room_and_publisher_identity() -> None:
     assert refreshed["token"]
 
 
-@pytest.mark.parametrize("suffix", ["token", "viewer"])
+@pytest.mark.parametrize("suffix", ["token", "viewer", "helper"])
 async def test_tokens_for_an_unknown_session_are_explicit(suffix: str) -> None:
     app = create_app(livekit_settings())
 
@@ -156,7 +156,7 @@ async def test_tokens_for_an_unknown_session_are_explicit(suffix: str) -> None:
     assert response.json()["code"] == "not_found"
 
 
-@pytest.mark.parametrize("suffix", ["token", "viewer"])
+@pytest.mark.parametrize("suffix", ["token", "viewer", "helper"])
 async def test_an_expired_session_cannot_be_resurrected_by_minting(suffix: str) -> None:
     app = create_app(livekit_settings(session_ttl_s=1))
 
@@ -270,7 +270,7 @@ async def test_the_configured_token_is_accepted() -> None:
     assert response.status_code == 201
 
 
-@pytest.mark.parametrize("suffix", ["token", "viewer"])
+@pytest.mark.parametrize("suffix", ["token", "viewer", "helper"])
 async def test_session_token_endpoints_require_internal_authentication(suffix: str) -> None:
     app = create_app(livekit_settings(internal_api_token=TOKEN))
 
