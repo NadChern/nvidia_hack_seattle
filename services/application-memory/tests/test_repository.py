@@ -261,6 +261,23 @@ def test_registered_object_survives_session_delete_and_answers_in_a_new_session(
     assert db.get(models.EnrolledObjectRow, object_id) is not None
 
 
+def test_registered_object_is_found_before_it_is_observed_in_a_new_session(
+    db: DbSession,
+) -> None:
+    enrolled, _ = repository.create_enrolled_object(
+        db, label="keys", idempotency_key="register/keys/new-session-query"
+    )
+    placed = keys_placed_and_left()[0]
+    placed = placed.model_copy(
+        update={"object": placed.object.model_copy(update={"object_id": enrolled.object_id})}
+    )
+    ingest(db, [placed])
+
+    assert repository.find_objects_by_label(db, "keys", session_id="sess_not_observed_yet") == [
+        enrolled.object_id
+    ]
+
+
 def test_deleting_a_session_removes_the_claim(db: DbSession) -> None:
     """State is derived, so there is no second place a memory survives."""
     ingest(db, keys_placed_and_left())

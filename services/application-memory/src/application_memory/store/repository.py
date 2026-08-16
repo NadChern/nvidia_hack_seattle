@@ -424,26 +424,40 @@ def find_objects_by_label(db: DbSession, label: str, *, session_id: str | None =
     Matches loosely so a spoken label ("keys") reaches an object the detector
     stored under a longer prompt ("a set of keys"): exact (whitespace/case
     normalized) matches win, and only when there are none does it fall back to
-    substring containment in either direction. Small-N scan in Python -- fine
-    at demo scale; revisit with SQL LIKE if the object count grows large.
+    substring containment in either direction. A session match wins, but no
+    session match falls back globally so stable registered objects remain
+    queryable after reconnect. Small-N scan in Python -- fine at demo scale;
+    revisit with SQL LIKE if the object count grows large.
     """
 
     def _norm(value: str | None) -> str:
         return " ".join((value or "").casefold().split())
 
     wanted = _norm(label)
-    stmt = select(models.ObjectStateRow.object_id, models.ObjectStateRow.label)
+
+    def _find(scope: str | None) -> list[str]:
+        stmt = select(models.ObjectStateRow.object_id, models.ObjectStateRow.label)
+        if scope is not None:
+            stmt = stmt.where(models.ObjectStateRow.session_id == scope)
+        rows = list(db.execute(stmt))
+        exact = [object_id for object_id, stored in rows if _norm(stored) == wanted]
+        if exact or not wanted:
+            return exact
+        return [
+            object_id
+            for object_id, stored in rows
+            if wanted in _norm(stored) or _norm(stored) in wanted
+        ]
+
     if session_id is not None:
-        stmt = stmt.where(models.ObjectStateRow.session_id == session_id)
-    rows = list(db.execute(stmt))
-    exact = [object_id for object_id, stored in rows if _norm(stored) == wanted]
-    if exact or not wanted:
-        return exact
-    return [
-        object_id
-        for object_id, stored in rows
-        if wanted in _norm(stored) or _norm(stored) in wanted
-    ]
+        scoped = _find(session_id)
+        if scoped:
+            return scoped
+        # Registered personal objects survive reconnects. The current session
+        # may have no observation yet, so fall back to stable global state
+        # rather than claiming there is no record of an object remembered in a
+        # prior session. A current-session match still wins above.
+    return _find(None)
 
 
 def timeline_for(db: DbSession, object_id: str) -> list[TimelineEntry]:

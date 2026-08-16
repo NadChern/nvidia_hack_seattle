@@ -341,8 +341,11 @@ Personal-object registration versions independently from observations under
 to carry a stable id.
 
 Memory mints `object_id`. Registered objects and views are durable, have no foreign key to a
-session, and therefore survive reconnects and ordinary session retention. Each selected view
-stores its controlled crop plus two little-endian float32 pooled vectors. `embedder_id`,
+session, and therefore survive reconnects and ordinary session retention. A label query with a
+session first prefers state observed in that session, then falls back to stable global state when
+there is no session match; reconnecting must not turn a remembered personal object into “no
+record.” Each selected view stores its controlled crop plus two little-endian float32 pooled
+vectors. `embedder_id`,
 `pooling`, and `dim` make a stale or incompatible gallery fail loudly rather than compare vectors
 from different domains.
 
