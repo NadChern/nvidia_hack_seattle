@@ -7,21 +7,33 @@ locally by default.
 
 > *“Where did I leave my keys?”*
 >
-> *“On the living-room coffee table at 10:42 — but they were picked up afterward and I have not
-> confirmed a new location since.”*
+> *“On the living-room coffee table at 10:42, based on the last confirmed placement. I have not
+> confirmed a newer location.”*
 
 That second sentence is the hard part. Being usefully uncertain matters more than sounding
 confident.
 
 Built for the NVIDIA Spark Hackathon, Seattle.
 
+## Product at a glance
+
+[![Remember, answer, connect — the three product capabilities](docs/assets/product-capabilities.jpg)](docs/assets/product-capabilities.jpg)
+
+The three user-facing capabilities share one local backend: remember personal-object placements,
+answer ordinary questions, and connect a trusted human helper. The diagram's voice-registration row
+shows the intended end state. For the current demo, reliable enrollment is operator-guided in the
+Console; automatic crop extraction and standalone smart-glasses registration are explicitly tracked
+as backlog items B-002 and B-003.
+
 ## Three assistant experiences
 
 ### 1. Personal visual memory
 
-The wearer can register a personal object, such as keys or a wallet, by showing it to the glasses.
-The system stores multiple C-RADIO gallery views, resolves that stable identity in later video,
-and records confirmed placements in structured Application Memory.
+For the current demo, an operator freezes the live glasses POV in the Console, draws tight crops
+around a personal object from several angles, reviews them, and explicitly confirms registration.
+Only then does the system store C-RADIO gallery views, resolve that stable identity in later video,
+and record confirmed placements in structured Application Memory. Automatic extraction and a
+wearer-only glasses registration UI are deferred, not silently substituted for this reliable path.
 
 When the wearer asks where an object is, Nemotron calls `where_is(label)`. Application Memory—not
 the language model—is authoritative about its current or historical location. Registered objects
@@ -67,6 +79,13 @@ request expires.
 | Trusted object state | FastAPI Application Memory with structured observations and evidence |
 | Target deployment | Linux ARM64/CUDA on the Acer GN100 |
 
+[![Four NVIDIA models sharing one GN100 GPU budget](docs/assets/nvidia-models-one-gpu.jpg)](docs/assets/nvidia-models-one-gpu.jpg)
+
+The displayed allocations were measured from the integrated GN100 run. Nemotron and Cosmos use
+separate local vLLM endpoints; Cosmos uses CPU offload, and the Speech process shares its allocation
+between Parakeet and Kokoro. The checkpoint-size badges and live process allocations are different
+measurements.
+
 ## Runtime architecture
 
 ```text
@@ -82,28 +101,42 @@ The language model may decide whether to call a tool, but it cannot create a ses
 overwrite visual memory, or turn a weak perception into trusted object state. Structured reducers
 and deterministic guards decide what the system is allowed to claim.
 
-## Start here
+[![Detailed current service architecture](docs/assets/current-architecture.jpg)](docs/assets/current-architecture.jpg)
 
-**New to the project? Open [`docs/onboarding.html`](docs/onboarding.html) in a browser.** It explains
-the Media Gateway and starts the complete virtual-glasses development stack without requiring
-physical glasses or a GN100.
+**Enrollment update:** the service topology and runtime recognition path above remain current, but
+the registration strip in this architecture snapshot predates the operator-guided Console flow.
+Today, Console crops stay browser-local until explicit confirmation; Cosmos does not choose or veto
+those crops. The experimental automatic API remains available for evaluation only.
 
-Working with a coding agent? Start with [`docs/13-Dev-Onboarding.md`](docs/13-Dev-Onboarding.md) and
-[`AGENTS.md`](AGENTS.md).
+## Quick start
 
-### Virtual glasses and console
+Prerequisites are Git, Python 3.11, [uv](https://docs.astral.sh/uv/), Node.js 20.19+ with npm,
+Docker, and curl. Then run the CPU-safe profile:
 
 ```bash
-./scripts/dev_stack.sh
+git clone https://github.com/NadChern/nvidia_hack_seattle.git
+cd nvidia_hack_seattle
+
+VMA_AGENT_BACKEND=stub \
+VMA_REASON_KIND=fixture \
+VMA_IDENTITY_KIND=fixture \
+VMA_TTS_BACKEND=stub \
+./scripts/dev_stack.sh --fixture
 ```
 
-This starts LiveKit, the five Python services, and the Console. Open the URL it prints and use the
-Console's **Glasses** panel to publish the development machine's camera and microphone. The Console
-also provides Vision, Memory, Speech, Assistant, Enrollment, and Remote Assist controls.
+The launcher installs locked dependencies, creates local LiveKit credentials when needed, starts
+the five Python services plus LiveKit and the Console, waits for readiness, and writes logs under
+`logs/`. Open **http://127.0.0.1:5173**, choose **Glasses → Publish**, and use the development
+machine as virtual glasses. Stop everything with Ctrl-C.
 
-Model selection is platform-aware. CPU-constrained development uses fixtures or stubs rather than
-silently choosing an external provider. Detailed macOS, Windows/WSL, and remote-GN100 profiles live
-in [Dev Onboarding](docs/13-Dev-Onboarding.md).
+This fixture profile reproduces media, APIs, UI, contracts, and failure handling without claiming
+that real perception or speech models are running. Model selection is platform-aware and never
+silently chooses a hosted provider.
+
+**New to the project? Open [`docs/onboarding.html`](docs/onboarding.html) in a browser.** Working
+with a coding agent? Start with [`docs/13-Dev-Onboarding.md`](docs/13-Dev-Onboarding.md) and
+[`AGENTS.md`](AGENTS.md). Detailed macOS, Windows/WSL, and GN100 notes live in
+[Dev Onboarding](docs/13-Dev-Onboarding.md).
 
 ### Physical glasses
 
@@ -126,6 +159,116 @@ It pairs through the Gateway's existing QR flow, receives pending requests over 
 joins an accepted session as the helper participant. A development build is required for the
 native LiveKit integration.
 
+## Reproduce the physical demo
+
+### Configuration and credentials
+
+The default demo is local: it does **not** require an NVIDIA hosted-inference key, OpenAI key, or
+another cloud model API key. LiveKit runs locally, and Nemotron, Cosmos, C-RADIO, Parakeet, and
+Kokoro run on the trusted GN100. A Hugging Face token is needed only if a model publisher requires
+authentication while populating the approved local cache.
+
+Start from the documented sample:
+
+```bash
+cp .env.example .env
+# Replace every deployment placeholder; never commit .env.
+${EDITOR:-vi} .env
+set -a
+. ./.env
+set +a
+```
+
+The sample defaults to loopback and fixture models. A physical trusted-LAN run must replace or
+remove those fixture settings and configure the local model endpoints. Important variables are:
+
+| Variable | Purpose |
+|---|---|
+| `VMA_BIND_ADDR` | Exact trusted-LAN address used by glasses and operator devices |
+| `VMA_LIVEKIT_API_KEY` / `VMA_LIVEKIT_API_SECRET` | Local LiveKit service credentials |
+| `VMA_INTERNAL_API_TOKEN` | Protects trusted backend and Console proxy APIs |
+| `VMA_DEVICE_ID_ALLOWLIST` | Comma-separated approved glasses device identifiers |
+| `VMA_LIVEKIT_PUBLIC_URL` | LiveKit URL reachable from the RayNeo glasses |
+| `VMA_LLM_BASE_URL` / `VMA_LLM_MODEL` | Local Nemotron vLLM endpoint and pinned model name |
+| `VMA_REASON_BASE_URL` / `VMA_REASON_MODEL` | Local Cosmos vLLM endpoint and pinned model name |
+| `VMA_IDENTITY_KIND=radio` | Enables the pinned C-RADIOv4-H adapter |
+| `VMA_DETECTION_LABELS` | Canonical labels offered by registration and Vision |
+| `VITE_VMA_INTERNAL_API_TOKEN` | Console build-time API token; `dev_stack.sh` inherits the internal token automatically |
+
+Generate deployment secrets instead of reusing the development examples:
+
+```bash
+export VMA_LIVEKIT_API_SECRET="$(openssl rand -hex 24)"
+export VMA_INTERNAL_API_TOKEN="$(openssl rand -hex 32)"
+```
+
+External LLM testing is a separate opt-in profile requiring both
+`VMA_ALLOW_EXTERNAL_LLM=true` and `VMA_LLM_API_KEY`. It is not the default demo path. See
+[Agent Laptop Testing](docs/14-Agent-Laptop-Testing.md).
+
+### Start and verify
+
+Start the pinned local Nemotron and Cosmos endpoints and ensure model caches are populated before
+bringing up the application stack. Then:
+
+```bash
+./scripts/dev_stack.sh --allow-lan
+```
+
+All six application endpoints should become ready:
+
+```bash
+for url in \
+  http://${VMA_BIND_ADDR}:8080/health/ready \
+  http://${VMA_BIND_ADDR}:8081/health/ready \
+  http://${VMA_BIND_ADDR}:8082/health/ready \
+  http://${VMA_BIND_ADDR}:8085/health/ready \
+  http://${VMA_BIND_ADDR}:8086/health/ready \
+  http://${VMA_BIND_ADDR}:5173/; do
+  curl -fsS "$url" >/dev/null && echo "ready  $url"
+done
+```
+
+Pair the X3 Pro with the Gateway QR flow, publish its camera and microphone, and open the Console at
+`http://${VMA_BIND_ADDR}:5173`.
+
+### Demo sequence
+
+1. In **Enroll**, choose `keys`, freeze the live POV, draw a tight crop, and add several distinct
+   angles. Enlarge every pending view and choose **Confirm and register**.
+2. Place the registered keys on a recognizable surface and wait for a complete Cosmos window.
+3. In **Vision**, show the receipt chain: `placed → personal identity → memory written`.
+4. Turn away and ask, “Where are my keys?” Parakeet transcribes, Nemotron calls `where_is`,
+   Application Memory supplies the evidence, and Kokoro speaks the grounded answer.
+5. Ask, “Call my remote assistant.” Show the fixed request acknowledgement, helper acceptance,
+   shared wearer POV, inference-audio suppression during the call, and listening resumption after
+   disconnect.
+
+The projected Console is the proof surface. Vision is a sparse Cosmos window-event pipeline, so do
+not describe it as continuous object tracking, live motion state, or live bounding boxes.
+
+## Data, fixtures, and provenance
+
+No external dataset was used to train this repository, and no wearer media is committed. The
+runtime uses publisher-provided pretrained checkpoints recorded in each service's
+`model-manifest.toml`.
+
+Evaluation and automated tests use:
+
+- byte-exact synthetic audio/video relay fixtures in `packages/media-contract/fixtures`, generated
+  by `packages/media-contract/scripts/build_fixtures.py`;
+- programmatic synthetic images, embeddings, events, observations, and reducer histories created
+  inside service and shared-contract tests;
+- developer-captured photos of three physical keyrings for the C-RADIO identity probe, documented
+  in `docs/spikes/identity-probe/RESULTS.md`; these consented local files are gitignored under
+  `clips/identity-probe` and are not redistributed; and
+- live RayNeo X3 Pro/GN100 physical runs used as release evidence, with raw media excluded from Git
+  and logs.
+
+Synthetic fixtures establish deterministic contract behavior; they are not presented as a
+real-world accuracy benchmark. Automatic enrollment extraction needs a reviewed evaluation set and
+is tracked as backlog B-002.
+
 ## What exists today
 
 | Component | State |
@@ -135,7 +278,7 @@ native LiveKit integration.
 | **Console** (`apps/console`) | Working virtual glasses, live video, memory review/reset, enrollment, speech, Agent, and Assist UI. |
 | **Media Gateway** (`services/media-gateway`) | Working LiveKit session authority, bounded media relay, return audio, HUD events, and remote-assist lifecycle. |
 | **Media contract** (`packages/media-contract`) | Working relay models, client, framing, and provider/consumer fixtures. |
-| **Vision** (`services/vision-worker`) | Working Cosmos window reasoner, C-RADIO identity gallery, registration capture, and placed-event promotion. |
+| **Vision** (`services/vision-worker`) | Working Cosmos window reasoner, C-RADIO identity gallery, operator-confirmed crop enrollment, experimental automatic capture API, and placed-event promotion. |
 | **Application Memory** (`services/application-memory`) | Working durable object registry, evidence/state reducer, cross-session lookup, and honest location answers. |
 | **Speech** (`services/speech`) | Working Parakeet STT and Kokoro TTS with real CUDA backends on the GN100 and explicit stubs elsewhere. |
 | **Agent** (`services/agent`) | Working local Nemotron/Google ADK orchestration with `where_is`, `start_registration`, and `call_remote_assistant`. |
@@ -171,6 +314,32 @@ security boundary; the strict expected-failure test tracks restoration of server
 The MVP is a memory aid, not a guarantee of an object's current location and not a safety-critical
 medication-management system. It distinguishes current confirmation, historical placement,
 ambiguity, and unknown state. See [Privacy and Security](docs/07-Privacy-and-Security.md).
+
+## Known limitations and next steps
+
+- **Enrollment is operator-guided in the Console.** Automatic crop extraction produced unreliable
+  boxes in cluttered scenes, so it is not the demo default. A measured automatic pipeline is backlog
+  B-002; equivalent manual registration directly from the smart-glasses app is B-003.
+- **Vision is event-window based, not continuous tracking.** Cosmos evaluates sparse windows. Only
+  confirmed `placed` events are authoritative; `picked_up` and `carried` remain diagnostic because
+  sparse motion labels can invalidate a good location incorrectly.
+- **No barge-in.** Return-audio timing suppresses echo recursion, and the wearer must wait until the
+  current answer finishes before starting another turn.
+- **Object identity is bounded by the enrolled gallery.** C-RADIO can abstain or confuse visually
+  similar instances; no identity match means no Memory write.
+- **Location answers are evidence-bounded.** The system reports confirmed, historical, ambiguous,
+  or unknown state rather than guaranteeing that an object has not moved outside a captured event.
+- **Remote Assist still has a server-enforcement debt.** The helper camera is disabled client-side,
+  but the current LiveKit grant cannot yet enforce microphone-only publishing; an expected-failure
+  test tracks this.
+- **Physical deployment is platform-specific.** The complete model set depends on pre-populated
+  caches, two local vLLM endpoints, Linux ARM64/CUDA compatibility, trusted-LAN networking, and
+  physical X3/GN100 verification.
+- **Hermes profiles, personal text memory, and web search are deferred.** They remain isolated from
+  authoritative visual object state in backlog B-001.
+
+See the [Product Backlog](docs/17-Product-Backlog.md) for trust boundaries and acceptance criteria,
+and [Evaluation Plan](docs/04-Evaluation-Plan.md) for the remaining measurement gates.
 
 ## Documentation
 
