@@ -48,13 +48,29 @@ def _validate_label(request: Request, label: str) -> str:
     if not resolved:
         raise InvalidRequestError("object label cannot be blank")
     configured = request.app.state.settings.detection_labels
-    if configured and resolved not in configured:
-        raise InvalidRequestError(
-            "object label is not configured for detection",
-            label=resolved,
-            detection_labels=list(configured),
-        )
-    return resolved
+    if not configured:
+        return resolved
+    # A spoken label ("key", "these keys") rarely reproduces a detection prompt
+    # verbatim, and STT drift makes it worse, so match loosely and register
+    # under the CANONICAL detection label: normalized exact first, then
+    # substring containment either way. A genuine non-tracked word ("case")
+    # still fails loudly with the trackable set so the agent can tell the
+    # wearer what it can actually track.
+    def _norm(value: str) -> str:
+        return " ".join(value.casefold().split())
+
+    wanted = _norm(resolved)
+    canonical = {_norm(candidate): candidate for candidate in configured}
+    if wanted in canonical:
+        return canonical[wanted]
+    for norm_label, original in canonical.items():
+        if wanted in norm_label or norm_label in wanted:
+            return original
+    raise InvalidRequestError(
+        "object label is not configured for detection",
+        label=resolved,
+        detection_labels=list(configured),
+    )
 
 
 def _translate_memory_error(exc: MemoryError_) -> Exception:
