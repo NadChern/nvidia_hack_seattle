@@ -65,6 +65,7 @@ All variables use the `VMA_` prefix.
 | `MEMORY_BASE_URL` | `http://127.0.0.1:8081` |
 | `MEMORY_API_TOKEN` | unset |
 | `HANDS_FREE_ENABLED` | `false` |
+| `REPLY_ECHO_SUPPRESSION_S` | `3.0` |
 | `GATEWAY_BASE_URL` | `http://127.0.0.1:8080` |
 | `SPEECH_BASE_URL` | `http://127.0.0.1:8085` |
 | `VISION_BASE_URL` | `http://127.0.0.1:8082` |
@@ -183,7 +184,11 @@ convenience but is not an authorization gate.
 
 This deliberately trades the previous ambient-speech filter for model-owned
 intent routing. Unsupported conversation receives no Memory authority: without
-a Memory result, the deterministic guard still prevents a location claim.
+a Memory result, the deterministic guard still prevents a location claim. Since
+barge-in is unsupported, transcripts finalized during the configured short
+post-reply cooldown are dropped to prevent the glasses speaker from recursively
+querying the Agent through its microphone; this is timing suppression, not an
+intent regex.
 
 Every completed transcript is also posted to the Gateway's bounded device-event channel.
 A guarded answer is posted there with `answer_status`, object ID, guard verdict, and

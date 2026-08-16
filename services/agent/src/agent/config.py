@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     session_poll_interval_s: float = Field(default=2.0, ge=0.25, le=60.0)
     listener_reconnect_s: float = Field(default=1.0, ge=0.1, le=30.0)
     gateway_event_timeout_s: float = Field(default=2.0, gt=0.0, le=10.0)
+    # Barge-in is unsupported. Ignore transcripts finalized immediately after
+    # return audio so the glasses speaker cannot recursively query the Agent.
+    reply_echo_suppression_s: float = Field(default=3.0, ge=0.0, le=15.0)
     gateway_audio_sample_rate: int = Field(default=48_000, ge=8_000, le=192_000)
     gateway_audio_channels: int = Field(default=1, ge=1, le=2)
     max_synthesis_bytes: int = Field(default=10_000_000, ge=1_024, le=50_000_000)

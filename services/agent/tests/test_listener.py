@@ -106,6 +106,18 @@ async def test_every_completed_transcript_reaches_model_intent_router(heard: str
     assert events.consume_calls == 0
 
 
+async def test_immediate_return_audio_echo_is_not_forwarded_to_model() -> None:
+    backend = FakeBackend()
+    listener = HandsFreeListener(Settings(environment="ci"), backend, FakeReply(), FakeEvents())
+
+    first = await listener.process(transcript("where are my keys"))
+    echoed = await listener.process(transcript("the keys are on the coffee table"))
+
+    assert first
+    assert not echoed
+    assert backend.calls == [("where are my keys", "sess_01")]
+
+
 async def test_wake_prefix_is_optional_and_is_not_stripped_before_model() -> None:
     backend = FakeBackend()
     listener = HandsFreeListener(Settings(environment="ci"), backend, FakeReply(), FakeEvents())

@@ -98,6 +98,7 @@ class HandsFreeListener:
         self._events = events or GatewayEventTransport(settings)
         self._metrics = metrics or AgentMetrics()
         self._tasks: dict[str, asyncio.Task[None]] = {}
+        self._suppress_until: dict[str, float] = {}
 
     def _headers(self) -> dict[str, str]:
         token = self._settings.internal_api_token
@@ -155,6 +156,14 @@ class HandsFreeListener:
     async def process(self, transcript: Transcript) -> bool:
         """Forward every completed transcript to the model-owned intent router."""
         await self._send_transcript_event(transcript)
+        if time.monotonic() < self._suppress_until.get(transcript.session_id, 0.0):
+            self._metrics.record_hands_free_ignored()
+            logger.info(
+                "transcript ignored during return-audio echo cooldown",
+                extra={"session_id": transcript.session_id},
+            )
+            return False
+
         question = " ".join(transcript.text.casefold().split())
         self._metrics.record_hands_free_triggered()
         logger.info(
@@ -182,6 +191,9 @@ class HandsFreeListener:
                 latency_ms=latency_ms,
             )
             await self._reply.send(transcript.session_id, guarded.reply)
+            self._suppress_until[transcript.session_id] = (
+                time.monotonic() + self._settings.reply_echo_suppression_s
+            )
             self._metrics.record_hands_free_reply()
             logger.info(
                 "hands-free reply sent",
@@ -277,6 +289,7 @@ class HandsFreeListener:
                         for session_id in self._tasks.keys() - active:
                             task = self._tasks.pop(session_id)
                             task.cancel()
+                            self._suppress_until.pop(session_id, None)
                         await asyncio.sleep(self._settings.session_poll_interval_s)
                     except asyncio.CancelledError:
                         raise
@@ -289,6 +302,7 @@ class HandsFreeListener:
         finally:
             tasks = list(self._tasks.values())
             self._tasks.clear()
+            self._suppress_until.clear()
             for task in tasks:
                 task.cancel()
             if tasks:

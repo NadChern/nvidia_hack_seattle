@@ -225,9 +225,11 @@ silently stop between STT and the Agent.
 
 This intentionally removes the earlier ambient-speech filter and its configurable wake
 variants. The Gateway and Android HUD may still expose the consume-once manual-trigger
-interaction as user feedback, but the Agent listener does not require or inspect it. The
-trust boundary remains downstream: only Memory can authorize a location, and the
-deterministic reply guard rejects an ungrounded model answer.
+interaction as user feedback, but the Agent listener does not require or inspect it. Since
+barge-in is unsupported, a short post-reply timing cooldown drops return-audio echo before
+it can recursively query the model; it does not inspect transcript content. The trust
+boundary remains downstream: only Memory can authorize a location, and the deterministic
+reply guard rejects an ungrounded model answer.
 
 ## Module layout
 

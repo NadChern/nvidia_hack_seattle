@@ -15,3 +15,4 @@ def test_hands_free_transport_defaults_are_bounded() -> None:
     assert settings.session_poll_interval_s > 0
     assert settings.listener_reconnect_s > 0
     assert settings.gateway_event_timeout_s > 0
+    assert settings.reply_echo_suppression_s > 0
