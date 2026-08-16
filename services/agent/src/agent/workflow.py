@@ -79,9 +79,22 @@ class RegistrationWorkflow:
             raise
         except Exception as exc:
             self._metrics.record_registration_failed()
+            # `register`/`reply.send` wrap the real failure in a
+            # DependencyUnavailableError, so the wrapper name alone ("which
+            # dependency?") is not actionable. Surface the chained cause -- the
+            # vision 503 body, the httpx status, the reply-audio RtcError -- so
+            # a failed voice registration is diagnosable from one log line.
+            cause = exc.__cause__
+            root = cause.__cause__ if cause is not None else None
             logger.warning(
                 "registration workflow failed",
-                extra={"session_id": session_id, "error_type": type(exc).__name__},
+                extra={
+                    "session_id": session_id,
+                    "error_type": type(exc).__name__,
+                    "cause_type": type(cause).__name__ if cause is not None else None,
+                    "cause": str(cause) if cause is not None else None,
+                    "root_cause": f"{type(root).__name__}: {root}" if root is not None else None,
+                },
             )
             failure = registration_message("failed", label)
             try:
