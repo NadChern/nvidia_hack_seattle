@@ -88,6 +88,7 @@ class NoToolLiteLlmClient(LiteLLMClient):
                     "finish_reason": "stop",
                     "message": {
                         "role": "assistant",
+                        "reasoning_content": "Private chain-of-thought must not reach speech.",
                         "content": "Here is a concise general answer.",
                     },
                 }

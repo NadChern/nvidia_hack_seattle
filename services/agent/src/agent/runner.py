@@ -134,7 +134,14 @@ class AdkRunnerBackend:
                             registration_payload = cast("dict[str, Any]", payload)
                             registration_started = bool(registration_payload.get("started", False))
                     if event.is_final_response() and event.content and event.content.parts:
-                        text_parts = [part.text for part in event.content.parts if part.text]
+                        # Nemotron exposes chain-of-thought as text-bearing
+                        # parts marked ``thought=True``. It is neither wearer
+                        # output nor safe TTS content; retain only the answer.
+                        text_parts = [
+                            part.text
+                            for part in event.content.parts
+                            if part.text and not part.thought
+                        ]
                         if text_parts:
                             reply = "".join(text_parts).strip()
             except AgentServiceError:

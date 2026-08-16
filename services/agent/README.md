@@ -24,7 +24,9 @@ unchanged.
 
 ## Truthfulness guard
 
-A model rewrite is untrusted. Rules run in order:
+Nemotron reasoning parts marked as private thought are discarded before reply
+handling; only its final answer can reach the HUD or TTS. A model rewrite of a
+Memory result remains untrusted. Rules run in order:
 
 1. A bounded, non-empty general-assistant answer may pass without a Memory result;
    empty or oversized output receives a fixed failure line.
