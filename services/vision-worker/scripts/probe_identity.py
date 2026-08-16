@@ -37,8 +37,8 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image, ImageOps
 
-RADIO_MODEL = "nvidia/C-RADIOv4-SO400M"
-RADIO_REVISION = "c0457f5dc26ca145f954cd4fc5bb6114e5705ad8"
+RADIO_MODEL = "nvidia/C-RADIOv4-H"
+RADIO_REVISION = "0057b339059c0b9e1b4ba996f975410ebbfdfcc8"
 CLIP_MODEL = "openai/clip-vit-base-patch32"
 _IMAGE_SUFFIXES = frozenset({".heic", ".heif", ".jpeg", ".jpg", ".png", ".webp"})
 _SPLITS = ("clean", "realistic", "all")

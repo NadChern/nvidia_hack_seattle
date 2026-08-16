@@ -15,8 +15,8 @@ from vision_worker.identity.base import EmbeddingVectors, MaskedCrop
 
 logger = logging.getLogger(__name__)
 
-MODEL_ID = "nvidia/C-RADIOv4-SO400M"
-MODEL_REVISION = "c0457f5dc26ca145f954cd4fc5bb6114e5705ad8"
+MODEL_ID = "nvidia/C-RADIOv4-H"
+MODEL_REVISION = "0057b339059c0b9e1b4ba996f975410ebbfdfcc8"
 POOLING = "summary+mask-weighted-spatial-v1"
 
 
@@ -167,8 +167,8 @@ class RadioEmbedder:
                             f"spatial dim {feature_dim}"
                         )
                     # C-RADIOv4 exposes one summary per distilled teacher and
-                    # flattens them. Store one stable 1,152-d vector by mean-
-                    # pooling those summary tokens, matching the spatial dim.
+                    # flattens them. Store one stable backbone-sized vector by
+                    # mean-pooling those summary tokens, matching the spatial dim.
                     summaries = _dynamic(
                         summaries.reshape(summaries.shape[0], -1, feature_dim).mean(dim=1)
                     )

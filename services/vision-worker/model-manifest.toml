@@ -62,14 +62,14 @@ license = "review-required"
 verified_on = "dev-wsl-cuda: 38.4ms mean live depth inference beside YOLOE and Speech"
 
 # Personal-object identity backbone. It is loaded selectively behind the
-# identity adapter rather than by the continuous detector. Phase 0 validates
-# same-instance versus different-instance separation on a keys-only local set;
-# full GN100 coexistence remains a physical release gate.
+# identity adapter rather than by the continuous detector. The 653M Huge model
+# replaces SO400M; its distinct embedder_id deliberately makes old gallery
+# vectors stale, so enrolled objects must receive fresh H-model views.
 [c_radio_identity]
-logical_model = "C-RADIOv4-SO400M"
-source = "https://huggingface.co/nvidia/C-RADIOv4-SO400M"
-revision = "c0457f5dc26ca145f954cd4fc5bb6114e5705ad8"
-runtime = "transformers==4.57.6 / torch==2.6.0+cu126 (dev-wsl-cuda)"
+logical_model = "C-RADIOv4-H"
+source = "https://huggingface.co/nvidia/C-RADIOv4-H"
+revision = "0057b339059c0b9e1b4ba996f975410ebbfdfcc8"
+runtime = "transformers==4.57.6 / torch==2.15.0.dev20260813+cu130 (GN100 ARM64)"
 precision = "fp32 checkpoint weights with fp16 CUDA autocast"
 license = "NVIDIA Open Model License"
-verified_on = "Phase-0 keys-only identity probe on dev-wsl-cuda; GN100 pending"
+verified_on = "GN100 physical model smoke pending"

@@ -145,9 +145,10 @@ a cached checkpoint, and ideally a GPU — see `tests/test_detect_yoloe.py`.
 **`VMA_IDENTITY_KIND` selects personal identity: `none` (default), `fixture`,
 or `radio`.** Identity resolves once from three quality track frames, caches the
 result for that track, and only annotates events; an unavailable or unmatched
-gallery never suppresses an ordinary observation. `radio` uses the pinned
-C-RADIOv4-SO400M masked summary/spatial vectors and Qwen3-VL only in the
-configured overlap band. Gallery snapshots refresh from Memory every 30 seconds
+gallery never suppresses an ordinary observation. `radio` uses the pinned 653M
+C-RADIOv4-H masked summary/spatial vectors. Its model revision is part of the
+`embedder_id`, so objects enrolled with SO400M need fresh H-model views before
+they can match. Gallery snapshots refresh from Memory every 30 seconds
 and retain their last-known-good version across a temporary outage. Registration
 arms a six-second `EvidenceRing` window, rejects weak footage relative to that
 window's own sharpness median, and stores 2–4 farthest-point-selected views.

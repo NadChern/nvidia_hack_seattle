@@ -376,7 +376,7 @@ from different domains.
         "quality_score": 0.91,
         "angular_velocity_rad_s": null
       },
-      "embedder_id": "nvidia/C-RADIOv4-SO400M@c0457f5d",
+      "embedder_id": "nvidia/C-RADIOv4-H@0057b339",
       "pooling": "summary+mask-weighted-spatial-v1",
       "dim": 2,
       "summary": [0.25, -0.5],
