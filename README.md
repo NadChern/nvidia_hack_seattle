@@ -1,3 +1,7 @@
+## 🏆 Winner — NVIDIA Spark Hackathon Seattle 2026
+
+Demo: https://www.youtube.com/watch?v=LyBFO-cAuKE
+
 # MEMO - Visual Memory Assistant
 
 A local-first wearable assistant that remembers personal objects, answers everyday questions, and
