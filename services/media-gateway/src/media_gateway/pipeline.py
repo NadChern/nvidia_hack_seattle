@@ -414,7 +414,7 @@ class MediaPipeline:
                 epoch_id=epoch.epoch_id,
                 sequence=sequence,
                 captured_at=frame.captured_at,
-                received_at=frame.captured_at,
+                received_at=frame.received_at or frame.captured_at,
                 relayed_at=relayed_at,
                 width=frame.width,
                 height=frame.height,
