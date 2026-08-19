@@ -122,6 +122,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
                 // the HUD reports no reply audio for a session that has it.
                 watchForDrops(paired)
                 media.connect(created.livekitUrl, created.token)
+                media.applyMinVideoBitrate(viewModelScope)
                 scheduleRefresh(paired, created)
                 created
             }.onFailure {
@@ -149,6 +150,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
             runCatching {
                 media.disconnect()
                 media.connect(current.livekitUrl, current.token)
+                media.applyMinVideoBitrate(viewModelScope)
             }.onSuccess {
                 mutableState.value = mutableState.value.copy(phase = SessionPhase.LIVE)
             }.onFailure(::showError)
@@ -323,6 +325,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
                         )
                         session = fresh
                         media.connect(fresh.livekitUrl, fresh.token)
+                        media.applyMinVideoBitrate(viewModelScope)
                     }.isSuccess
                     if (ok) {
                         mutableState.value = mutableState.value.copy(phase = SessionPhase.LIVE)
