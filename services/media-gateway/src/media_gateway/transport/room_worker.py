@@ -77,8 +77,7 @@ class _SenderClock:
             if not self._warned:
                 self._warned = True
                 logger.warning(
-                    "transport reported no frame timestamp; "
-                    "capture cadence will mirror receipt",
+                    "transport reported no frame timestamp; capture cadence will mirror receipt",
                     extra={"session_id": self._session_id},
                 )
             return received_at
