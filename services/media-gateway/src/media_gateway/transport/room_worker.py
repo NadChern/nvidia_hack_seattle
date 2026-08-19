@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -46,6 +47,52 @@ def _subscribe(room: rtc.Room, event: str, handler: Callable[..., None]) -> None
     suppression lives here once instead of at every call site.
     """
     room.on(event, handler)  # pyright: ignore[reportUnknownMemberType, reportArgumentType]
+
+
+class _SenderClock:
+    """Maps the publisher's frame timestamps onto our wall clock.
+
+    `VideoFrameEvent.timestamp_us` is in the sender's domain, so its absolute
+    value cannot be compared against `utcnow()`. Anchoring it to our clock on
+    the first frame keeps what actually matters -- the *spacing* between
+    frames, which is the publisher's true cadence. Even production and bursty
+    delivery then look different: `captured_at` stays evenly spaced while
+    `received_at` clumps.
+
+    Falls back to our own clock, once and loudly, if the transport reports no
+    usable timestamp. Silence there would look exactly like the bug this
+    replaces.
+    """
+
+    __slots__ = ("_offset", "_session_id", "_warned")
+
+    def __init__(self, session_id: str) -> None:
+        self._session_id = session_id
+        self._offset: dt.timedelta | None = None
+        self._warned = False
+
+    def stamp(self, event: object, received_at: dt.datetime) -> dt.datetime:
+        raw = getattr(event, "timestamp_us", None)
+        if not raw:
+            if not self._warned:
+                self._warned = True
+                logger.warning(
+                    "transport reported no frame timestamp; "
+                    "capture cadence will mirror receipt",
+                    extra={"session_id": self._session_id},
+                )
+            return received_at
+        sender = dt.datetime.fromtimestamp(raw / 1_000_000, tz=dt.UTC)
+        if self._offset is None:
+            self._offset = received_at - sender
+            logger.info(
+                "anchored sender clock",
+                extra={
+                    "session_id": self._session_id,
+                    "offset_s": round(self._offset.total_seconds(), 3),
+                },
+            )
+        return sender + self._offset
 
 
 class RoomWorker:
@@ -288,10 +335,27 @@ class RoomWorker:
     async def _consume_video(self, track: rtc.Track) -> None:
         """Report decoded frames. The dimension guard runs downstream."""
         stream = rtc.VideoStream(track, capacity=1, format=rtc.VideoBufferType.RGBA)
+        sender_clock = _SenderClock(self._session.session_id)
+        reported_rotation = False
         try:
             async for event in stream:
+                received_at = utcnow()
                 frame = event.frame
                 buffer = bytes(frame.data)
+                if not reported_rotation:
+                    # The relay has always arrived portrait with nothing in this
+                    # service asking for it; this says whether the publisher is
+                    # rotating and by how much.
+                    reported_rotation = True
+                    logger.info(
+                        "video track rotation",
+                        extra={
+                            "session_id": self._session.session_id,
+                            "rotation": int(getattr(event, "rotation", 0) or 0),
+                            "width": frame.width,
+                            "height": frame.height,
+                        },
+                    )
                 expected = frame.width * frame.height * RGBA_CHANNELS
                 if len(buffer) != expected:
                     # A buffer that disagrees with its own dimensions cannot be
@@ -312,7 +376,8 @@ class RoomWorker:
                         width=frame.width,
                         height=frame.height,
                         rgba=buffer,
-                        captured_at=utcnow(),
+                        captured_at=sender_clock.stamp(event, received_at),
+                        received_at=received_at,
                     ),
                 )
         except asyncio.CancelledError:
