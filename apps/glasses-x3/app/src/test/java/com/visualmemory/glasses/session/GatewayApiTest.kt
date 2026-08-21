@@ -68,4 +68,25 @@ class GatewayApiTest {
         assertEquals("Bearer device-secret", request.getHeader("Authorization"))
         assertEquals("/v1/sessions", request.path)
     }
+
+    @Test
+    fun registerArmsWithDeviceCredentialAndEmptyBody() = runTest {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"expires_at":"2026-08-20T18:00:20Z"}""",
+            ),
+        )
+        val credential = DeviceCredential(
+            deviceId = "x3-01",
+            credential = "device-secret",
+            expiresAt = "2026-08-20T18:00:00Z",
+        )
+
+        api.armRegister(server.url("/").toString(), credential, "sess_01")
+        val request = server.takeRequest()
+
+        assertEquals("Bearer device-secret", request.getHeader("Authorization"))
+        assertEquals("/v1/device/sess_01/register", request.path)
+        assertEquals("{}", request.body.readUtf8())
+    }
 }

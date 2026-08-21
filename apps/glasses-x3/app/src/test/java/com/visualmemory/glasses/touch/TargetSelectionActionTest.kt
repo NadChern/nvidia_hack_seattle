@@ -21,6 +21,16 @@ class TargetSelectionActionTest {
     }
 
     @Test
+    fun swipeMovesFromSpeakToRegister() {
+        assertEquals(LiveAction.REGISTER, movedLiveSelection(LiveAction.SPEAK))
+    }
+
+    @Test
+    fun nextSwipeWrapsBackToSpeak() {
+        assertEquals(LiveAction.SPEAK, movedLiveSelection(LiveAction.REGISTER))
+    }
+
+    @Test
     fun tapOnSavedTargetReconnects() {
         assertEquals(
             TempleTapAction.RECONNECT_SAVED,
@@ -28,18 +38,33 @@ class TargetSelectionActionTest {
                 targetSelectionActive = true,
                 liveSessionActive = false,
                 selectedStartupAction = TargetSelectionAction.RECONNECT_SAVED,
+                selectedLiveAction = LiveAction.SPEAK,
             ),
         )
     }
 
     @Test
-    fun tapDuringLiveSessionArmsManualVoiceTrigger() {
+    fun tapDuringLiveWithSpeakFocusedArmsManualVoiceTrigger() {
         assertEquals(
             TempleTapAction.ARM_MANUAL_TRIGGER,
             templeTapAction(
                 targetSelectionActive = false,
                 liveSessionActive = true,
                 selectedStartupAction = TargetSelectionAction.SCAN_QR,
+                selectedLiveAction = LiveAction.SPEAK,
+            ),
+        )
+    }
+
+    @Test
+    fun tapDuringLiveWithRegisterFocusedArmsRegister() {
+        assertEquals(
+            TempleTapAction.ARM_REGISTER,
+            templeTapAction(
+                targetSelectionActive = false,
+                liveSessionActive = true,
+                selectedStartupAction = TargetSelectionAction.SCAN_QR,
+                selectedLiveAction = LiveAction.REGISTER,
             ),
         )
     }
@@ -52,6 +77,7 @@ class TargetSelectionActionTest {
                 targetSelectionActive = true,
                 liveSessionActive = false,
                 selectedStartupAction = TargetSelectionAction.SCAN_QR,
+                selectedLiveAction = LiveAction.SPEAK,
             ),
         )
     }

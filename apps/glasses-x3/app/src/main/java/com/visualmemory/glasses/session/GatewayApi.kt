@@ -84,6 +84,22 @@ class GatewayApi(private val client: OkHttpClient = OkHttpClient()) {
         )
     }
 
+    /**
+     * Arm a register-button press. The label is left null: the wearer names the
+     * item from its thumbnail in the console later (the placeholder path).
+     */
+    suspend fun armRegister(
+        gatewayUrl: String,
+        credential: DeviceCredential,
+        sessionId: String,
+    ) {
+        post<UnitResponse>(
+            url = "${gatewayUrl.trimEnd('/')}/v1/device/$sessionId/register",
+            body = "{}",
+            credential = credential.credential,
+        )
+    }
+
     suspend fun refreshSession(
         gatewayUrl: String,
         credential: DeviceCredential,
