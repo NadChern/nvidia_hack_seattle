@@ -18,10 +18,10 @@ def anyio_backend() -> str:
 
 
 async def test_register_wraps_blocking_operation_and_returns_terminal_outcome() -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str]] = []
 
-    def register(label: str, session_id: str) -> RegistrationOutcome:
-        calls.append((label, session_id))
+    def register(label: str, session_id: str, mode: str = "grounded") -> RegistrationOutcome:
+        calls.append((label, session_id, mode))
         return RegistrationOutcome("object_keys", label, True, "enrollment_complete", 3)
 
     tool = RegisterTool(Settings(environment="ci"), register_operation=register)
@@ -30,14 +30,14 @@ async def test_register_wraps_blocking_operation_and_returns_terminal_outcome() 
 
     assert outcome.succeeded is True
     assert outcome.selected_views == 3
-    assert calls == [("keys", "sess_1")]
+    assert calls == [("keys", "sess_1", "grounded")]
 
 
 async def test_register_requires_a_real_session_before_any_side_effect() -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, str]] = []
 
-    def register(label: str, session_id: str) -> RegistrationOutcome:
-        calls.append((label, session_id))
+    def register(label: str, session_id: str, mode: str = "grounded") -> RegistrationOutcome:
+        calls.append((label, session_id, mode))
         return RegistrationOutcome(None, label, False, "should_not_run")
 
     tool = RegisterTool(Settings(environment="ci"), register_operation=register)
@@ -49,8 +49,8 @@ async def test_register_requires_a_real_session_before_any_side_effect() -> None
 
 
 async def test_dependency_failure_is_explicit() -> None:
-    def register(label: str, session_id: str) -> RegistrationOutcome:
-        del label, session_id
+    def register(label: str, session_id: str, mode: str = "grounded") -> RegistrationOutcome:
+        del label, session_id, mode
         raise MemoryError_("offline")
 
     tool = RegisterTool(Settings(environment="ci"), register_operation=register)

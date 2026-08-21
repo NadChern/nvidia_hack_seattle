@@ -23,12 +23,14 @@ class FakeTool:
     def __init__(self, *, succeeded: bool = True, fail: bool = False) -> None:
         self.succeeded = succeeded
         self.fail = fail
-        self.calls: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, str]] = []
         self.release = asyncio.Event()
         self.release.set()
 
-    async def register(self, label: str, session_id: str) -> RegistrationOutcome:
-        self.calls.append((label, session_id))
+    async def register(
+        self, label: str, session_id: str, mode: str = "grounded"
+    ) -> RegistrationOutcome:
+        self.calls.append((label, session_id, mode))
         await self.release.wait()
         if self.fail:
             raise RuntimeError("vision unavailable")
@@ -58,7 +60,7 @@ async def test_successful_workflow_speaks_fixed_prompt_then_confirmation() -> No
     assert workflow.start(label="keys", session_id="sess_1") is True
     await workflow.drain()
 
-    assert tool.calls == [("keys", "sess_1")]
+    assert tool.calls == [("keys", "sess_1", "grounded")]
     assert reply.calls == [
         ("sess_1", registration_message("prompt", "keys")),
         ("sess_1", registration_message("succeeded", "keys")),
@@ -66,6 +68,23 @@ async def test_successful_workflow_speaks_fixed_prompt_then_confirmation() -> No
     assert metrics.registrations_started == 1
     assert metrics.registrations_succeeded == 1
     assert metrics.registrations_failed == 0
+
+
+async def test_center_anchor_registers_without_speaking() -> None:
+    tool = FakeTool()
+    reply = FakeReply()
+    metrics = AgentMetrics()
+    workflow = RegistrationWorkflow(tool, reply, metrics=metrics)  # type: ignore[arg-type]
+
+    assert workflow.start(label="keys", session_id="sess_1", mode="center-anchor") is True
+    await workflow.drain()
+
+    # The button path threads center-anchor to the tool but speaks nothing:
+    # no STT to prompt, and TTS may be evicted for the capture.
+    assert tool.calls == [("keys", "sess_1", "center-anchor")]
+    assert reply.calls == []
+    assert metrics.registrations_started == 1
+    assert metrics.registrations_succeeded == 1
 
 
 @pytest.mark.parametrize("tool", [FakeTool(succeeded=False), FakeTool(fail=True)])

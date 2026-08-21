@@ -50,14 +50,27 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         listener_task = asyncio.create_task(listener.run(), name="hands-free-listener")
         app.state.listener_task = listener_task
 
+    register_task: asyncio.Task[None] | None = None
+    workflow: RegistrationWorkflow | None = app.state.registration_workflow
+    # Speech-free: the register button's poll runs independently of hands-free
+    # STT, so a headset with no speech stack still registers objects.
+    if settings.register_button_enabled and workflow is not None:
+        from agent.register_listener import RegisterTriggerListener
+
+        register_listener = RegisterTriggerListener(settings, workflow)
+        register_task = asyncio.create_task(
+            register_listener.run(), name="register-trigger-listener"
+        )
+        app.state.register_task = register_task
+
     try:
         yield
     finally:
-        if listener_task is not None:
-            listener_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await listener_task
-        workflow: RegistrationWorkflow | None = app.state.registration_workflow
+        for task in (listener_task, register_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
         if workflow is not None:
             await workflow.aclose()
 
@@ -112,6 +125,7 @@ def create_app(
     app.state.metrics = metrics
     app.state.registration_workflow = registration_workflow
     app.state.listener_task = None
+    app.state.register_task = None
 
     async def handle(_: Request, exc: AgentServiceError) -> JSONResponse:
         return JSONResponse(status_code=exc.status_code, content=exc.to_payload())

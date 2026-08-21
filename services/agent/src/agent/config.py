@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # Hands-free transport. Session discovery and HUD events are Gateway
     # control traffic; STT and synthesis stay on Speech's existing API.
     hands_free_enabled: bool = False
+    #: The register button is speech-free, so its trigger poll runs independently
+    #: of hands-free STT -- on by default so a headset with no speech stack can
+    #: still register objects.
+    register_button_enabled: bool = True
     gateway_base_url: str = "http://127.0.0.1:8080"
     speech_base_url: str = "http://127.0.0.1:8085"
     vision_base_url: str = "http://127.0.0.1:8082"
