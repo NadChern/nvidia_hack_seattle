@@ -163,6 +163,10 @@ class Settings(BaseSettings):
     registration_max_mask_box_ratio: float = Field(default=1.0, ge=0.0, le=1.2)
     registration_relative_sharpness_floor: float = Field(default=0.5, ge=0.0)
     registration_max_angular_velocity_rad_s: float = Field(default=2.5, gt=0)
+    #: The register button's grounder-free anchor: the normalised side of the
+    #: centre seed box SAM2 propagates, and the HUD reticle drawn on the glasses.
+    #: 0.60 is the sweep's robust default (docs/spikes/register-no-speech).
+    registration_centre_frac: float = Field(default=0.60, gt=0.0, le=1.0)
 
     # --- Window reasoner (see reason/cosmos.py, pipeline.py) -----------------
     #: The VLM that localizes objects and classifies events over a short video

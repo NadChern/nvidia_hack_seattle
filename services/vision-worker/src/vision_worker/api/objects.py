@@ -18,7 +18,7 @@ from vision_worker.errors import (
     NotFoundError,
     UnavailableError,
 )
-from vision_worker.identity.enroll import EnrollmentManager
+from vision_worker.identity.enroll import EnrollmentManager, EnrollmentMode
 from vision_worker.pipeline import Pipeline
 
 router = APIRouter(prefix="/v1/objects", tags=["objects"])
@@ -31,6 +31,10 @@ class CreateObjectRequest(BaseModel):
 
 class CaptureRequest(BaseModel):
     capture_seconds: float | None = Field(default=None, gt=0)
+    #: ``grounded`` runs the VLM localizer (voice registration). ``center-anchor``
+    #: propagates a fixed centre box with the tracker -- the register button's
+    #: grounder-free, speech-free path.
+    mode: EnrollmentMode = "grounded"
 
 
 class ManualEnrollmentRequest(BaseModel):
@@ -125,6 +129,7 @@ async def capture(
             object_id=object_id,
             label=label,
             capture_seconds=body.capture_seconds,
+            mode=body.mode,
         )
     except RuntimeError as exc:
         raise ConflictError(str(exc), object_id=object_id) from exc
