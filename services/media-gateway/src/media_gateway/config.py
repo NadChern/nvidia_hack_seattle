@@ -100,6 +100,10 @@ class Settings(BaseSettings):
     device_event_queue_size: int = Field(default=32, ge=1, le=1_024)
     device_event_max_subscribers: int = Field(default=8, ge=1, le=128)
     manual_trigger_ttl_s: int = Field(default=15, ge=5, le=60)
+    #: How long a register-button press stays armed for the agent to consume.
+    #: A touch longer than the voice trigger: registration is a deliberate act
+    #: and the agent's session poll may be a few seconds out.
+    register_trigger_ttl_s: int = Field(default=20, ge=5, le=60)
     #: How long a raised "ask for help" request stays listable before it
     #: expires unanswered. Minutes, not seconds, unlike the manual trigger --
     #: this is a person deciding whether to pick up, not a wake word waiting

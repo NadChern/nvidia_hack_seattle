@@ -32,6 +32,7 @@ from media_gateway.domain.manual_trigger import ManualTriggerRegistry
 from media_gateway.domain.metrics import MetricsRegistry
 from media_gateway.domain.pairing import DeviceCredentialSigner, PairingRegistry
 from media_gateway.domain.ratelimit import FixedWindowLimiter
+from media_gateway.domain.register_trigger import RegisterTriggerRegistry
 from media_gateway.domain.session import SessionRegistry
 from media_gateway.errors import GatewayError
 from media_gateway.logging import configure_logging
@@ -125,6 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         max_subscribers=settings.device_event_max_subscribers,
     )
     app.state.manual_triggers = ManualTriggerRegistry(ttl_s=settings.manual_trigger_ttl_s)
+    app.state.register_triggers = RegisterTriggerRegistry(ttl_s=settings.register_trigger_ttl_s)
     app.state.assist_requests = AssistRequestRegistry(ttl_s=settings.assist_request_ttl_s)
     # Reuses the device-event queue/subscriber sizing rather than adding a
     # second pair of knobs for a hub with the same shape and the same

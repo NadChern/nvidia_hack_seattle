@@ -74,6 +74,8 @@ def test_event_endpoints_stay_on_the_event_loop() -> None:
         device_events.publish_device_event,
         device_events.arm_manual_trigger,
         device_events.consume_manual_trigger,
+        device_events.arm_register_trigger,
+        device_events.consume_register_trigger,
     ):
         assert inspect.iscoroutinefunction(endpoint), f"{endpoint.__name__} must be async"
 
@@ -165,6 +167,47 @@ async def test_manual_trigger_is_device_scoped_short_lived_and_consumed_once() -
     assert armed.status_code == 200
     assert first.json() == {"armed": True}
     assert second.json() == {"armed": False}
+
+
+async def test_register_trigger_carries_a_label_and_is_consumed_once() -> None:
+    async with serve(create_app(settings())) as host:
+        async with httpx.AsyncClient(base_url=f"http://{host}") as http:
+            session, credential = await paired_session(http)
+            session_id = str(session["session_id"])
+            armed = await http.post(
+                f"/v1/device/{session_id}/register",
+                json={"label": "keys"},
+                headers=auth(credential),
+            )
+            first = await http.post(
+                f"/v1/device/{session_id}/register/consume",
+                headers=auth(),
+            )
+            second = await http.post(
+                f"/v1/device/{session_id}/register/consume",
+                headers=auth(),
+            )
+
+    assert armed.status_code == 200
+    assert first.json() == {"armed": True, "label": "keys"}
+    assert second.json() == {"armed": False, "label": None}
+
+
+async def test_register_trigger_defaults_to_a_placeholder_label() -> None:
+    async with serve(create_app(settings())) as host:
+        async with httpx.AsyncClient(base_url=f"http://{host}") as http:
+            session, credential = await paired_session(http)
+            session_id = str(session["session_id"])
+            await http.post(
+                f"/v1/device/{session_id}/register",
+                headers=auth(credential),
+            )
+            consumed = await http.post(
+                f"/v1/device/{session_id}/register/consume",
+                headers=auth(),
+            )
+
+    assert consumed.json() == {"armed": True, "label": None}
 
 
 async def test_device_credential_cannot_publish_events_or_read_another_session() -> None:
