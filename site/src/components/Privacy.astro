@@ -1,0 +1,29 @@
+<section id="privacy">
+  <div class="container">
+    <p class="section-kicker">Privacy by design</p>
+    <h2 class="section-title">Your video stays with you. We keep only evidence.</h2>
+    <p class="privacy-lead">MEMO never stores full-length video in the backend. The media gateway retains no raw media, and perception keeps only a short, bounded window of frames it has already sampled and relayed, evicting anything older than that window. What survives is evidence.</p>
+
+    <div class="privacy-cards">
+      <article class="privacy-card">
+        <div class="pc-ic">⊘</div>
+        <h3>No full-length video</h3>
+        <p>The media gateway is built with a hard zero for raw media. The live stream is never recorded to the backend.</p>
+      </article>
+
+      <article class="privacy-card">
+        <div class="pc-ic">◔</div>
+        <h3>Short event evidence</h3>
+        <p>When the camera confirms an object such as a keychain, the system keeps a still frame and a short clip of that event window, a few seconds long, as the evidence of what it saw.</p>
+      </article>
+
+      <article class="privacy-card">
+        <div class="pc-ic">✓</div>
+        <h3>Proof when it matters</h3>
+        <p>That evidence is stored with the placement in the local memory service. Ask later, &ldquo;where is my keychain?&rdquo; and MEMO shows the last confirmed location with the evidence to back it up when a text answer alone is not enough.</p>
+      </article>
+    </div>
+
+    <p class="status-note">Everything else stays local: the raw stream, transcripts, and inference never leave the device. Keeping a minimal evidence clip is the deliberate exception that lets the memory answer honestly.</p>
+  </div>
+</section>
