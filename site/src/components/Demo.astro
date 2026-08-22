@@ -1,0 +1,25 @@
+---
+// The demo lives on YouTube. Embedding it (privacy-enhanced, no cookie
+// tracking) plays it in the page instead of redirecting the viewer away.
+const VIDEO_ID = 'LyBFO-cAuKE';
+const EMBED = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`;
+---
+<section id="demo">
+  <div class="container">
+    <p class="section-kicker">See it in action</p>
+    <h2 class="section-title">Watch the demo.</h2>
+    <p class="section-sub">A real run on the glasses: register an object, ask where it is, then bring a remote helper in. It plays right here.</p>
+
+    <div class="video-frame">
+      <iframe
+        src={EMBED}
+        title="MEMO demo"
+        loading="lazy"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        allowfullscreen
+        frameborder="0"
+      ></iframe>
+    </div>
+  </div>
+</section>
