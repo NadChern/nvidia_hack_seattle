@@ -35,7 +35,15 @@ class RawVideoFrame:
     height: int
     #: Tightly packed RGBA, `width * height * 4` bytes.
     rgba: bytes
+    #: When the *sender* produced the frame, where the transport can tell us.
+    #: For LiveKit this comes from the frame event rather than our own clock,
+    #: so the spacing between values is the publisher's real cadence.
     captured_at: dt.datetime
+    #: When this process took delivery. Distinct from `captured_at` on purpose:
+    #: the two were previously the same value, which made the device->gateway
+    #: hop unmeasurable and reported it as a flat 0.0 ms. Sources that have no
+    #: separate notion of receipt (the scripted publisher) may leave it unset.
+    received_at: dt.datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

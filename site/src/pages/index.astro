@@ -1,0 +1,41 @@
+---
+import SeoHead from '../components/SeoHead.astro';
+import Hero from '../components/Hero.astro';
+import Problem from '../components/Problem.astro';
+import Capabilities from '../components/Capabilities.astro';
+import Demo from '../components/Demo.astro';
+import Stack from '../components/Stack.astro';
+import Status from '../components/Status.astro';
+import Architecture from '../components/Architecture.astro';
+import Privacy from '../components/Privacy.astro';
+import Team from '../components/Team.astro';
+import '../styles/global.css';
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <SeoHead
+      title="MEMO: Visual Memory Assistant"
+      description="A local-first visual memory assistant that remembers where things are, answers everyday questions, and brings a trusted person to help when it matters. NVIDIA Spark Hackathon Seattle 2026 winner."
+    />
+  </head>
+  <body>
+    <Hero />
+    <main>
+      <Problem />
+      <Capabilities />
+      <Demo />
+      <Stack />
+      <Status />
+      <Architecture />
+      <Privacy />
+      <Team />
+    </main>
+    <footer class="footer">
+      <div class="container footer-inner">
+        <span>MEMO · Built for the NVIDIA Spark Hackathon Seattle 2026.</span>
+        <span>Local-first and private by default.</span>
+      </div>
+    </footer>
+  </body>
+</html>

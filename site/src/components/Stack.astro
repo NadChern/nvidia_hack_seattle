@@ -1,0 +1,40 @@
+---
+// Data for the stack. NVIDIA models link to their official model pages.
+// Kokoro is an open TTS model (not NVIDIA), so it links to its own card.
+const stack = [
+  { role: 'Agent reasoning and tool routing', tech: 'NVIDIA Nemotron 3.5 Lightning (local vLLM)', href: 'https://build.nvidia.com/nvidia/nemotron-3.5-lightning-30b-a3b' },
+  { role: 'Multimodal temporal reasoning', tech: 'NVIDIA Cosmos 3 Nano', href: 'https://build.nvidia.com/nvidia/cosmos3-nano' },
+  { role: 'Personal-object recognition', tech: 'NVIDIA C-RADIOv4-H 653M', href: 'https://huggingface.co/nvidia/C-RADIOv4-H' },
+  { role: 'Speech recognition', tech: 'NVIDIA Parakeet TDT 0.6B v3', href: 'https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3' },
+  { role: 'Text-to-speech', tech: 'Kokoro 82M', href: 'https://huggingface.co/hexgrad/Kokoro-82M' },
+  { role: 'Glasses media', tech: 'RayNeo X3 Pro via LiveKit / WebRTC', href: '' },
+  { role: 'Trusted object state', tech: 'Application Memory (structured observations and evidence)', href: '' },
+  { role: 'Target deployment', tech: 'Linux ARM64 / CUDA on the Acer GN100', href: 'https://www.acer.com/us-en/desktops-and-all-in-ones/veriton-workstations/veriton-gn100-ai-mini-workstation' },
+];
+---
+<section id="stack">
+  <div class="container">
+    <p class="section-kicker">The stack</p>
+    <h2 class="section-title">A single local NVIDIA stack.</h2>
+    <p class="section-sub">Every capability runs on one device. Private by default, no hosted model required. Each model links to its page.</p>
+
+    <div class="stack-grid">
+      {
+        stack.map((row) => (
+          <div class="stack-row">
+            <div class="stack-role">{row.role}</div>
+            <div class="stack-tech">
+              {row.href ? (
+                <a href={row.href} target="_blank" rel="noopener noreferrer">
+                  {row.tech}<span class="ext" aria-hidden="true">↗</span>
+                </a>
+              ) : (
+                row.tech
+              )}
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</section>

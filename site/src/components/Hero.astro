@@ -1,0 +1,31 @@
+---
+const BASE = import.meta.env.BASE_URL;
+---
+<header class="hero">
+  <div class="container">
+    <span class="hero-badge"><span class="spark">NVIDIA Spark</span> Hackathon Seattle 2026 · Winner</span>
+    <h1 class="hero-title">MEMO<span class="accent">.</span></h1>
+    <p class="hero-tagline">A visual memory assistant that remembers where things are, answers everyday questions, and brings a trusted person to help when it matters.</p>
+    <p class="hero-sub">Local-first and private by default. Built for our parents, on a single Acer GN100.</p>
+
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="#demo">Watch the demo</a>
+      <a class="btn btn-ghost" href="#problem">See how it works</a>
+    </div>
+
+    <p class="hero-note"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l8 4v5c0 5-3.5 8-8 9-4.5-1-8-4-8-9V7z"/></svg> Not a cloud model answer. Reasoning, perception, speech, and memory run on the device.</p>
+
+    <div class="hero-partners">
+      <span class="partner-label">Built with</span>
+      <a class="partner" href="https://build.nvidia.com/models" target="_blank" rel="noopener noreferrer"><img src={`${BASE}nvidia.svg`} alt="NVIDIA" /></a>
+      <span class="partner-sep">·</span>
+      <span class="partner-label">Runs on</span>
+      <a class="partner" href="https://www.acer.com/us-en/desktops-and-all-in-ones/veriton-workstations/veriton-gn100-ai-mini-workstation" target="_blank" rel="noopener noreferrer"><img src={`${BASE}acer.svg`} alt="Acer" /></a>
+    </div>
+
+    <div class="quote-card">
+      <p class="q">“Where did I leave my keys?”</p>
+      <p class="a">“On the living-room coffee table at 10:42, based on the last confirmed placement. <span class="confirmed">I have not confirmed a newer location.</span>”</p>
+    </div>
+  </div>
+</header>
