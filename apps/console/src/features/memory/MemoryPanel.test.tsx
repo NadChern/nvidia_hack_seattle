@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { MemoryPanel } from "@/features/memory/MemoryPanel"
 
-const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
+const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }))
 vi.mock("@/lib/api", () => api)
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
@@ -71,5 +71,32 @@ describe("MemoryPanel clear memory", () => {
     await waitFor(() =>
       expect(api.post).toHaveBeenCalledWith("memory", "/v1/query", { label: "a set of keys" }),
     )
+  })
+
+  it("renames a placeholder-labelled object without triggering a locate", async () => {
+    const now = new Date().toISOString()
+    api.get.mockResolvedValue({
+      registry_version: 4,
+      unchanged: false,
+      objects: [
+        { object_id: "obj_2", label: "item a1b2c3", created_at: now, updated_at: now, registry_version: 4 },
+      ],
+      views: [],
+    })
+    api.patch.mockResolvedValue({ object_id: "obj_2", label: "car keys", registry_version: 5 })
+    render(<MemoryPanel />)
+
+    // Entering rename must not fire a locate query for the placeholder label.
+    fireEvent.click(await screen.findByRole("button", { name: /rename "item a1b2c3"/i }))
+    fireEvent.change(screen.getByRole("textbox", { name: /new object name/i }), {
+      target: { value: "car keys" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: /save name/i }))
+
+    await waitFor(() =>
+      expect(api.patch).toHaveBeenCalledWith("memory", "/v1/objects/obj_2", { label: "car keys" }),
+    )
+    expect(api.post).not.toHaveBeenCalledWith("memory", "/v1/query", expect.anything())
+    expect(toast.success).toHaveBeenCalledTimes(1)
   })
 })

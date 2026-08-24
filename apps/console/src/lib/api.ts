@@ -61,6 +61,18 @@ export async function post<T>(service: ServiceName, path: string, body?: unknown
   return (await response.json()) as T
 }
 
+export async function patch<T>(service: ServiceName, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${BASE[service]}${path}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", ...authHeaders() },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
+  if (!response.ok) {
+    throw new ApiError(service, response.status, await response.text())
+  }
+  return (await response.json()) as T
+}
+
 export async function del(service: ServiceName, path: string): Promise<void> {
   await fetch(`${BASE[service]}${path}`, { method: "DELETE", headers: authHeaders() }).catch(
     () => undefined,

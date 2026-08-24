@@ -305,6 +305,40 @@ def delete_enrolled_object(db: DbSession, object_id: str) -> DeletedObject | Non
     return DeletedObject(object_id, paths, version)
 
 
+def rename_enrolled_object(
+    db: DbSession, object_id: str, *, label: str
+) -> protocol.EnrolledObject | None:
+    """Give a registered object a new display label.
+
+    Returns ``None`` when the object does not exist. A no-op rename (the label
+    is unchanged) returns the object without touching the registry version, so
+    the vision gallery cache is not needlessly invalidated; a real change bumps
+    the version, which is how the vision worker learns to regroup the object by
+    its new label on the next refresh.
+    """
+    row = db.get(models.EnrolledObjectRow, object_id)
+    if row is None:
+        return None
+    if row.label == label:
+        return _enrolled_object(row)
+    previous = row.label
+    now = utcnow()
+    version = _next_registry_version(db)
+    row.label = label
+    row.updated_at = now
+    row.registry_version = version
+    db.add(
+        models.AuditRow(
+            occurred_at=now,
+            action="registered_object_renamed",
+            session_id=None,
+            detail=f"object_id={object_id}, from={previous!r}, to={label!r}",
+        )
+    )
+    db.flush()
+    return _enrolled_object(row)
+
+
 def _enrolled_object(row: models.EnrolledObjectRow) -> protocol.EnrolledObject:
     return protocol.EnrolledObject(
         object_id=row.object_id,

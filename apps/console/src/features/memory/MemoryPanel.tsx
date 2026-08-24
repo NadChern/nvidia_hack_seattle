@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { RefreshCw, Search, Trash2 } from "lucide-react"
+import { Check, Pencil, RefreshCw, Search, Trash2, X } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -15,8 +15,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
-import { get, post } from "@/lib/api"
-import type { AnswerStatus, ObjectGallery, QueryAnswer } from "@/lib/contracts"
+import { get, patch, post } from "@/lib/api"
+import type { AnswerStatus, EnrolledObject, ObjectGallery, QueryAnswer } from "@/lib/contracts"
 
 /** Compact "3m ago" / "2h ago" without pulling in a date library. */
 function ago(iso: string): string {
@@ -68,6 +68,9 @@ export function MemoryPanel() {
   const [clearing, setClearing] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [gallery, setGallery] = useState<ObjectGallery | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftLabel, setDraftLabel] = useState("")
+  const [savingId, setSavingId] = useState<string | null>(null)
 
   const loadGallery = useCallback(async (signal?: AbortSignal) => {
     try {
@@ -120,6 +123,39 @@ export function MemoryPanel() {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setAsking(false)
+    }
+  }
+
+  const startRename = (object: EnrolledObject) => {
+    setEditingId(object.object_id)
+    setDraftLabel(object.label)
+  }
+
+  const cancelRename = () => {
+    setEditingId(null)
+    setDraftLabel("")
+  }
+
+  // The register button mints placeholder "item {uuid}" labels; this is the
+  // operator path to give a registered object a human name. The memory service
+  // owns the label (and bumps the registry version so the vision gallery
+  // regroups the object), so the rename goes straight there.
+  const saveRename = async (objectId: string) => {
+    const next = draftLabel.trim()
+    if (next === "") {
+      cancelRename()
+      return
+    }
+    setSavingId(objectId)
+    try {
+      await patch("memory", `/v1/objects/${objectId}`, { label: next })
+      cancelRename()
+      await loadGallery()
+      toast.success(`Renamed to "${next}".`)
+    } catch (caught) {
+      toast.error(caught instanceof Error ? caught.message : "Could not rename object.")
+    } finally {
+      setSavingId(null)
     }
   }
 
@@ -200,11 +236,67 @@ export function MemoryPanel() {
                   {gallery.objects.map((object) => (
                     <tr
                       key={object.object_id}
-                      className="cursor-pointer border-b last:border-0 hover:bg-muted/50"
+                      className="group cursor-pointer border-b last:border-0 hover:bg-muted/50"
                       onClick={() => void locate(object.label)}
                       title={`Locate "${object.label}"`}
                     >
-                      <td className="px-3 py-1.5">{object.label}</td>
+                      <td className="px-3 py-1.5">
+                        {editingId === object.object_id ? (
+                          <div
+                            className="flex items-center gap-1"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <input
+                              autoFocus
+                              value={draftLabel}
+                              onChange={(event) => setDraftLabel(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") void saveRename(object.object_id)
+                                if (event.key === "Escape") cancelRename()
+                              }}
+                              maxLength={128}
+                              disabled={savingId === object.object_id}
+                              aria-label="New object name"
+                              className="h-6 w-40 rounded border bg-background px-1.5 text-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            />
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              disabled={savingId === object.object_id}
+                              onClick={() => void saveRename(object.object_id)}
+                              aria-label="Save name"
+                            >
+                              <Check />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              onClick={cancelRename}
+                              aria-label="Cancel rename"
+                            >
+                              <X />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span>{object.label}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-5 w-5 opacity-0 focus-visible:opacity-100 group-hover:opacity-100"
+                              onClick={(event) => {
+                                event.stopPropagation()
+                                startRename(object)
+                              }}
+                              aria-label={`Rename "${object.label}"`}
+                            >
+                              <Pencil />
+                            </Button>
+                          </div>
+                        )}
+                      </td>
                       <td className="px-3 py-1.5 text-right tabular-nums">
                         {viewCount(object.object_id)}
                       </td>

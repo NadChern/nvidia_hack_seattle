@@ -109,6 +109,49 @@ async def test_view_and_object_creation_are_idempotent_and_delete_removes_crops(
     assert not (Path(settings.registration_crop_dir) / object_id).exists()
 
 
+async def test_rename_changes_the_label_and_bumps_the_registry_version(
+    app: FastAPI,
+) -> None:
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/v1/objects",
+                json={"label": "item a1b2c3", "idempotency_key": "register/item/1"},
+            )
+            object_id = created.json()["object_id"]
+            before = created.json()["registry_version"]
+
+            renamed = await client.patch(
+                f"/v1/objects/{object_id}", json={"label": "Alex's car keys"}
+            )
+            # A no-op rename must not churn the registry version.
+            noop = await client.patch(
+                f"/v1/objects/{object_id}", json={"label": "Alex's car keys"}
+            )
+            gallery = (await client.get("/v1/objects")).json()
+
+    assert renamed.status_code == 200
+    assert renamed.json()["label"] == "Alex's car keys"
+    assert renamed.json()["registry_version"] > before
+    assert noop.json()["registry_version"] == renamed.json()["registry_version"]
+    assert gallery["objects"][0]["label"] == "Alex's car keys"
+
+
+async def test_rename_rejects_blank_and_missing_objects(app: FastAPI) -> None:
+    async with app.router.lifespan_context(app):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            created = await client.post(
+                "/v1/objects",
+                json={"label": "item deadbe", "idempotency_key": "register/item/2"},
+            )
+            object_id = created.json()["object_id"]
+            blank = await client.patch(f"/v1/objects/{object_id}", json={"label": "   "})
+            missing = await client.patch("/v1/objects/object_missing", json={"label": "keys"})
+
+    assert blank.status_code == 400
+    assert missing.status_code == 404
+
+
 async def test_registered_object_survives_session_delete_and_answers_in_a_new_session(
     app: FastAPI,
 ) -> None:
