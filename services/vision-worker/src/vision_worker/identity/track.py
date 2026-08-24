@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Sequence
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -67,25 +67,30 @@ class Sam2Tracker:
     def __init__(self, *, model_id: str = DEFAULT_SAM2_ID, device: str | None = None) -> None:
         self._model_id = model_id
         self._device = device
-        self._model: object | None = None
-        self._processor: object | None = None
+        self._model: Any | None = None
+        self._processor: Any | None = None
 
-    def _ensure_loaded(self) -> tuple[object, object, object]:
+    def _ensure_loaded(self) -> tuple[Any, Any, Any]:
         # Deferred so the module imports without transformers>=4.57 / a GPU, and
         # so tests using a fake Tracker never touch SAM2.
         import torch
         from transformers import Sam2VideoModel, Sam2VideoProcessor
 
-        device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # The transformers SAM2 classes ship only partial types, so under strict
+        # pyright every method on the model/session reads as unknown. Launder
+        # them through Any exactly as the C-RADIO adapter does for the same
+        # libraries, keeping the type surface at this one boundary.
+        runtime: Any = torch
+        model_cls: Any = Sam2VideoModel
+        processor_cls: Any = Sam2VideoProcessor
+        device = self._device or ("cuda" if runtime.cuda.is_available() else "cpu")
         if self._model is None or self._processor is None:
-            self._processor = Sam2VideoProcessor.from_pretrained(self._model_id)
+            self._processor = processor_cls.from_pretrained(self._model_id)
             self._model = (
-                Sam2VideoModel.from_pretrained(self._model_id, dtype=torch.bfloat16)
-                .to(device)
-                .eval()
+                model_cls.from_pretrained(self._model_id, dtype=runtime.bfloat16).to(device).eval()
             )
             logger.info("SAM2 tracker loaded", extra={"model_id": self._model_id, "device": device})
-        return torch, self._model, self._processor
+        return runtime, self._model, self._processor
 
     async def track(
         self, frames: Sequence[NDArray[np.uint8]], seed: BoundingBox

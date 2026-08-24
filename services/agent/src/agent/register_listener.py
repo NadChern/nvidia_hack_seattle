@@ -12,13 +12,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict
 
 from agent.config import Settings
 from agent.events import ConsumedRegister, GatewayEventTransport
+
+if TYPE_CHECKING:
+    from agent.workflow import RegistrationMode
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ class RegisterConsumer(Protocol):
 
 
 class RegistrationStarter(Protocol):
-    def start(self, *, label: str, session_id: str, mode: str = ...) -> bool: ...
+    def start(self, *, label: str, session_id: str, mode: RegistrationMode = ...) -> bool: ...
 
 
 def _placeholder_label() -> str:
