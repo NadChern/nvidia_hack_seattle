@@ -132,15 +132,11 @@ def _evaluate(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--dataset", type=Path, default=Path("../../clips/identity-probe")
-    )
+    parser.add_argument("--dataset", type=Path, default=Path("../../clips/identity-probe"))
     parser.add_argument("--split", choices=("clean", "realistic", "all"), default="realistic")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument(
-        "--floors", type=float, nargs="+", default=[0.60, 0.70, 0.75, 0.80]
-    )
+    parser.add_argument("--floors", type=float, nargs="+", default=[0.60, 0.70, 0.75, 0.80])
     parser.add_argument("--margins", type=float, nargs="+", default=[0.02, 0.04, 0.06])
     args = parser.parse_args()
 
@@ -173,16 +169,12 @@ def main() -> int:
     best: tuple[float, tuple[float, float], Outcome] | None = None
     for floor in args.floors:
         for margin in args.margins:
-            thr = object_thresholds(
-                views, summary_weight=1.0, floor=floor, confusion_margin=margin
-            )
+            thr = object_thresholds(views, summary_weight=1.0, floor=floor, confusion_margin=margin)
             outcome = _evaluate(
                 views, queries, floor=floor, confusion_margin=margin, global_threshold=None
             )
             thr_str = "  ".join(f"{oid}={thr[oid]:.3f}" for oid in sorted(thr))
-            print(
-                f"  floor={floor:.2f} margin={margin:.2f}   {outcome.line()}   [{thr_str}]"
-            )
+            print(f"  floor={floor:.2f} margin={margin:.2f}   {outcome.line()}   [{thr_str}]")
             # Prefer fewest misidentifications, then most correct.
             key = (-outcome.misidentified, outcome.correct)
             if best is None or key > (-best[2].misidentified, best[2].correct):

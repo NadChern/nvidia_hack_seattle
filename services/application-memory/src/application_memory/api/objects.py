@@ -158,9 +158,7 @@ def gallery(request: Request, since_version: int | None = None) -> dict[str, Any
 
 
 @router.patch("/{object_id}")
-def rename_object(
-    object_id: str, body: RenameObjectRequest, request: Request
-) -> dict[str, Any]:
+def rename_object(object_id: str, body: RenameObjectRequest, request: Request) -> dict[str, Any]:
     """Rename a registered object -- the operator path for the placeholder
     ``item {uuid}`` labels the register button mints when it has no name.
 

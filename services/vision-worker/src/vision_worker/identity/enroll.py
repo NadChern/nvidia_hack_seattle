@@ -479,8 +479,7 @@ class ObjectEnroller:
             await self._rollback_failed_object(object_id)
             raise EnrollmentError(
                 "too_few_quality_frames",
-                f"only {len(passed)} tracked frames passed quality; "
-                f"need {self._config.min_views}",
+                f"only {len(passed)} tracked frames passed quality; need {self._config.min_views}",
                 result=EnrollmentResult(frames_total, len(tracked), len(passed), 0),
             )
         return await self._persist_candidates(

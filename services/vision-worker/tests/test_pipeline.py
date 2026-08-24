@@ -213,9 +213,7 @@ async def test_a_query_below_its_raised_per_object_bar_is_skipped() -> None:
     # observation. But a confusable same-label sibling raised this object's bar
     # to 0.90, so the per-object gate refuses rather than guess between the two.
     reasoner = FixtureReasoner(default=(_event("placed"),))
-    gallery = StubGallery(
-        labels={"keys"}, score=_match(score=0.82), override_threshold=0.90
-    )
+    gallery = StubGallery(labels={"keys"}, score=_match(score=0.82), override_threshold=0.90)
     recorder = Recorder()
     pipeline = _pipeline(reasoner, gallery, recorder)
 

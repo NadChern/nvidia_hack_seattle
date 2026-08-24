@@ -37,9 +37,7 @@ class RegistrationWorkflow:
         self._metrics = metrics
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
-    def start(
-        self, *, label: str, session_id: str, mode: RegistrationMode = "grounded"
-    ) -> bool:
+    def start(self, *, label: str, session_id: str, mode: RegistrationMode = "grounded") -> bool:
         normalized = " ".join(label.strip().casefold().split())
         if not normalized or len(normalized) > 128 or not session_id:
             return False

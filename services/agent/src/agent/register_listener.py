@@ -84,9 +84,7 @@ class RegisterTriggerListener:
             if not armed.armed:
                 continue
             label = armed.label or _placeholder_label()
-            started = self._workflow.start(
-                label=label, session_id=session_id, mode="center-anchor"
-            )
+            started = self._workflow.start(label=label, session_id=session_id, mode="center-anchor")
             logger.info(
                 "register button consumed",
                 extra={

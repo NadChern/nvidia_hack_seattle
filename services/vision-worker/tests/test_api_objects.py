@@ -158,9 +158,7 @@ async def test_create_capture_and_poll_registration() -> None:
 async def test_capture_forwards_center_anchor_mode() -> None:
     app, manager, _ = app_for()
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.post(
-            "/v1/objects", json={"label": "keys", "idempotency_key": "register/keys"}
-        )
+        await client.post("/v1/objects", json={"label": "keys", "idempotency_key": "register/keys"})
         capture = await client.post(
             "/v1/objects/object_keys/capture",
             json={"capture_seconds": 4.0, "mode": "center-anchor"},

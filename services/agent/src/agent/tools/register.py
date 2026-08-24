@@ -47,9 +47,7 @@ class RegisterTool:
         if not session_id:
             return RegistrationOutcome(None, normalized, False, "session_required")
         try:
-            return await asyncio.to_thread(
-                self._register_operation, normalized, session_id, mode
-            )
+            return await asyncio.to_thread(self._register_operation, normalized, session_id, mode)
         except (MemoryError_, httpx.HTTPError, TimeoutError, OSError) as exc:
             raise DependencyUnavailableError("registration services are unavailable") from exc
 

@@ -113,9 +113,7 @@ def test_object_thresholds_reports_each_objects_bar() -> None:
         replace(view("object_mug", 0, vector(1.0, 0.0)), label="mug"),
     )
 
-    thresholds = object_thresholds(
-        views, summary_weight=0.5, floor=0.6, confusion_margin=0.04
-    )
+    thresholds = object_thresholds(views, summary_weight=0.5, floor=0.6, confusion_margin=0.04)
 
     assert thresholds["object_mine"] == pytest.approx(0.84)
     assert thresholds["object_other"] == pytest.approx(0.84)

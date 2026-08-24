@@ -125,9 +125,7 @@ async def test_rename_changes_the_label_and_bumps_the_registry_version(
                 f"/v1/objects/{object_id}", json={"label": "Alex's car keys"}
             )
             # A no-op rename must not churn the registry version.
-            noop = await client.patch(
-                f"/v1/objects/{object_id}", json={"label": "Alex's car keys"}
-            )
+            noop = await client.patch(f"/v1/objects/{object_id}", json={"label": "Alex's car keys"})
             gallery = (await client.get("/v1/objects")).json()
 
     assert renamed.status_code == 200
