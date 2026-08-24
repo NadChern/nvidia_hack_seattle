@@ -134,11 +134,18 @@ class Settings(BaseSettings):
     identity_track_frames: int = Field(default=3, ge=1, le=8)
     identity_min_detection_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     identity_min_scale: float = Field(default=0.01, ge=0.0, le=1.0)
-    #: Keys-only Phase-0 probe starting values. Configurable and re-tuned once
-    #: masked enrollment crops replace the conservative full-image probe.
-    identity_min_cosine: float = Field(default=0.8334, ge=0.0, le=1.0)
-    identity_min_margin: float = Field(default=0.0440, ge=0.0, le=1.0)
-    identity_escalation_low: float = Field(default=0.8216, ge=0.0, le=1.0)
+    #: Per-object identity gate (Spike 4). ``identity_min_cosine`` is now the
+    #: *floor*: a lone registered object with no same-label sibling accepts at
+    #: this bar. ``identity_min_margin`` is the confusion margin added above a
+    #: sibling's cross-object similarity, so two same-class instances each sit
+    #: just above the other. Validated on the 3-keyring probe: floor 0.75 /
+    #: margin 0.02 gives 24/25 correct, 0 misidentified (vs the old global
+    #: 0.8334's 19/25 -- 6 false rejects). See scripts/validate_object_thresholds.py.
+    identity_min_cosine: float = Field(default=0.75, ge=0.0, le=1.0)
+    identity_min_margin: float = Field(default=0.02, ge=0.0, le=1.0)
+    #: Just below the identity floor: the narrow band a VLM escalation would
+    #: cover. Must stay <= identity_min_cosine (validated below).
+    identity_escalation_low: float = Field(default=0.73, ge=0.0, le=1.0)
     identity_summary_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     identity_vlm_escalation: bool = True
     #: Promotion confidence is not raw cosine. Resolved matches are mapped to

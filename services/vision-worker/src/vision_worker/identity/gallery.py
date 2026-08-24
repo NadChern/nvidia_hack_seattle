@@ -40,6 +40,11 @@ class GalleryScore:
     runner_up_object_id: str | None
     crop_references: tuple[str, ...]
     stale_views: int = 0
+    #: Per-object acceptance bar the winner must clear. Derived from the
+    #: gallery's own confusability (see ``score_gallery``): a lone object sits
+    #: at the floor, a same-label sibling raises it. ``score >= threshold`` is
+    #: the accept condition the pipeline applies.
+    threshold: float = 0.0
 
 
 @dataclass(slots=True)
@@ -107,8 +112,17 @@ class GalleryCache:
         *,
         label: str,
         summary_weight: float,
+        floor: float = 0.0,
+        confusion_margin: float = 0.0,
     ) -> GalleryScore | None:
-        result = score_gallery(self._views, queries, label=label, summary_weight=summary_weight)
+        result = score_gallery(
+            self._views,
+            queries,
+            label=label,
+            summary_weight=summary_weight,
+            floor=floor,
+            confusion_margin=confusion_margin,
+        )
         if result is not None:
             self.metrics.stale_views += result.stale_views
         return result
@@ -141,8 +155,24 @@ def score_gallery(
     *,
     label: str,
     summary_weight: float,
+    floor: float = 0.0,
+    confusion_margin: float = 0.0,
 ) -> GalleryScore | None:
-    """Mean over queries of max-over-reference-view weighted cosine."""
+    """Mean over queries of max-over-reference-view weighted cosine.
+
+    The winner also carries a ``threshold``: the bar it must clear to be
+    accepted, derived from the gallery's own confusability rather than a single
+    global constant. For the winning object it is
+
+        threshold = max(floor, max_cross_object_cosine + confusion_margin)
+
+    where the cross-object cosine is the highest reference-vs-reference
+    similarity between the winner and any *other* same-label object. A lone
+    object has no sibling, so it degrades to ``floor`` -- which is exactly why a
+    single global cosine sufficed for the one-object demo and would not survive
+    a second same-class instance. Callers that pass the defaults (floor 0,
+    margin 0) get ``threshold == 0`` and thus no per-object gating.
+    """
     if not queries or not 0.0 <= summary_weight <= 1.0:
         return None
     by_object: defaultdict[str, list[GalleryView]] = defaultdict(list)
@@ -183,6 +213,13 @@ def score_gallery(
     best_id, best_score = scored[0]
     runner_id, runner_score = scored[1] if len(scored) > 1 else (None, None)
     margin = best_score - runner_score if runner_score is not None else None
+    threshold = _object_threshold(
+        best_id,
+        by_object,
+        summary_weight=summary_weight,
+        floor=floor,
+        confusion_margin=confusion_margin,
+    )
     return GalleryScore(
         object_id=best_id,
         score=max(0.0, min(1.0, best_score)),
@@ -190,7 +227,74 @@ def score_gallery(
         runner_up_object_id=runner_id,
         crop_references=tuple(view.crop_reference for view in by_object[best_id]),
         stale_views=stale,
+        threshold=threshold,
     )
+
+
+def _object_threshold(
+    object_id: str,
+    by_object: Mapping[str, Sequence[GalleryView]],
+    *,
+    summary_weight: float,
+    floor: float,
+    confusion_margin: float,
+) -> float:
+    """Acceptance bar for ``object_id``: floor, raised by same-label confusion.
+
+    ``by_object`` is already label-filtered by the caller, so every other key
+    is a same-class instance competing for the same label. With no sibling the
+    object keeps the floor; otherwise the bar rises to just above its closest
+    reference-vs-reference match with another instance.
+    """
+    own_views = by_object[object_id]
+    best_cross = 0.0
+    has_sibling = False
+    for other_id, other_views in by_object.items():
+        if other_id == object_id:
+            continue
+        has_sibling = True
+        for own in own_views:
+            for other in other_views:
+                sim = summary_weight * float(np.dot(own.summary, other.summary)) + (
+                    1.0 - summary_weight
+                ) * float(np.dot(own.pooled_spatial, other.pooled_spatial))
+                if sim > best_cross:
+                    best_cross = sim
+    if not has_sibling:
+        return floor
+    return max(floor, best_cross + confusion_margin)
+
+
+def object_thresholds(
+    views: Sequence[GalleryView],
+    *,
+    summary_weight: float,
+    floor: float,
+    confusion_margin: float,
+) -> dict[str, float]:
+    """Per-object acceptance thresholds for the whole gallery.
+
+    The live gate only needs the winner's threshold (``score_gallery`` computes
+    it inline), but the whole map is what the offline validation harness reports
+    and what observability surfaces: which registered objects are confusable
+    with which, and how high each one's bar sits above the floor.
+    """
+    by_label: defaultdict[str, defaultdict[str, list[GalleryView]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for view in views:
+        by_label[view.label][view.object_id].append(view)
+    thresholds: dict[str, float] = {}
+    for objects in by_label.values():
+        for object_id in objects:
+            thresholds[object_id] = _object_threshold(
+                object_id,
+                objects,
+                summary_weight=summary_weight,
+                floor=floor,
+                confusion_margin=confusion_margin,
+            )
+    return thresholds
 
 
 def _gallery_view(view: ObjectView, label: str) -> GalleryView:
@@ -217,5 +321,6 @@ __all__ = [
     "GalleryMetrics",
     "GalleryScore",
     "GalleryView",
+    "object_thresholds",
     "score_gallery",
 ]

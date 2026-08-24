@@ -121,6 +121,7 @@ class Pipeline:
         reason_interval_s: float = 7.0,
         reason_max_frames: int = 4,
         identity_min_cosine: float = 0.75,
+        identity_min_margin: float = 0.0,
         identity_summary_weight: float = 0.5,
         box_padding: float = 0.12,
         event_cooldown_s: float = 20.0,
@@ -137,6 +138,7 @@ class Pipeline:
         self._reason_interval_s = reason_interval_s
         self._reason_max_frames = reason_max_frames
         self._identity_min_cosine = identity_min_cosine
+        self._identity_min_margin = identity_min_margin
         self._identity_summary_weight = identity_summary_weight
         self._box_padding = box_padding
         self._event_cooldown_s = event_cooldown_s
@@ -322,7 +324,9 @@ class Pipeline:
     ) -> None:
         occurred_at = window[-1].captured_at
         score = await self._resolve_identity(rgb, event)
-        if score is None or score.score < self._identity_min_cosine:
+        # Per-object gate: the winner carries its own bar (floor for a lone
+        # object, raised by any same-label sibling it could be confused with).
+        if score is None or score.score < score.threshold:
             self.metrics.identity_skipped += 1
             self._record(event, None, "skipped_no_identity", score)
             return
@@ -381,7 +385,11 @@ class Pipeline:
         if not vectors:
             return None
         return self._gallery.match(
-            vectors, label=event.label, summary_weight=self._identity_summary_weight
+            vectors,
+            label=event.label,
+            summary_weight=self._identity_summary_weight,
+            floor=self._identity_min_cosine,
+            confusion_margin=self._identity_min_margin,
         )
 
     def _build(

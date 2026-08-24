@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         reason_interval_s=settings.reason_interval_seconds,
         reason_max_frames=settings.reason_max_frames,
         identity_min_cosine=settings.identity_min_cosine,
+        identity_min_margin=settings.identity_min_margin,
         identity_summary_weight=settings.identity_summary_weight,
         box_padding=settings.identity_box_padding,
         event_cooldown_s=settings.event_cooldown_seconds,

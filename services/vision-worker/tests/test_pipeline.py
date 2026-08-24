@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as dt
 import io
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
 from PIL import Image
@@ -79,9 +80,16 @@ def _event(
 class StubGallery:
     """Stands in for `GalleryCache`: fixed labels and a chosen match score."""
 
-    def __init__(self, *, labels: set[str], score: GalleryScore | None) -> None:
+    def __init__(
+        self,
+        *,
+        labels: set[str],
+        score: GalleryScore | None,
+        override_threshold: float | None = None,
+    ) -> None:
         self._labels = frozenset(labels)
         self._score = score
+        self._override_threshold = override_threshold
         self.refreshes = 0
 
     @property
@@ -93,9 +101,23 @@ class StubGallery:
         return False
 
     def match(
-        self, queries: Sequence[object], *, label: str, summary_weight: float
+        self,
+        queries: Sequence[object],
+        *,
+        label: str,
+        summary_weight: float,
+        floor: float = 0.0,
+        confusion_margin: float = 0.0,
     ) -> GalleryScore | None:
-        return self._score
+        # A lone-object stand-in: its bar is just the floor, so the pipeline's
+        # per-object gate reduces to the old global-cosine comparison -- unless a
+        # test pins a raised bar to model a confusable same-label sibling.
+        if self._score is None:
+            return None
+        return replace(
+            self._score,
+            threshold=floor if self._override_threshold is None else self._override_threshold,
+        )
 
 
 class Recorder:
@@ -176,6 +198,24 @@ async def test_second_localization_abstention_uses_the_first_event_crop() -> Non
 async def test_an_unmatched_event_is_skipped_not_written() -> None:
     reasoner = FixtureReasoner(default=(_event("placed"),))
     gallery = StubGallery(labels={"keys"}, score=_match(score=0.4))  # below min_cosine
+    recorder = Recorder()
+    pipeline = _pipeline(reasoner, gallery, recorder)
+
+    await _feed(pipeline, [_frame(0, sequence=1)])
+
+    assert recorder.calls == []
+    assert pipeline.metrics.identity_skipped == 1
+    assert pipeline.metrics.observations_written == 0
+
+
+async def test_a_query_below_its_raised_per_object_bar_is_skipped() -> None:
+    # 0.82 clears the 0.75 floor -- the old global gate would have written this
+    # observation. But a confusable same-label sibling raised this object's bar
+    # to 0.90, so the per-object gate refuses rather than guess between the two.
+    reasoner = FixtureReasoner(default=(_event("placed"),))
+    gallery = StubGallery(
+        labels={"keys"}, score=_match(score=0.82), override_threshold=0.90
+    )
     recorder = Recorder()
     pipeline = _pipeline(reasoner, gallery, recorder)
 
@@ -273,9 +313,15 @@ class LateGallery:
         return True
 
     def match(
-        self, queries: Sequence[object], *, label: str, summary_weight: float
+        self,
+        queries: Sequence[object],
+        *,
+        label: str,
+        summary_weight: float,
+        floor: float = 0.0,
+        confusion_margin: float = 0.0,
     ) -> GalleryScore | None:
-        return self._score
+        return replace(self._score, threshold=floor)
 
 
 async def test_a_prior_registration_reappears_after_a_cold_start() -> None:
