@@ -73,22 +73,22 @@ class Sam2Tracker:
     def _ensure_loaded(self) -> tuple[Any, Any, Any]:
         # Deferred so the module imports without transformers>=4.57 / a GPU, and
         # so tests using a fake Tracker never touch SAM2.
-        import torch
-        from transformers import Sam2VideoModel, Sam2VideoProcessor
+        import torch  # type: ignore[import-not-found]
+        import transformers  # type: ignore[import-not-found]
 
-        # The transformers SAM2 classes ship only partial types, so under strict
-        # pyright every method on the model/session reads as unknown. Launder
-        # them through Any exactly as the C-RADIO adapter does for the same
-        # libraries, keeping the type surface at this one boundary.
+        # torch/transformers are absent from the type-check environment and ship
+        # only partial types where present, so route them through Any at this one
+        # boundary -- every attribute below is then Any -- as the C-RADIO adapter
+        # does for the same libraries.
         runtime: Any = torch
-        model_cls: Any = Sam2VideoModel
-        processor_cls: Any = Sam2VideoProcessor
+        tf: Any = transformers
         device = self._device or ("cuda" if runtime.cuda.is_available() else "cpu")
         if self._model is None or self._processor is None:
-            self._processor = processor_cls.from_pretrained(self._model_id)
-            self._model = (
-                model_cls.from_pretrained(self._model_id, dtype=runtime.bfloat16).to(device).eval()
-            )
+            self._processor = tf.Sam2VideoProcessor.from_pretrained(self._model_id)
+            model = tf.Sam2VideoModel.from_pretrained(self._model_id, dtype=runtime.bfloat16)
+            model.to(device)
+            model.eval()
+            self._model = model
             logger.info("SAM2 tracker loaded", extra={"model_id": self._model_id, "device": device})
         return runtime, self._model, self._processor
 
