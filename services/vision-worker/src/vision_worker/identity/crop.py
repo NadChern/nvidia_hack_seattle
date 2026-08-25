@@ -20,11 +20,20 @@ def box_to_mask(
 ) -> NDArray[np.bool_]:
     """A rectangular boolean mask for `box`, expanded by `padding` on each side.
 
-    With no segmenter available (SAM3 is gated), both enrollment and matching
-    treat the reasoner's box as the object region: this mask is the padded box
-    itself, so `prepare_masked_crop` grays everything outside it and pools over
-    it -- the box-only degradation the pivot accepts, applied identically on
-    both sides so crop-parity holds.
+    The rectangle is a **measured decision, not a shortcut awaiting a segmenter.**
+    The enrollment-redesign spikes tested real SAM2 masks against this padded box
+    and masking lost: it made identity *worse* on the probe set (F1 0.898 vs
+    0.941), and on a same-class twin it collapsed ranking 5/5 -> 1/5, because
+    masking two near-identical keyrings leaves two identical silhouettes and the
+    silhouette is the part they share. See `docs/19-Post-Spike-Build-Plan.md`
+    (do-not-build list, spikes 1 and 8). The real identity gap was pixels on
+    target, not background.
+
+    So both enrollment and matching treat the reasoner's box as the object
+    region: this mask is the padded box itself, `prepare_masked_crop` grays
+    everything outside it and pools over it, and the same rule is applied on both
+    sides so crop-parity holds. Do not replace this with a segmenter to "finish"
+    it -- that regresses identity.
     """
     pad_x = (box.x_max - box.x_min) * padding
     pad_y = (box.y_max - box.y_min) * padding
