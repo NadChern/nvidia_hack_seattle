@@ -736,12 +736,23 @@ if ! skipped console; then
   # vite its grandchild, so stopping npm can leave vite holding port 5173.
   # Its same-origin proxies must use the same exact trusted-LAN bind as the
   # native services; loopback cannot reach a process bound only to that address.
+  #
+  # VITE_VMA_LIVEKIT_URL is the exception -- deliberately loopback, *not*
+  # $PROBE_HOST. LiveKit's WS/media are not proxied through Vite, so the browser
+  # connects to whatever URL the gateway advertises (`client_livekit_url`),
+  # which becomes a LAN address whenever glasses join over Wi-Fi
+  # (VMA_LIVEKIT_PUBLIC_URL). A browser on this same host cannot reach the VM's
+  # LAN IP under WSL2 mirrored networking (Windows -> 10.0.0.x:7880 fails) but
+  # always reaches loopback. Override it for a browser on a *different* host --
+  # see the glasses-stack-debug skill's start_target_console.sh, which sets the
+  # LAN IP instead.
   VMA_GATEWAY_URL="${VMA_GATEWAY_URL:-http://$PROBE_HOST:8080}" \
   VMA_VISION_URL="${VMA_VISION_URL:-http://$PROBE_HOST:8082}" \
   VMA_MEMORY_URL="${VMA_MEMORY_URL:-http://$PROBE_HOST:8081}" \
   VMA_SPEECH_URL="${VMA_SPEECH_URL:-http://$PROBE_HOST:8085}" \
   VMA_AGENT_URL="${VMA_AGENT_URL:-http://$PROBE_HOST:8086}" \
   VITE_VMA_INTERNAL_API_TOKEN="${VITE_VMA_INTERNAL_API_TOKEN:-${VMA_INTERNAL_API_TOKEN:-}}" \
+  VITE_VMA_LIVEKIT_URL="${VITE_VMA_LIVEKIT_URL:-ws://127.0.0.1:7880}" \
     start console apps/console ./node_modules/.bin/vite --host "$BIND_ADDR" --port 5173 --strictPort
   wait_ready console "http://$PROBE_HOST:5173/" 120 "${PIDS[${#PIDS[@]}-1]}"
 fi
