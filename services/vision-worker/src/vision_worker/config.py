@@ -147,6 +147,14 @@ class Settings(BaseSettings):
     #: cover. Must stay <= identity_min_cosine (validated below).
     identity_escalation_low: float = Field(default=0.73, ge=0.0, le=1.0)
     identity_summary_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    #: Per-sighting pooling (Spike 9b). The identity verdict is pooled over the
+    #: last N frames of the sighting window by median rather than decided on a
+    #: single frame. Per frame the accept/reject headroom is thin (highest
+    #: intruder 0.753 vs lowest accept 0.764, a 0.011 gap on 40 decisions);
+    #: median over one settled placement lifts that to +0.054 -- 5x -- with 8/8
+    #: events right. 1 restores per-frame behaviour. See
+    #: docs/19-Post-Spike-Build-Plan.md and docs/spikes/distractor (spike branch).
+    identity_pool_frames: int = Field(default=5, ge=1, le=32)
     identity_vlm_escalation: bool = True
     #: Promotion confidence is not raw cosine. Resolved matches are mapped to
     #: this Memory policy floor or above; unresolved objects retain detection
