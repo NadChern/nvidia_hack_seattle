@@ -38,7 +38,7 @@ from probe_identity import (  # noqa: E402
 from vision_worker.identity.base import EmbeddingVectors  # noqa: E402
 from vision_worker.identity.gallery import GalleryView, score_gallery  # noqa: E402
 
-FLOOR = 0.75  # config.py identity_min_cosine
+FLOOR = 0.76  # config.py identity_min_cosine
 MARGIN = 0.02  # config.py identity_min_margin
 
 
