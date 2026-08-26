@@ -236,6 +236,45 @@ async def test_no_gallery_match_at_all_is_skipped() -> None:
     assert pipeline.metrics.identity_skipped == 1
 
 
+class QueryCountingGallery(StubGallery):
+    """A StubGallery that records how many query vectors each match sees."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)  # type: ignore[arg-type]
+        self.max_queries = 0
+
+    def match(self, queries: Sequence[object], **kwargs: object) -> GalleryScore | None:
+        self.max_queries = max(self.max_queries, len(queries))
+        return super().match(queries, **kwargs)  # type: ignore[arg-type]
+
+
+async def test_identity_is_pooled_over_the_sightings_settled_tail() -> None:
+    # Spike 9b plumbing: with pool_frames=3 the verdict is scored over the last
+    # three frames of the window, not just its final frame. Frames 1s apart put
+    # three of them in the window snapshotted at t=2.0 ([-1, 2]).
+    reasoner = FixtureReasoner(default=(_event("placed"),))
+    gallery = QueryCountingGallery(labels={"keys"}, score=_match())
+    recorder = Recorder()
+    pipeline = _pipeline(reasoner, gallery, recorder, identity_pool_frames=3)
+
+    await _feed(pipeline, [_frame(float(i), sequence=i + 1) for i in range(5)])
+
+    assert gallery.max_queries == 3
+
+
+async def test_default_pooling_scores_a_single_frame() -> None:
+    # The constructor default (pool_frames=1) preserves per-frame behaviour: even
+    # a window full of frames is scored on its last frame alone.
+    reasoner = FixtureReasoner(default=(_event("placed"),))
+    gallery = QueryCountingGallery(labels={"keys"}, score=_match())
+    recorder = Recorder()
+    pipeline = _pipeline(reasoner, gallery, recorder)
+
+    await _feed(pipeline, [_frame(float(i), sequence=i + 1) for i in range(5)])
+
+    assert gallery.max_queries == 1
+
+
 async def test_nothing_happened_is_never_promoted() -> None:
     reasoner = FixtureReasoner(default=(_event("nothing_happened"),))
     gallery = StubGallery(labels={"keys"}, score=_match())

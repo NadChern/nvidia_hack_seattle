@@ -158,7 +158,7 @@ def score_gallery(
     floor: float = 0.0,
     confusion_margin: float = 0.0,
 ) -> GalleryScore | None:
-    """Mean over queries of max-over-reference-view weighted cosine.
+    """Median over queries of max-over-reference-view weighted cosine.
 
     The winner also carries a ``threshold``: the bar it must clear to be
     accepted, derived from the gallery's own confusability rather than a single
@@ -208,7 +208,11 @@ def score_gallery(
                 for view in object_views
             ]
             per_query.append(max(per_view))
-        scored.append((object_id, float(np.mean(per_query))))
+        # Median, not mean: one sighting's frames are pooled here (the caller
+        # embeds the settled tail of the window), and the median holds against a
+        # few mis-boxed or motion-blurred frames that would drag a mean. With a
+        # single query it is identically that query's score. See Spike 9b.
+        scored.append((object_id, float(np.median(per_query))))
     scored.sort(key=lambda item: item[1], reverse=True)
     best_id, best_score = scored[0]
     runner_id, runner_score = scored[1] if len(scored) > 1 else (None, None)

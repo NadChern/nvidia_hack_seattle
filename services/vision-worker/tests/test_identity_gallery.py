@@ -1,4 +1,4 @@
-"""Pure-numpy gallery scoring: max over views, mean over query frames."""
+"""Pure-numpy gallery scoring: max over views, median over query frames."""
 
 from __future__ import annotations
 
@@ -58,6 +58,30 @@ def test_query_pose_uses_the_best_reference_view_not_the_average() -> None:
     assert result.object_id == "object_mine"
     assert result.score == pytest.approx(1.0)
     assert result.margin == pytest.approx(1.0)
+
+
+def test_a_sighting_is_pooled_by_median_so_one_bad_frame_does_not_sink_it() -> None:
+    # Spike 9b: the verdict is pooled over a sighting's frames. Three frames land
+    # on the object and one is mis-boxed (orthogonal). Median holds at 1.0 and
+    # clears a 0.9 floor; the old mean would be 0.75 and be rejected.
+    views = (
+        view("object_mine", 0, vector(1.0, 0.0)),
+        view("object_other", 0, vector(0.0, 1.0)),
+    )
+    queries = (
+        query(vector(1.0, 0.0)),
+        query(vector(1.0, 0.0)),
+        query(vector(1.0, 0.0)),
+        query(vector(0.0, 1.0)),  # the mis-boxed frame
+    )
+
+    result = score_gallery(views, queries, label="keys", summary_weight=0.5, floor=0.9)
+
+    assert result is not None
+    assert result.object_id == "object_mine"
+    # Median of [1, 1, 1, 0] is 1.0 -- not the mean 0.75 -- and clears the floor.
+    assert result.score == pytest.approx(1.0)
+    assert result.score >= result.threshold
 
 
 def test_a_lone_object_degrades_to_the_floor() -> None:

@@ -42,6 +42,7 @@ from visual_memory_media_contract.images import decode_video_payload
 from visual_memory_media_contract.protocol import VideoFrame
 from visual_memory_vision_contract.ids import new_candidate_id
 from visual_memory_vision_contract.protocol import (
+    BoundingBox,
     CandidateEvent,
     Detection,
     DetectorRef,
@@ -52,7 +53,7 @@ from visual_memory_vision_contract.protocol import (
 )
 
 from vision_worker.evidence.ring import BufferedFrame, EvidenceRing
-from vision_worker.identity.base import ObjectEmbedder
+from vision_worker.identity.base import MaskedCrop, ObjectEmbedder
 from vision_worker.identity.crop import box_to_mask, encode_jpeg, prepare_masked_crop
 from vision_worker.identity.gallery import GalleryCache, GalleryScore
 from vision_worker.reason.base import ReasonerLocalizer, WindowEvent
@@ -123,6 +124,7 @@ class Pipeline:
         identity_min_cosine: float = 0.75,
         identity_min_margin: float = 0.0,
         identity_summary_weight: float = 0.5,
+        identity_pool_frames: int = 1,
         box_padding: float = 0.12,
         event_cooldown_s: float = 20.0,
         promote_motion_events: bool = False,
@@ -140,6 +142,7 @@ class Pipeline:
         self._identity_min_cosine = identity_min_cosine
         self._identity_min_margin = identity_min_margin
         self._identity_summary_weight = identity_summary_weight
+        self._identity_pool_frames = max(1, identity_pool_frames)
         self._box_padding = box_padding
         self._event_cooldown_s = event_cooldown_s
         self._promote_motion_events = promote_motion_events
@@ -298,14 +301,9 @@ class Pipeline:
         if not promoted_events:
             return
 
-        last = window[-1]
-        rgb = decode_video_payload(
-            last.payload, encoding="jpeg", width=last.width, height=last.height, pixel_format="rgb"
-        )
         for event in promoted_events:
             await self._handle_event(
                 event=event,
-                rgb=rgb,
                 window=window,
                 session_id=session_id,
                 device_id=device_id,
@@ -316,14 +314,13 @@ class Pipeline:
         self,
         *,
         event: WindowEvent,
-        rgb: NDArray[np.uint8],
         window: Sequence[BufferedFrame],
         session_id: str,
         device_id: str,
         epoch_id: str,
     ) -> None:
         occurred_at = window[-1].captured_at
-        score = await self._resolve_identity(rgb, event)
+        score = await self._resolve_identity(window, event)
         # Per-object gate: the winner carries its own bar (floor for a lone
         # object, raised by any same-label sibling it could be confused with).
         if score is None or score.score < score.threshold:
@@ -350,35 +347,46 @@ class Pipeline:
         self._record(event, score.object_id, "written", score)
 
     async def _resolve_identity(
-        self, rgb: NDArray[np.uint8], event: WindowEvent
+        self, window: Sequence[BufferedFrame], event: WindowEvent
     ) -> GalleryScore | None:
-        """Optionally refine the event box, embed it, and match the gallery.
+        """Refine the event box, embed the sighting's settled tail, match the gallery.
+
+        The verdict is pooled over the last ``identity_pool_frames`` frames of the
+        window rather than decided on one frame: per frame the accept/reject
+        headroom is thin, and the gallery's median over a settled placement holds
+        against a few mis-boxed or blurred frames (Spike 9b). Grounding stays
+        per-sighting -- one ``localize`` on the representative (last) frame, whose
+        box is reused across the tail -- because grounding is the expensive step
+        and the object is at rest across these frames.
 
         Event grounding and enrollment both start with one strict box and try a
-        tighter second localization. Cosmos may abstain on an already-masked
-        crop even when the first crop is usable, so both paths fall back to the
-        first crop rather than turning the identity gate into a permanent miss.
+        tighter second localization. Cosmos may abstain on an already-masked crop
+        even when the first crop is usable, so both fall back to the first crop
+        rather than turning the identity gate into a permanent miss.
         """
-        if not self._embedder.is_ready:
+        if not self._embedder.is_ready or not window:
             return None
-        height, width = rgb.shape[:2]
-        first_mask = box_to_mask(event.box, height, width, padding=self._box_padding)
-        if not first_mask.any():
+        tail = window[-self._identity_pool_frames :]
+        frames = [
+            decode_video_payload(
+                buffered.payload,
+                encoding="jpeg",
+                width=buffered.width,
+                height=buffered.height,
+                pixel_format="rgb",
+            )
+            for buffered in tail
+        ]
+        representative = frames[-1]
+        rep_height, rep_width = representative.shape[:2]
+        rep_mask = box_to_mask(event.box, rep_height, rep_width, padding=self._box_padding)
+        if not rep_mask.any():
             return None
         try:
-            first_crop = prepare_masked_crop(rgb, first_mask, event.box)
-            semantic_box = await self._reasoner.localize(encode_jpeg(first_crop.image), event.label)
-            crop = first_crop
-            if semantic_box is not None:
-                crop_height, crop_width = first_crop.image.shape[:2]
-                semantic_mask = box_to_mask(
-                    semantic_box,
-                    crop_height,
-                    crop_width,
-                    padding=self._box_padding,
-                )
-                crop = prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
-            vectors = await self._embedder.embed([crop])
+            rep_crop = prepare_masked_crop(representative, rep_mask, event.box)
+            semantic_box = await self._reasoner.localize(encode_jpeg(rep_crop.image), event.label)
+            crops = [self._sighting_crop(rgb, event.box, semantic_box) for rgb in frames]
+            vectors = await self._embedder.embed([crop for crop in crops if crop is not None])
         except Exception:
             logger.exception("identity embedding failed; event left unmatched")
             return None
@@ -391,6 +399,23 @@ class Pipeline:
             floor=self._identity_min_cosine,
             confusion_margin=self._identity_min_margin,
         )
+
+    def _sighting_crop(
+        self, rgb: NDArray[np.uint8], box: BoundingBox, semantic_box: BoundingBox | None
+    ) -> MaskedCrop | None:
+        """One tail frame's crop, using the per-sighting boxes (no re-grounding)."""
+        height, width = rgb.shape[:2]
+        first_mask = box_to_mask(box, height, width, padding=self._box_padding)
+        if not first_mask.any():
+            return None
+        first_crop = prepare_masked_crop(rgb, first_mask, box)
+        if semantic_box is None:
+            return first_crop
+        crop_height, crop_width = first_crop.image.shape[:2]
+        semantic_mask = box_to_mask(
+            semantic_box, crop_height, crop_width, padding=self._box_padding
+        )
+        return prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
 
     def _build(
         self,
