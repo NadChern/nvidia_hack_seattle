@@ -141,7 +141,12 @@ class Settings(BaseSettings):
     #: just above the other. Validated on the 3-keyring probe: floor 0.75 /
     #: margin 0.02 gives 24/25 correct, 0 misidentified (vs the old global
     #: 0.8334's 19/25 -- 6 false rejects). See scripts/validate_object_thresholds.py.
-    identity_min_cosine: float = Field(default=0.75, ge=0.0, le=1.0)
+    #: Raised 0.75 -> 0.76 (Spike 9): 0.75 lets a twin intruder leak even after
+    #: per-sighting pooling (validate_sighting_pooling.py -- INTRUDER keys_1 at
+    #: 0.760), and 0.76 is the floor spike 9 measured to reject 9/9 intruders on
+    #: the recordings. Safe only because we now pool: genuine sightings median
+    #: 0.818+, well clear of 0.76, though a genuine single frame can dip to 0.763.
+    identity_min_cosine: float = Field(default=0.76, ge=0.0, le=1.0)
     identity_min_margin: float = Field(default=0.02, ge=0.0, le=1.0)
     #: Just below the identity floor: the narrow band a VLM escalation would
     #: cover. Must stay <= identity_min_cosine (validated below).
