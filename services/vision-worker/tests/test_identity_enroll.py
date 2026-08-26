@@ -67,6 +67,24 @@ class NoTemporalTargetLocalizer(BoxLocalizer):
         return ()
 
 
+class FakeTracker:
+    """Stands in for SAM2: reports the centre box on every frame it is given.
+
+    ``boxes`` optionally overrides which frame indices are tracked, so a test
+    can simulate the tracker losing the object (an empty dict) or holding it.
+    """
+
+    def __init__(self, boxes: dict[int, BoundingBox] | None = None) -> None:
+        self._boxes = boxes
+        self.calls: list[tuple[int, BoundingBox]] = []
+
+    async def track(self, frames: Sequence[object], seed: BoundingBox) -> dict[int, BoundingBox]:
+        self.calls.append((len(frames), seed))
+        if self._boxes is not None:
+            return self._boxes
+        return {index: BOX for index in range(len(frames))}
+
+
 class StubGallery:
     def __init__(self) -> None:
         self.refreshes = 0
@@ -303,3 +321,79 @@ async def test_enrollment_and_matching_use_the_identical_crop_transform() -> Non
     assert np.array_equal(enrollment_crop.mask, matching_crop.mask)
     assert np.array_equal(enrollment_vector.summary, matching_vector.summary)
     assert cosine == pytest.approx(1.0, abs=2e-7)
+
+
+async def test_center_anchor_registers_without_a_grounder() -> None:
+    gallery = StubGallery()
+    memory = RecordingMemory()
+    tracker = FakeTracker()
+    enroller = ObjectEnroller(
+        localizer=NoTemporalTargetLocalizer(),  # never consulted on this path
+        embedder=FixtureEmbedder(),
+        gallery=gallery,  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+        tracker=tracker,
+        centre_frac=0.60,
+    )
+    frames = tuple(
+        frame(index, color)
+        for index, color in enumerate(
+            ((220, 30, 30), (30, 220, 30), (30, 30, 220), (220, 180, 30), (200, 35, 35))
+        )
+    )
+
+    result = await enroller.enroll_center_anchor(
+        object_id="object_keys", label="keys", frames=frames
+    )
+
+    assert result.frames_total == 5
+    assert 2 <= result.selected_views <= 4
+    assert len(memory.uploads) == result.selected_views
+    assert gallery.refreshes == 1
+    # The tracker was seeded with the 0.60 centre box, once, over all frames.
+    assert len(tracker.calls) == 1
+    seeded_frames, seed = tracker.calls[0]
+    assert seeded_frames == 5
+    assert seed.x_min == pytest.approx(0.20) and seed.x_max == pytest.approx(0.80)
+
+
+async def test_center_anchor_without_a_tracker_fails_cleanly() -> None:
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=StubGallery(),  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        tracker=None,
+    )
+    frames = (frame(0, (220, 30, 30)), frame(1, (30, 220, 30)))
+
+    with pytest.raises(EnrollmentError) as excinfo:
+        await enroller.enroll_center_anchor(object_id="obj", label="keys", frames=frames)
+
+    assert excinfo.value.reason_code == "tracker_unavailable"
+    assert memory.uploads == []
+
+
+async def test_center_anchor_lost_track_rejects_without_a_gallery() -> None:
+    memory = RecordingMemory()
+    enroller = ObjectEnroller(
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=StubGallery(),  # type: ignore[arg-type]
+        memory_client=memory,  # type: ignore[arg-type]
+        config=config(),
+        box_padding=0.0,
+        tracker=FakeTracker(boxes={}),  # SAM2 held no object across the window
+    )
+    frames = (frame(0, (220, 30, 30)), frame(1, (30, 220, 30)))
+
+    with pytest.raises(EnrollmentError) as excinfo:
+        await enroller.enroll_center_anchor(object_id="obj", label="keys", frames=frames)
+
+    assert excinfo.value.reason_code == "too_few_tracked_frames"
+    assert memory.deleted == ["obj"]
+    assert memory.uploads == []

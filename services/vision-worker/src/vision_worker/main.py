@@ -27,6 +27,7 @@ from vision_worker.identity.fixture import FixtureEmbedder
 from vision_worker.identity.gallery import GalleryCache
 from vision_worker.identity.radio import RadioEmbedder
 from vision_worker.identity.selection import QualityConfig
+from vision_worker.identity.track import Sam2Tracker, Tracker
 from vision_worker.logging import configure_logging
 from vision_worker.pipeline import Pipeline
 from vision_worker.readiness import Readiness
@@ -76,6 +77,19 @@ def build_embedder(settings: Settings) -> ObjectEmbedder:
     return FixtureEmbedder()
 
 
+def build_tracker(settings: Settings) -> Tracker | None:
+    """The register button's grounder-free localiser.
+
+    Only the real identity path gets SAM2; the fixture/CI path returns ``None``,
+    so a ``center-anchor`` capture there fails cleanly with ``tracker_unavailable``
+    rather than trying to load a model a no-GPU run cannot serve. The tracker is
+    lazy: constructing it here is free until the first register-button capture.
+    """
+    if settings.identity_kind == "radio":
+        return Sam2Tracker(device=settings.identity_device)
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Wire every stage together and drive the relay in a background task."""
@@ -84,6 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     reasoner = build_reasoner(settings)
     embedder = build_embedder(settings)
+    tracker = build_tracker(settings)
     await embedder.initialize()
 
     memory_client = MemoryClient(
@@ -111,6 +126,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         reason_interval_s=settings.reason_interval_seconds,
         reason_max_frames=settings.reason_max_frames,
         identity_min_cosine=settings.identity_min_cosine,
+        identity_min_margin=settings.identity_min_margin,
         identity_summary_weight=settings.identity_summary_weight,
         box_padding=settings.identity_box_padding,
         event_cooldown_s=settings.event_cooldown_seconds,
@@ -147,6 +163,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
             memory_client=memory_client,
             config=enrollment_config,
             box_padding=settings.identity_box_padding,
+            tracker=tracker,
+            centre_frac=settings.registration_centre_frac,
         ),
         config=enrollment_config,
     )

@@ -3,12 +3,21 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 
 import httpx
 from visual_memory_memory_contract import AnswerStatus
 
 from agent.config import Settings
 from agent.models import GuardVerdict
+
+
+@dataclass(frozen=True, slots=True)
+class ConsumedRegister:
+    """The result of consuming a register-button press."""
+
+    armed: bool
+    label: str | None = None
 
 
 class GatewayEventTransport:
@@ -48,6 +57,21 @@ class GatewayEventTransport:
             response = await client.post(f"/v1/device/{session_id}/manual-trigger/consume")
             response.raise_for_status()
             return bool(response.json().get("armed", False))
+
+    async def consume_register_trigger(self, session_id: str) -> ConsumedRegister:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=self._timeout_s,
+            transport=self._transport,
+        ) as client:
+            response = await client.post(f"/v1/device/{session_id}/register/consume")
+            response.raise_for_status()
+            body = response.json()
+            return ConsumedRegister(
+                armed=bool(body.get("armed", False)),
+                label=body.get("label"),
+            )
 
     async def send_transcript(
         self,
@@ -100,4 +124,4 @@ class GatewayEventTransport:
         )
 
 
-__all__ = ["GatewayEventTransport"]
+__all__ = ["ConsumedRegister", "GatewayEventTransport"]

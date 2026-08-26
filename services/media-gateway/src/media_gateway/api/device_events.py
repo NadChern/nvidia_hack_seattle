@@ -9,6 +9,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
+from pydantic import BaseModel, Field
 
 from media_gateway.deps import (
     authorize_device_request,
@@ -21,6 +22,7 @@ from media_gateway.domain.device_events import (
     DeviceEventSubscriber,
 )
 from media_gateway.domain.manual_trigger import ManualTriggerRegistry
+from media_gateway.domain.register_trigger import RegisterTriggerRegistry
 from media_gateway.domain.session import SessionRegistry
 from media_gateway.errors import CapacityError, NotFoundError, UnauthorizedError
 
@@ -74,6 +76,38 @@ async def consume_manual_trigger(request: Request, session_id: str) -> dict[str,
     sessions.get(session_id)
     triggers: ManualTriggerRegistry = request.app.state.manual_triggers
     return {"armed": triggers.consume(session_id)}
+
+
+class RegisterTriggerRequest(BaseModel):
+    #: Optional item name. Omitted for the placeholder path, where the agent
+    #: allocates a name and the wearer renames it in the console later.
+    label: str | None = Field(default=None, max_length=128)
+
+
+@router.post("/v1/device/{session_id}/register")
+async def arm_register_trigger(
+    request: Request, session_id: str, body: RegisterTriggerRequest | None = None
+) -> dict[str, Any]:
+    sessions: SessionRegistry = request.app.state.sessions
+    sessions.sweep()
+    session = sessions.get(session_id)
+    authorize_device_request(request, device_id=session.device_id)
+    triggers: RegisterTriggerRegistry = request.app.state.register_triggers
+    label = body.label if body is not None else None
+    return {"expires_at": triggers.arm(session_id, label)}
+
+
+@router.post("/v1/device/{session_id}/register/consume")
+async def consume_register_trigger(request: Request, session_id: str) -> dict[str, Any]:
+    authorize_request(request)
+    sessions: SessionRegistry = request.app.state.sessions
+    sessions.sweep()
+    sessions.get(session_id)
+    triggers: RegisterTriggerRegistry = request.app.state.register_triggers
+    arm = triggers.consume(session_id)
+    if arm is None:
+        return {"armed": False, "label": None}
+    return {"armed": True, "label": arm.label}
 
 
 @router.websocket("/v1/device/{session_id}/events")

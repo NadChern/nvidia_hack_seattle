@@ -10,12 +10,17 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -30,10 +35,15 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,8 +57,10 @@ import com.visualmemory.glasses.pairing.PairingScanner
 import com.visualmemory.glasses.session.GlassesUiState
 import com.visualmemory.glasses.session.GlassesViewModel
 import com.visualmemory.glasses.session.SessionPhase
+import com.visualmemory.glasses.touch.LiveAction
 import com.visualmemory.glasses.touch.TargetSelectionAction
 import com.visualmemory.glasses.touch.TempleTapAction
+import com.visualmemory.glasses.touch.movedLiveSelection
 import com.visualmemory.glasses.touch.movedTargetSelection
 import com.visualmemory.glasses.touch.templeTapAction
 import kotlinx.coroutines.delay
@@ -57,20 +69,23 @@ class MainActivity : ComponentActivity() {
     private var permissionsGranted by mutableStateOf(false)
     private var pendingPairingPayload by mutableStateOf<String?>(null)
     private var selectedStartupAction by mutableStateOf(TargetSelectionAction.SCAN_QR)
+    private var selectedLiveAction by mutableStateOf(LiveAction.SPEAK)
     private var reconnectSavedRequest by mutableStateOf(0L)
     private var manualTriggerRequest by mutableStateOf(0L)
+    private var registerRequest by mutableStateOf(0L)
     private var targetSelectionActive = false
     private var liveSessionActive = false
 
     private val templeTouchDispatcher = TouchDispatcher(TouchDispatcher.Source.Activity)
     private val templeTouchCallback = object : CommonTouchCallback() {
         override fun onTPClick(): Boolean {
-            Log.i(TOUCH_LOG_TAG, "single tap; selected=$selectedStartupAction")
+            Log.i(TOUCH_LOG_TAG, "single tap; startup=$selectedStartupAction live=$selectedLiveAction")
             when (
                 templeTapAction(
                     targetSelectionActive = targetSelectionActive,
                     liveSessionActive = liveSessionActive,
                     selectedStartupAction = selectedStartupAction,
+                    selectedLiveAction = selectedLiveAction,
                 )
             ) {
                 TempleTapAction.RECONNECT_SAVED -> reconnectSavedRequest += 1
@@ -78,18 +93,22 @@ class MainActivity : ComponentActivity() {
                     manualTriggerRequest += 1
                     Log.i(TOUCH_LOG_TAG, "arming manual voice trigger")
                 }
+                TempleTapAction.ARM_REGISTER -> {
+                    registerRequest += 1
+                    Log.i(TOUCH_LOG_TAG, "arming register-button capture")
+                }
                 TempleTapAction.NONE -> Unit
             }
             return true
         }
 
         override fun onTPSlideForward(args: FlingArgs): Boolean {
-            moveStartupFocus("forward")
+            moveFocus("forward")
             return true
         }
 
         override fun onTPSlideBackward(args: FlingArgs): Boolean {
-            moveStartupFocus("backward")
+            moveFocus("backward")
             return true
         }
     }
@@ -116,11 +135,18 @@ class MainActivity : ComponentActivity() {
                         GlassesApp(
                             pairingPayload = pendingPairingPayload,
                             selectedStartupAction = selectedStartupAction,
+                            selectedLiveAction = selectedLiveAction,
                             reconnectSavedRequest = reconnectSavedRequest,
                             manualTriggerRequest = manualTriggerRequest,
+                            registerRequest = registerRequest,
                             onPairingPayloadHandled = { pendingPairingPayload = null },
                             onPhaseChange = { phase ->
                                 targetSelectionActive = phase == SessionPhase.SELECTING_TARGET
+                                if (phase == SessionPhase.LIVE && !liveSessionActive) {
+                                    // Focus resets to Speak each time a live
+                                    // session begins, so the common case is one tap.
+                                    selectedLiveAction = LiveAction.SPEAK
+                                }
                                 liveSessionActive = phase == SessionPhase.LIVE
                             },
                         )
@@ -150,10 +176,17 @@ class MainActivity : ComponentActivity() {
         return super.dispatchTouchEvent(event)
     }
 
-    private fun moveStartupFocus(direction: String) {
-        if (!targetSelectionActive) return
-        selectedStartupAction = movedTargetSelection(selectedStartupAction)
-        Log.i(TOUCH_LOG_TAG, "$direction swipe; selected=$selectedStartupAction")
+    private fun moveFocus(direction: String) {
+        when {
+            targetSelectionActive -> {
+                selectedStartupAction = movedTargetSelection(selectedStartupAction)
+                Log.i(TOUCH_LOG_TAG, "$direction swipe; startup=$selectedStartupAction")
+            }
+            liveSessionActive -> {
+                selectedLiveAction = movedLiveSelection(selectedLiveAction)
+                Log.i(TOUCH_LOG_TAG, "$direction swipe; live=$selectedLiveAction")
+            }
+        }
     }
 
     private fun requiredPermissions() = arrayOf(
@@ -173,8 +206,10 @@ class MainActivity : ComponentActivity() {
 private fun GlassesApp(
     pairingPayload: String?,
     selectedStartupAction: TargetSelectionAction,
+    selectedLiveAction: LiveAction,
     reconnectSavedRequest: Long,
     manualTriggerRequest: Long,
+    registerRequest: Long,
     onPairingPayloadHandled: () -> Unit,
     onPhaseChange: (SessionPhase) -> Unit,
     model: GlassesViewModel = viewModel(),
@@ -191,6 +226,9 @@ private fun GlassesApp(
     }
     LaunchedEffect(manualTriggerRequest) {
         if (manualTriggerRequest > 0) model.armManualTrigger()
+    }
+    LaunchedEffect(registerRequest) {
+        if (registerRequest > 0) model.register()
     }
     LaunchedEffect(state.phase) {
         onPhaseChange(state.phase)
@@ -215,7 +253,7 @@ private fun GlassesApp(
                 state = state,
                 selectedAction = selectedStartupAction,
             )
-            else -> HudPanel(state = state)
+            else -> HudPanel(state = state, selectedLiveAction = selectedLiveAction)
         }
     }
     if (state.phase == SessionPhase.UNPAIRED ||
@@ -323,11 +361,22 @@ private fun FocusedAction(text: String, selected: Boolean) {
 }
 
 @Composable
-private fun HudPanel(state: GlassesUiState) {
+private fun HudPanel(state: GlassesUiState, selectedLiveAction: LiveAction) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        HudContent(state = state, selectedLiveAction = selectedLiveAction)
+        // The aim reticle + countdown ring only exist while a presentation is
+        // running; mounting fresh each time restarts the ring from full.
+        if (state.registering) {
+            RegisterOverlay(presentSeconds = state.registerPresentSeconds)
+        }
+    }
+}
+
+@Composable
+private fun HudContent(state: GlassesUiState, selectedLiveAction: LiveAction) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
             .safeDrawingPadding()
             .padding(horizontal = 28.dp, vertical = 18.dp),
     ) {
@@ -399,6 +448,72 @@ private fun HudPanel(state: GlassesUiState) {
                 )
             }
             state.error?.let { Text(it, color = Color(0xFFFF8A80), fontSize = 14.sp) }
+        }
+
+        if (state.phase == SessionPhase.LIVE) {
+            LiveActionRow(selected = selectedLiveAction, registering = state.registering)
+        }
+    }
+}
+
+/**
+ * The Speak/Register focus row. Speak is focused by default so an unswiped tap
+ * behaves as push-to-talk always did; one swipe reaches Register.
+ */
+@Composable
+private fun LiveActionRow(selected: LiveAction, registering: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        FocusedAction(text = "Speak", selected = selected == LiveAction.SPEAK)
+        FocusedAction(
+            text = if (registering) "Registering…" else "Register",
+            selected = selected == LiveAction.REGISTER,
+        )
+    }
+}
+
+/**
+ * Aim reticle at the fixed centre seed the vision worker segments, plus a round
+ * countdown ring that empties over the presentation window — the "hold the item
+ * here for this long" cue.
+ */
+@Composable
+private fun RegisterOverlay(presentSeconds: Int) {
+    var started by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { started = true }
+    val progress by animateFloatAsState(
+        targetValue = if (started) 0f else 1f,
+        animationSpec = tween(durationMillis = presentSeconds * 1_000, easing = LinearEasing),
+        label = "registerCountdown",
+    )
+    val reticle = Color(0xFF62E6A7)
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Box(
+            modifier = Modifier.fillMaxWidth(0.6f).aspectRatio(1f),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawRect(color = reticle, style = Stroke(width = 3.dp.toPx()))
+                val inset = 8.dp.toPx()
+                drawArc(
+                    color = reticle,
+                    startAngle = -90f,
+                    sweepAngle = 360f * progress,
+                    useCenter = false,
+                    topLeft = Offset(inset, inset),
+                    size = Size(size.width - 2 * inset, size.height - 2 * inset),
+                    style = Stroke(width = 5.dp.toPx(), cap = StrokeCap.Round),
+                )
+            }
+            Text(
+                "Hold item here",
+                color = reticle,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+            )
         }
     }
 }

@@ -36,10 +36,17 @@ class RecordingManager:
     def __init__(self) -> None:
         self.progress: EnrollmentProgress | None = None
         self.manual_crops: tuple[bytes, ...] = ()
+        self.mode: str | None = None
 
     def arm(
-        self, *, object_id: str, label: str, capture_seconds: float | None = None
+        self,
+        *,
+        object_id: str,
+        label: str,
+        capture_seconds: float | None = None,
+        mode: str = "grounded",
     ) -> EnrollmentProgress:
+        self.mode = mode
         now = dt.datetime.now(dt.UTC)
         self.progress = EnrollmentProgress(
             object_id=object_id,
@@ -145,6 +152,20 @@ async def test_create_capture_and_poll_registration() -> None:
     assert capture.json()["state"] == "capturing"
     assert progress.json()["object_id"] == "object_keys"
     assert manager.progress is not None
+    assert manager.mode == "grounded"  # default when the body omits it
+
+
+async def test_capture_forwards_center_anchor_mode() -> None:
+    app, manager, _ = app_for()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        await client.post("/v1/objects", json={"label": "keys", "idempotency_key": "register/keys"})
+        capture = await client.post(
+            "/v1/objects/object_keys/capture",
+            json={"capture_seconds": 4.0, "mode": "center-anchor"},
+        )
+
+    assert capture.status_code == 202
+    assert manager.mode == "center-anchor"
 
 
 async def test_manual_enrollment_decodes_operator_confirmed_crops() -> None:

@@ -26,6 +26,10 @@ class CreateObjectRequest(BaseModel):
     idempotency_key: str = Field(min_length=1, max_length=512)
 
 
+class RenameObjectRequest(BaseModel):
+    label: str = Field(min_length=1, max_length=128)
+
+
 def _crop_store(request: Request) -> RegistrationCropStore:
     store: RegistrationCropStore = request.app.state.registration_crops
     return store
@@ -151,6 +155,28 @@ def gallery(request: Request, since_version: int | None = None) -> dict[str, Any
     with factory() as db:
         result = repository.list_gallery(db, since_version=since_version)
     return result.model_dump(mode="json")
+
+
+@router.patch("/{object_id}")
+def rename_object(object_id: str, body: RenameObjectRequest, request: Request) -> dict[str, Any]:
+    """Rename a registered object -- the operator path for the placeholder
+    ``item {uuid}`` labels the register button mints when it has no name.
+
+    Unlike the vision worker's create endpoint, no detection-label constraint
+    applies here: a display label is a human name ("Alex's car keys"), not a
+    grounding prompt.
+    """
+    authorize_request(request)
+    label = body.label.strip()
+    if not label:
+        raise InvalidRequestError("object label cannot be blank")
+    factory = session_factory_of(request)
+    with factory() as db:
+        enrolled = repository.rename_enrolled_object(db, object_id, label=label)
+        if enrolled is None:
+            raise NotFoundError("registered object does not exist", object_id=object_id)
+        db.commit()
+    return enrolled.model_dump(mode="json")
 
 
 @router.get("/{object_id}")

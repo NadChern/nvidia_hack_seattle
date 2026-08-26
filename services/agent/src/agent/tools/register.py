@@ -23,7 +23,7 @@ class RegistrationOutcome:
     selected_views: int = 0
 
 
-RegisterOperation = Callable[[str, str], RegistrationOutcome]
+RegisterOperation = Callable[[str, str, str], RegistrationOutcome]
 
 
 class RegisterTool:
@@ -38,18 +38,22 @@ class RegisterTool:
         self._settings = settings
         self._register_operation = register_operation or self._register_over_http
 
-    async def register(self, label: str, session_id: str) -> RegistrationOutcome:
+    async def register(
+        self, label: str, session_id: str, mode: str = "grounded"
+    ) -> RegistrationOutcome:
         normalized = " ".join(label.strip().casefold().split())
         if not normalized:
             return RegistrationOutcome(None, "object", False, "invalid_label")
         if not session_id:
             return RegistrationOutcome(None, normalized, False, "session_required")
         try:
-            return await asyncio.to_thread(self._register_operation, normalized, session_id)
+            return await asyncio.to_thread(self._register_operation, normalized, session_id, mode)
         except (MemoryError_, httpx.HTTPError, TimeoutError, OSError) as exc:
             raise DependencyUnavailableError("registration services are unavailable") from exc
 
-    def _register_over_http(self, label: str, session_id: str) -> RegistrationOutcome:
+    def _register_over_http(
+        self, label: str, session_id: str, mode: str = "grounded"
+    ) -> RegistrationOutcome:
         token = self._settings.resolved_memory_api_token
         token_value = token.get_secret_value() if token is not None else None
         idempotency_key = f"registration/{session_id}/{label}"
@@ -68,7 +72,10 @@ class RegisterTool:
         ) as vision:
             response = vision.post(
                 f"/v1/objects/{enrolled.object_id}/capture",
-                json={"capture_seconds": self._settings.registration_capture_seconds},
+                json={
+                    "capture_seconds": self._settings.registration_capture_seconds,
+                    "mode": mode,
+                },
             )
             response.raise_for_status()
             deadline = time.monotonic() + self._settings.registration_timeout_s

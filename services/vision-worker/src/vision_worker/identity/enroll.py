@@ -31,11 +31,17 @@ from vision_worker.identity.selection import (
     score_quality,
     select_diverse,
 )
+from vision_worker.identity.track import DEFAULT_CENTRE_FRAC, Tracker, centre_box
 from vision_worker.reason.base import Localizer
 
 logger = logging.getLogger(__name__)
 
 EnrollmentState = Literal["capturing", "extracting", "succeeded", "failed"]
+
+#: How the reference boxes are obtained: ``grounded`` runs the VLM localizer
+#: (voice registration); ``center-anchor`` propagates a fixed centre box with
+#: the tracker (register button, no grounder, no speech).
+EnrollmentMode = Literal["grounded", "center-anchor"]
 
 #: Cosmos reports no detection score, so enrollment uses a fixed confidence
 #: above the quality filter's floor -- the object being deliberately held up
@@ -117,6 +123,8 @@ class ObjectEnroller:
         memory_client: MemoryClient,
         config: EnrollmentConfig,
         box_padding: float = 0.12,
+        tracker: Tracker | None = None,
+        centre_frac: float = DEFAULT_CENTRE_FRAC,
     ) -> None:
         self._localizer = localizer
         self._embedder = embedder
@@ -124,6 +132,8 @@ class ObjectEnroller:
         self._memory = memory_client
         self._config = config
         self._box_padding = box_padding
+        self._tracker = tracker
+        self._centre_frac = centre_frac
 
     async def enroll(
         self,
@@ -382,6 +392,103 @@ class ObjectEnroller:
             candidates=passed,
         )
 
+    async def enroll_center_anchor(
+        self,
+        *,
+        object_id: str,
+        label: str,
+        frames: Sequence[BufferedFrame],
+    ) -> EnrollmentResult:
+        """Register the object held centred, with no grounder (register button).
+
+        Localisation is a fixed centre box propagated by SAM2 across the
+        presentation -- the wearer said *which* object physically, so the VLM's
+        "find the keys in the scene" is never asked. The crop/quality/persist
+        tail is shared verbatim with the grounded path; only how the boxes are
+        obtained differs.
+        """
+        if self._tracker is None:
+            raise EnrollmentError(
+                "tracker_unavailable",
+                "center-anchor registration needs a tracker but none is configured",
+                result=EnrollmentResult(len(frames), 0, 0, 0),
+            )
+        frames_total = len(frames)
+        sampled = _subsample(frames, self._config.max_frames)
+        rgb_frames = [
+            decode_video_payload(
+                buffered.payload,
+                encoding="jpeg",
+                width=buffered.width,
+                height=buffered.height,
+                pixel_format="rgb",
+            )
+            for buffered in sampled
+        ]
+        tracked = await self._tracker.track(rgb_frames, centre_box(self._centre_frac))
+        logger.info(
+            "center-anchor tracking completed",
+            extra={
+                "object_id": object_id,
+                "label": label,
+                "source_frames": frames_total,
+                "tracked_frames": len(sampled),
+                "tracked_hits": len(tracked),
+            },
+        )
+        if not tracked:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_tracked_frames",
+                "the centre anchor held no object across the presentation",
+                result=EnrollmentResult(frames_total, 0, 0, 0),
+            )
+
+        candidates: list[tuple[MaskedCrop, QualityScore]] = []
+        for frame_index, box in sorted(tracked.items()):
+            if not 0 <= frame_index < len(rgb_frames):
+                continue
+            rgb = rgb_frames[frame_index]
+            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._box_padding)
+            quality = score_quality(
+                rgb,
+                mask,
+                box,
+                _ENROLL_CONFIDENCE,
+                angular_velocity=None,
+                config=self._config.quality,
+            )
+            try:
+                crop = prepare_masked_crop(rgb, mask, box)
+            except ValueError:
+                continue
+            candidates.append((crop, quality))
+
+        relative_scores = apply_relative_sharpness(
+            [quality for _, quality in candidates], config=self._config.quality
+        )
+        # A grab that is mostly hand or that never cohered fails the quality
+        # gate here rather than being stored -- the "reject, don't register a
+        # thumb" rule the register-button spec asks for.
+        passed = [
+            (crop, quality)
+            for (crop, _), quality in zip(candidates, relative_scores, strict=True)
+            if quality.accepted
+        ]
+        if len(passed) < self._config.min_views:
+            await self._rollback_failed_object(object_id)
+            raise EnrollmentError(
+                "too_few_quality_frames",
+                f"only {len(passed)} tracked frames passed quality; need {self._config.min_views}",
+                result=EnrollmentResult(frames_total, len(tracked), len(passed), 0),
+            )
+        return await self._persist_candidates(
+            object_id=object_id,
+            frames_total=frames_total,
+            detections=len(tracked),
+            candidates=passed,
+        )
+
     async def _persist_candidates(
         self,
         *,
@@ -488,6 +595,7 @@ class EnrollmentManager:
         object_id: str,
         label: str,
         capture_seconds: float | None = None,
+        mode: EnrollmentMode = "grounded",
     ) -> EnrollmentProgress:
         existing = self._tasks.get(object_id)
         if existing is not None and not existing.done():
@@ -508,7 +616,7 @@ class EnrollmentManager:
         self._progress[object_id] = progress
         self.attempts += 1
         self._tasks[object_id] = asyncio.create_task(
-            self._run(progress, duration), name=f"enroll-{object_id}"
+            self._run(progress, duration, mode), name=f"enroll-{object_id}"
         )
         return progress
 
@@ -568,7 +676,9 @@ class EnrollmentManager:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run(self, progress: EnrollmentProgress, duration: float) -> None:
+    async def _run(
+        self, progress: EnrollmentProgress, duration: float, mode: EnrollmentMode = "grounded"
+    ) -> None:
         try:
             await asyncio.sleep(duration)
             progress.state = "extracting"
@@ -576,11 +686,18 @@ class EnrollmentManager:
                 started_at=progress.started_at,
                 ended_at=progress.capture_ends_at,
             )
-            result = await self._enroller.enroll(
-                object_id=progress.object_id,
-                label=progress.label,
-                frames=frames,
-            )
+            if mode == "center-anchor":
+                result = await self._enroller.enroll_center_anchor(
+                    object_id=progress.object_id,
+                    label=progress.label,
+                    frames=frames,
+                )
+            else:
+                result = await self._enroller.enroll(
+                    object_id=progress.object_id,
+                    label=progress.label,
+                    frames=frames,
+                )
         except asyncio.CancelledError:
             raise
         except EnrollmentError as exc:
@@ -643,6 +760,7 @@ __all__ = [
     "EnrollmentConfig",
     "EnrollmentError",
     "EnrollmentManager",
+    "EnrollmentMode",
     "EnrollmentProgress",
     "EnrollmentResult",
     "EnrollmentState",

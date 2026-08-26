@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Protocol
+from typing import Literal, Protocol
 
 from agent.guard import guard_registration_reply, registration_message
 from agent.metrics import AgentMetrics
 from agent.tools.register import RegisterTool
 
 logger = logging.getLogger(__name__)
+
+#: ``grounded`` is the voice path (spoken prompt + terminal). ``center-anchor``
+#: is the register button: speech-free, so the scripted TTS is skipped and the
+#: HUD is the feedback channel.
+RegistrationMode = Literal["grounded", "center-anchor"]
 
 
 class WorkflowReply(Protocol):
@@ -32,7 +37,7 @@ class RegistrationWorkflow:
         self._metrics = metrics
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
-    def start(self, *, label: str, session_id: str) -> bool:
+    def start(self, *, label: str, session_id: str, mode: RegistrationMode = "grounded") -> bool:
         normalized = " ".join(label.strip().casefold().split())
         if not normalized or len(normalized) > 128 or not session_id:
             return False
@@ -41,7 +46,7 @@ class RegistrationWorkflow:
             return False
         self._metrics.record_registration_started()
         task = asyncio.create_task(
-            self._run(label=normalized, session_id=session_id),
+            self._run(label=normalized, session_id=session_id, mode=mode),
             name=f"registration-{session_id}",
         )
         self._tasks[session_id] = task
@@ -61,16 +66,25 @@ class RegistrationWorkflow:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _run(self, *, label: str, session_id: str) -> None:
+    async def _run(
+        self, *, label: str, session_id: str, mode: RegistrationMode = "grounded"
+    ) -> None:
+        # The register button is speech-free: no STT to hear a prompt, and TTS
+        # may be evicted for the SAM2 + C-RADIO capture. So the scripted spoken
+        # prompt/terminal run only on the grounded (voice) path; the button path
+        # reports through the HUD instead.
+        speaks = mode == "grounded"
         prompt = registration_message("prompt", label)
         guarded_prompt = guard_registration_reply(prompt, step="prompt", label=label)
         try:
-            await self._reply.send(session_id, guarded_prompt.reply)
-            outcome = await self._tool.register(label, session_id)
+            if speaks:
+                await self._reply.send(session_id, guarded_prompt.reply)
+            outcome = await self._tool.register(label, session_id, mode=mode)
             step = "succeeded" if outcome.succeeded else "failed"
             terminal = registration_message(step, label)
             guarded_terminal = guard_registration_reply(terminal, step=step, label=label)
-            await self._reply.send(session_id, guarded_terminal.reply)
+            if speaks:
+                await self._reply.send(session_id, guarded_terminal.reply)
             if outcome.succeeded:
                 self._metrics.record_registration_succeeded()
             else:
@@ -96,15 +110,16 @@ class RegistrationWorkflow:
                     "root_cause": f"{type(root).__name__}: {root}" if root is not None else None,
                 },
             )
-            failure = registration_message("failed", label)
-            try:
-                guarded_failure = guard_registration_reply(failure, step="failed", label=label)
-                await self._reply.send(session_id, guarded_failure.reply)
-            except Exception:
-                logger.warning(
-                    "registration terminal reply could not be sent",
-                    extra={"session_id": session_id},
-                )
+            if speaks:
+                failure = registration_message("failed", label)
+                try:
+                    guarded_failure = guard_registration_reply(failure, step="failed", label=label)
+                    await self._reply.send(session_id, guarded_failure.reply)
+                except Exception:
+                    logger.warning(
+                        "registration terminal reply could not be sent",
+                        extra={"session_id": session_id},
+                    )
 
 
-__all__ = ["RegistrationWorkflow", "WorkflowReply"]
+__all__ = ["RegistrationMode", "RegistrationWorkflow", "WorkflowReply"]

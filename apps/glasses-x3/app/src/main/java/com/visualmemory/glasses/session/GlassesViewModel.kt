@@ -34,6 +34,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
     private var eventJob: Job? = null
     private var refreshJob: Job? = null
     private var manualTriggerJob: Job? = null
+    private var registerJob: Job? = null
     private var mediaWatchJob: Job? = null
 
     init {
@@ -178,6 +179,34 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Arm a register-button press and run the presentation countdown.
+     *
+     * The wearer holds the item centred in the reticle for the countdown while
+     * the agent captures a center-anchor gallery. There is no STT and no spoken
+     * prompt on this path; the HUD reticle and ring are the whole affordance.
+     */
+    fun register() {
+        val paired = pairing ?: return
+        val current = session ?: return
+        viewModelScope.launch {
+            runCatching {
+                gateway.armRegister(
+                    paired.gatewayUrl,
+                    paired.credential,
+                    current.sessionId,
+                )
+            }.onSuccess {
+                mutableState.value = mutableState.value.copy(registering = true)
+                registerJob?.cancel()
+                registerJob = viewModelScope.launch {
+                    delay(REGISTER_PRESENT_MILLIS)
+                    mutableState.value = mutableState.value.copy(registering = false)
+                }
+            }.onFailure(::showError)
+        }
+    }
+
     fun toggleRecording() {
         val enabled = !mutableState.value.recording
         viewModelScope.launch {
@@ -214,6 +243,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
     fun stop() {
         refreshJob?.cancel()
         manualTriggerJob?.cancel()
+        registerJob?.cancel()
         eventJob?.cancel()
         mediaWatchJob?.cancel()
         events?.close()
@@ -225,6 +255,7 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
             sessionId = null,
             recording = false,
             manualTriggerArmed = false,
+            registering = false,
             assistantAudioReady = false,
         )
     }
@@ -233,6 +264,12 @@ class GlassesViewModel(application: Application) : AndroidViewModel(application)
         const val REFRESH_RETRY_MILLIS = 5_000L
         const val RECONNECT_BACKOFF_START_MILLIS = 1_000L
         const val RECONNECT_BACKOFF_MAX_MILLIS = 30_000L
+
+        // The presentation window the HUD counts down. It covers the backend's
+        // registration_capture_seconds (default 6) plus slack for the agent's
+        // session poll to consume the press and start the capture.
+        const val REGISTER_PRESENT_SECONDS = 8
+        const val REGISTER_PRESENT_MILLIS = REGISTER_PRESENT_SECONDS * 1_000L
     }
 
     private fun openEvents(paired: StoredPairing, created: SessionToken) {
@@ -385,6 +422,10 @@ data class GlassesUiState(
     val answerStatus: String? = null,
     val guard: String? = null,
     val manualTriggerArmed: Boolean = false,
+    /** True while a register-button presentation window is counting down. */
+    val registering: Boolean = false,
+    /** Seconds the register presentation window (and the HUD ring) runs for. */
+    val registerPresentSeconds: Int = 8,
     /**
      * Whether the gateway's `assistant-tts` track is subscribed.
      *
