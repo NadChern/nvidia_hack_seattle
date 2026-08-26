@@ -6,6 +6,7 @@ import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.room.Room
+import io.livekit.android.room.participant.BackupVideoCodec
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.CameraPosition
 import io.livekit.android.room.track.LocalVideoTrack
@@ -13,6 +14,7 @@ import io.livekit.android.room.track.LocalAudioTrackOptions
 import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.Track
+import io.livekit.android.room.track.VideoCodec
 import io.livekit.android.room.track.VideoEncoding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -87,6 +89,18 @@ class LiveKitController(context: Context, cameraIdOverride: String? = null) {
             ),
             videoTrackPublishDefaults = VideoTrackPublishDefaults(
                 videoEncoding = VideoEncoding(maxBitrate = 1_500_000, maxFps = CAPTURE_FPS),
+                // Publish H.265, not the SDK-default VP8. VP8 is software libvpx and
+                // cost 5.3x the per-frame CPU, decaying from 9 to 6 fps at 2048x1536;
+                // H.265 lands on Qualcomm silicon (`c2.qti.hevc.encoder`) and holds a
+                // full 15 fps at ~300 kb/s -- half the uplink. See spike 14 in
+                // docs/spikes/model-landscape/REVIEW-2026-08.md.
+                videoCodec = VideoCodec.H265.codecName,
+                // Load-bearing, not a formality. `liblivekit_ffi.so` decodes H.265
+                // through `NvidiaH265DecoderImpl` and has *no* software H.265 decoder,
+                // so a subscriber without NVDEC (a CPU-only gateway) sees a silent
+                // black stream -- no error -- unless it can fall back. H.264 is the
+                // fallback because it is also Qualcomm-hardware on the publish side.
+                backupCodec = BackupVideoCodec(codec = VideoCodec.H264.codecName),
                 // One layer, deliberately. SG-C measured that with simulcast on,
                 // an admin viewer joining collapsed the *gateway's* frames to
                 // 320x180 and Vision silently lost its resolution.
