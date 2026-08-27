@@ -14,8 +14,8 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import logging
-from collections.abc import Callable
-from typing import Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
 from visual_memory_media_contract.framing import encode_message, payload_digest
 from visual_memory_media_contract.protocol import (
@@ -59,6 +59,12 @@ class LifecycleEmitter(Protocol):
     """
 
     def emit(self, envelope: LifecycleEnvelope) -> None: ...
+
+
+#: Runs a blocking encode without blocking the event loop. Defaults to
+#: `asyncio.to_thread`; tests inject an inline runner so relay stays
+#: deterministic (the real thread hop composes badly with the lockstep pacer).
+EncodeRunner = Callable[..., Awaitable[Any]]
 
 
 class _AudioAccumulator:
@@ -109,6 +115,7 @@ class MediaPipeline:
         metrics: MetricsRegistry,
         pacer_factory: Callable[[float], Pacer] | None = None,
         lifecycle_sink: LifecycleEmitter | None = None,
+        encode_runner: EncodeRunner | None = None,
     ) -> None:
         self._settings = settings
         self._hub = hub
@@ -120,6 +127,11 @@ class MediaPipeline:
         # Injectable so tests drive sampling deterministically instead of
         # waiting on real time and hoping the scheduler cooperates.
         self._pacer_factory = pacer_factory or Pacer
+        # JPEG encode is CPU-bound (~ms at 720p) and would otherwise block the
+        # loop -- and every other subscriber, control message and audio chunk --
+        # while it runs. Off-loaded to a thread; PIL releases the GIL across the
+        # C encode, so it genuinely overlaps the loop. See docs/20.
+        self._encode_runner: EncodeRunner = encode_runner or asyncio.to_thread
         self._slots: dict[str, LatestSlot[RawVideoFrame]] = {}
         self._samplers: dict[str, asyncio.Task[None]] = {}
         self._audio: dict[str, _AudioAccumulator] = {}
@@ -384,14 +396,14 @@ class MediaPipeline:
             dropped = slot.dropped - already_dropped
             already_dropped = slot.dropped
             try:
-                self._relay_video(epoch, frame, dropped)
+                await self._relay_video(epoch, frame, dropped)
             except Exception:  # pragma: no cover - defensive
                 logger.exception(
                     "failed to relay a frame",
                     extra={"session_id": epoch.session_id, "media_epoch_id": epoch.epoch_id},
                 )
 
-    def _relay_video(self, epoch: MediaEpoch, frame: RawVideoFrame, dropped: int) -> None:
+    async def _relay_video(self, epoch: MediaEpoch, frame: RawVideoFrame, dropped: int) -> None:
         encodings = self._hub.required_video_encodings()
         if not encodings:
             return
@@ -401,7 +413,13 @@ class MediaPipeline:
         sequence = epoch.take_sequence()
 
         for encoding in encodings:
-            payload, pixel_format = encode_video(
+            # Off the event loop (see `_encode_runner`). If the epoch ends mid
+            # encode the sampler task is cancelled here, before `publish_video`,
+            # so the in-flight frame is dropped rather than published after
+            # `EpochEnded` -- ordering is preserved, at the cost of one frame at
+            # a real track end (immaterial on a continuous stream).
+            payload, pixel_format = await self._encode_runner(
+                encode_video,
                 frame.rgba,
                 width=frame.width,
                 height=frame.height,

@@ -48,6 +48,18 @@ def immediate_pacer(interval_s: float) -> Pacer:
     return Pacer(interval_s, sleep=_no_wait)
 
 
+async def inline_encode(func: object, *args: object, **kwargs: object) -> object:
+    """Encode inline instead of on a thread, keeping relay deterministic.
+
+    Production off-loads the encode with `asyncio.to_thread` (docs/20). A real
+    thread hop composes badly with `immediate_pacer`, which assumes the sampler
+    runs in lockstep with the scripted source. Awaiting a coroutine that has no
+    inner suspension does not yield to the loop, so this exercises the same
+    async relay path while preserving that lockstep.
+    """
+    return func(*args, **kwargs)  # type: ignore[operator]
+
+
 def build(
     audio_queue_chunks: int = 4096, **overrides: object
 ) -> tuple[MediaPipeline, RelayHub, MetricsRegistry, Settings]:
@@ -65,6 +77,7 @@ def build(
         epochs=EpochRegistry(settings),
         metrics=metrics,
         pacer_factory=immediate_pacer,
+        encode_runner=inline_encode,
     )
     return pipeline, hub, metrics, settings
 
@@ -180,6 +193,23 @@ async def test_rgba_raw_subscribers_get_pixel_exact_frames() -> None:
         assert frame.encoding == "rgba_raw"
         assert frame.pixel_format == "rgba"
         assert frame.rgba.shape == (frame.height, frame.width, 4)
+
+
+def test_encode_is_off_loaded_from_the_event_loop_by_default() -> None:
+    """Production must off-load the JPEG encode (15b, docs/20).
+
+    On-loop encode blocks every other subscriber, control message and audio
+    chunk while it runs. `build()` overrides the runner for determinism, so a
+    default pipeline is constructed here to assert the real production default.
+    """
+    settings = Settings(media_source="scripted", environment="ci")
+    pipeline = MediaPipeline(
+        settings=settings,
+        hub=RelayHub(max_subscribers=settings.ws_max_subscribers, audio_queue_chunks=8),
+        epochs=EpochRegistry(settings),
+        metrics=MetricsRegistry(),
+    )
+    assert pipeline._encode_runner is asyncio.to_thread
 
 
 async def test_audio_is_coalesced_and_carries_continuous_pts() -> None:
