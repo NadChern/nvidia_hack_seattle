@@ -125,7 +125,7 @@ class Pipeline:
         identity_min_margin: float = 0.0,
         identity_summary_weight: float = 0.5,
         identity_pool_frames: int = 1,
-        box_padding: float = 0.12,
+        grounder_box_padding: float = 0.75,
         event_cooldown_s: float = 20.0,
         promote_motion_events: bool = False,
         work_queue_depth: int = 4,
@@ -143,7 +143,9 @@ class Pipeline:
         self._identity_min_margin = identity_min_margin
         self._identity_summary_weight = identity_summary_weight
         self._identity_pool_frames = max(1, identity_pool_frames)
-        self._box_padding = box_padding
+        # The query path only ever crops grounder boxes (analyze/localize); there
+        # is no query-time tracker (spike 2f). Tracker padding lives in enroll.py.
+        self._grounder_box_padding = grounder_box_padding
         self._event_cooldown_s = event_cooldown_s
         self._promote_motion_events = promote_motion_events
 
@@ -379,7 +381,7 @@ class Pipeline:
         ]
         representative = frames[-1]
         rep_height, rep_width = representative.shape[:2]
-        rep_mask = box_to_mask(event.box, rep_height, rep_width, padding=self._box_padding)
+        rep_mask = box_to_mask(event.box, rep_height, rep_width, padding=self._grounder_box_padding)
         if not rep_mask.any():
             return None
         try:
@@ -405,7 +407,7 @@ class Pipeline:
     ) -> MaskedCrop | None:
         """One tail frame's crop, using the per-sighting boxes (no re-grounding)."""
         height, width = rgb.shape[:2]
-        first_mask = box_to_mask(box, height, width, padding=self._box_padding)
+        first_mask = box_to_mask(box, height, width, padding=self._grounder_box_padding)
         if not first_mask.any():
             return None
         first_crop = prepare_masked_crop(rgb, first_mask, box)
@@ -413,7 +415,7 @@ class Pipeline:
             return first_crop
         crop_height, crop_width = first_crop.image.shape[:2]
         semantic_mask = box_to_mask(
-            semantic_box, crop_height, crop_width, padding=self._box_padding
+            semantic_box, crop_height, crop_width, padding=self._grounder_box_padding
         )
         return prepare_masked_crop(first_crop.image, semantic_mask, semantic_box)
 

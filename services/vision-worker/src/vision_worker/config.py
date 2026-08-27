@@ -221,10 +221,14 @@ class Settings(BaseSettings):
     #: confirmed location. Turn on to record the full movement timeline once the
     #: frame rate is high enough for motion classification to be reliable.
     promote_motion_events: bool = False
-    #: Cosmos boxes run tight/noisy on small objects; the identity crop pads the
-    #: box by this fraction on each side before cropping (no segmenter -- SAM3
-    #: is gated), keeping the object inside the frame the embedder sees.
-    identity_box_padding: float = Field(default=0.12, ge=0.0, le=1.0)
+    #: Padding is conditioned on where the box came from (gate item 4, spikes
+    #: 3e/2e). A grounder box (VLM localize/analyze) can be mis-scoped and cropped
+    #: tight to the recognizable part; widening it to 0.75 repairs that (F1 0.776
+    #: -> 0.909, spike 3e). A tracker box (SAM2, register button) has no such
+    #: defect, so the same padding only pulls in desk and *hurts* separation
+    #: (+0.340 -> +0.255, spike 2e) -- it is kept tight. No segmenter (SAM3 gated).
+    identity_grounder_box_padding: float = Field(default=0.75, ge=0.0, le=1.0)
+    identity_tracker_box_padding: float = Field(default=0.0, ge=0.0, le=1.0)
 
     # --- Depth ---------------------------------------------------------------
     depth_kind: DepthKind = "none"

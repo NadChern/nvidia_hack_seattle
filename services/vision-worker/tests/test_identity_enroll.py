@@ -143,7 +143,7 @@ async def test_good_capture_selects_and_persists_a_diverse_gallery() -> None:
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     frames = tuple(
         frame(index, color)
@@ -170,7 +170,7 @@ async def test_second_pass_abstention_falls_back_to_reviewable_first_crops() -> 
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     frames = tuple(
         frame(index, color)
@@ -196,7 +196,7 @@ async def test_rejected_physical_references_never_reach_the_gallery() -> None:
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     frames = tuple(
         frame(index, color)
@@ -223,7 +223,7 @@ async def test_operator_crops_bypass_cosmos_and_store_only_after_submission() ->
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     crops = tuple(
         frame(index, color).payload
@@ -249,7 +249,7 @@ async def test_invalid_operator_crops_fail_without_a_gallery() -> None:
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
 
     with pytest.raises(EnrollmentError, match="operator crops") as caught:
@@ -269,7 +269,7 @@ async def test_capture_without_a_temporally_visible_target_fails_early() -> None
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     frames = tuple(
         frame(index, color) for index, color in enumerate(((220, 30, 30), (30, 220, 30)))
@@ -293,7 +293,7 @@ async def test_bad_capture_is_rejected_without_storing_a_weak_gallery() -> None:
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
     )
     frames = tuple(frame(index, (120, 120, 120), textured=False) for index in range(4))
 
@@ -333,7 +333,7 @@ async def test_center_anchor_registers_without_a_grounder() -> None:
         gallery=gallery,  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
         tracker=tracker,
         centre_frac=0.60,
     )
@@ -357,6 +357,54 @@ async def test_center_anchor_registers_without_a_grounder() -> None:
     seeded_frames, seed = tracker.calls[0]
     assert seeded_frames == 5
     assert seed.x_min == pytest.approx(0.20) and seed.x_max == pytest.approx(0.80)
+
+
+async def test_box_padding_is_conditioned_on_the_box_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gate item 4 (spikes 3e/2e): padding depends on where the box came from.
+
+    A grounder box (VLM localize) can be cropped tight to the recognizable part,
+    so widening it to a large pad repairs the scoping (F1 0.776 -> 0.909, 3e). A
+    tracker box (SAM2, register button) has no such defect, so the same pad only
+    pulls in desk and hurts separation (2e) -- it is kept tight. The grounded and
+    register-button enrollment paths must therefore not share one padding value.
+    """
+    from vision_worker.identity import enroll as enroll_module
+
+    seen: list[float] = []
+    real_box_to_mask = enroll_module.box_to_mask
+
+    def recording_box_to_mask(box, height, width, *, padding):  # type: ignore[no-untyped-def]
+        seen.append(padding)
+        return real_box_to_mask(box, height, width, padding=padding)
+
+    monkeypatch.setattr(enroll_module, "box_to_mask", recording_box_to_mask)
+
+    enroller = ObjectEnroller(
+        localizer=BoxLocalizer(),
+        embedder=FixtureEmbedder(),
+        gallery=StubGallery(),  # type: ignore[arg-type]
+        memory_client=RecordingMemory(),  # type: ignore[arg-type]
+        config=config(),
+        grounder_box_padding=0.5,
+        tracker_box_padding=0.0,
+        tracker=FakeTracker(),
+    )
+    frames = tuple(
+        frame(index, color)
+        for index, color in enumerate(
+            ((220, 30, 30), (30, 220, 30), (30, 30, 220), (220, 180, 30), (200, 35, 35))
+        )
+    )
+
+    seen.clear()
+    await enroller.enroll(object_id="grounded", label="keys", frames=frames)
+    assert seen and all(pad == 0.5 for pad in seen)  # every grounded crop is widened
+
+    seen.clear()
+    await enroller.enroll_center_anchor(object_id="tracked", label="keys", frames=frames)
+    assert seen and all(pad == 0.0 for pad in seen)  # every tracker crop stays tight
 
 
 async def test_center_anchor_without_a_tracker_fails_cleanly() -> None:
@@ -386,7 +434,7 @@ async def test_center_anchor_lost_track_rejects_without_a_gallery() -> None:
         gallery=StubGallery(),  # type: ignore[arg-type]
         memory_client=memory,  # type: ignore[arg-type]
         config=config(),
-        box_padding=0.0,
+        grounder_box_padding=0.0,
         tracker=FakeTracker(boxes={}),  # SAM2 held no object across the window
     )
     frames = (frame(0, (220, 30, 30)), frame(1, (30, 220, 30)))
