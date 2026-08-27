@@ -122,7 +122,8 @@ class ObjectEnroller:
         gallery: GalleryCache,
         memory_client: MemoryClient,
         config: EnrollmentConfig,
-        box_padding: float = 0.12,
+        grounder_box_padding: float = 0.75,
+        tracker_box_padding: float = 0.0,
         tracker: Tracker | None = None,
         centre_frac: float = DEFAULT_CENTRE_FRAC,
     ) -> None:
@@ -131,7 +132,11 @@ class ObjectEnroller:
         self._gallery = gallery
         self._memory = memory_client
         self._config = config
-        self._box_padding = box_padding
+        # Padding is a function of the box's source (gate item 4, spikes 3e/2e):
+        # the grounded path crops VLM localize boxes that widening repairs, the
+        # register button crops a SAM2 tracker box that widening only degrades.
+        self._grounder_box_padding = grounder_box_padding
+        self._tracker_box_padding = tracker_box_padding
         self._tracker = tracker
         self._centre_frac = centre_frac
 
@@ -212,7 +217,7 @@ class ObjectEnroller:
                 height=buffered.height,
                 pixel_format="rgb",
             )
-            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._box_padding)
+            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._grounder_box_padding)
             quality = score_quality(
                 rgb,
                 mask,
@@ -267,7 +272,7 @@ class ObjectEnroller:
                 review_candidates.append(first_candidate)
                 continue
             height, width = first_crop.image.shape[:2]
-            mask = box_to_mask(semantic_box, height, width, padding=self._box_padding)
+            mask = box_to_mask(semantic_box, height, width, padding=self._grounder_box_padding)
             refined_quality = score_quality(
                 first_crop.image,
                 mask,
@@ -449,7 +454,7 @@ class ObjectEnroller:
             if not 0 <= frame_index < len(rgb_frames):
                 continue
             rgb = rgb_frames[frame_index]
-            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._box_padding)
+            mask = box_to_mask(box, rgb.shape[0], rgb.shape[1], padding=self._tracker_box_padding)
             quality = score_quality(
                 rgb,
                 mask,

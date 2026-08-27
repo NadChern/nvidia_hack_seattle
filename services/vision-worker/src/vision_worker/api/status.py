@@ -90,7 +90,8 @@ def status(request: Request) -> dict[str, Any]:
             ),
             "min_cosine": settings.identity_min_cosine,
             "summary_weight": settings.identity_summary_weight,
-            "box_padding": settings.identity_box_padding,
+            "grounder_box_padding": settings.identity_grounder_box_padding,
+            "tracker_box_padding": settings.identity_tracker_box_padding,
             "gallery": (
                 gallery.status_payload()
                 if gallery is not None
