@@ -3,7 +3,13 @@
 import pytest
 
 from media_gateway.errors import CapacityError
-from media_gateway.relay.hub import AUDIO_BACKPRESSURE, CONTROL_BACKLOG, RelayHub, Subscriber
+from media_gateway.relay.hub import (
+    AUDIO_BACKPRESSURE,
+    CONTROL_BACKLOG,
+    RGBA_RAW_BACKPRESSURE,
+    RelayHub,
+    Subscriber,
+)
 
 
 def a_hub(*, max_subscribers: int = 8, audio_queue_chunks: int = 3) -> RelayHub:
@@ -97,6 +103,25 @@ def test_subscribers_receive_only_their_requested_encoding() -> None:
 
     assert drain(jpeg) == [b"as-jpeg"]
     assert drain(raw) == [b"as-raw"]
+
+
+def test_rgba_raw_subscriber_is_closed_rather_than_silently_dropped() -> None:
+    """rgba_raw is pixel-exact: a dropped frame is corrupt data, not a stale one.
+
+    A JPEG preview subscriber in the same spot is latest-wins dropped and stays
+    open (see the frame-4 case above); rgba_raw is closed loudly instead, so the
+    consumer sees a failure rather than an invisibly holed sequence.
+    """
+    hub = a_hub()
+    raw = hub.subscribe(stream_kind="video", encoding="rgba_raw")
+
+    hub.publish_video({"rgba_raw": b"frame-0"})  # queues, nothing draining it
+    hub.publish_video({"rgba_raw": b"frame-1"})  # would evict frame-0 -> close
+
+    assert raw.close_reason == RGBA_RAW_BACKPRESSURE
+    assert raw.dropped == 0, "pixel-exact frames must not be counted as silently dropped"
+    # The already-queued frame and then the close survive; frame-1 was refused.
+    assert drain(raw) == [b"frame-0"]
 
 
 def test_audio_is_buffered_not_dropped() -> None:

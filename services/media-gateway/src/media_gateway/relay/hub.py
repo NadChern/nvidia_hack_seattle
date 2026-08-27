@@ -35,6 +35,12 @@ logger = logging.getLogger(__name__)
 #: Close reason sent when an audio subscriber cannot keep up.
 AUDIO_BACKPRESSURE: Final = "audio_backpressure"
 
+#: Close reason sent when an `rgba_raw` subscriber cannot keep up. Unlike JPEG
+#: preview, rgba_raw exists for pixel-exact work, where a silently dropped frame
+#: is corrupt data, not a stale-but-valid one. So it is closed like audio rather
+#: than latest-wins dropped -- a failure the consumer notices.
+RGBA_RAW_BACKPRESSURE: Final = "rgba_raw_backpressure"
+
 #: How many control messages may queue behind a stalled video consumer before
 #: it is treated as gone. Control is rare -- epoch and session boundaries plus
 #: keepalives -- so this is generous.
@@ -77,6 +83,12 @@ class Subscriber:
         if self.close_reason is not None:
             return
         if self._frames_queued:
+            if self.encoding == "rgba_raw":
+                # A pending rgba_raw frame means the socket has not kept up.
+                # Dropping it (as JPEG does) would silently corrupt pixel-exact
+                # work; close loudly instead. See RGBA_RAW_BACKPRESSURE.
+                self.close(RGBA_RAW_BACKPRESSURE)
+                return
             self._evict_pending_frame()
         self._items.append(_Item(payload, is_frame=True))
         self._frames_queued += 1
@@ -249,6 +261,7 @@ class RelayHub:
 __all__ = [
     "AUDIO_BACKPRESSURE",
     "CONTROL_BACKLOG",
+    "RGBA_RAW_BACKPRESSURE",
     "RelayHub",
     "Subscriber",
 ]
