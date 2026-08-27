@@ -13,6 +13,8 @@ from __future__ import annotations
 import pytest
 
 from vision_worker.reason.cosmos import (
+    _EXTENT_RULE,
+    _PROMPT,
     CosmosReasoner,
     _localize_prompt,
     _parse_action_tail,
@@ -73,6 +75,35 @@ def test_temporal_localization_requires_the_same_presented_physical_object() -> 
     assert "Temporal continuity matters" in prompt
     assert "Computer keyboard keys" in prompt
     assert "<frame>INDEX</frame>" in prompt
+
+
+def test_every_box_emitting_prompt_states_the_extent() -> None:
+    """Spike 12c: the box must cover the whole object, not its recognizable part.
+
+    Without a sentence naming what to include, the model silently boxes the bare
+    keys and crops away the ring/fob/lanyard that distinguish one keyring from
+    another (spike 3c: identity F1 0.776 -> 0.939). Guard it on every prompt that
+    emits a box that then crops an object for embedding -- the event grounder and
+    both enrollment localizers. The reference prompt emits no box and is exempt.
+    """
+    event = _PROMPT.format(count=4, labels="keys, mug", extent=_EXTENT_RULE)
+    for prompt in (event, _localize_prompt("keys"), _temporal_localize_prompt("keys", 4)):
+        assert _EXTENT_RULE in prompt
+
+
+def test_keys_extent_is_the_whole_keyring_not_the_blade_alone() -> None:
+    """The blade rule is for *validity* (keyboard rejection), not for extent.
+
+    Spike 3c found the shipped wording conflated the two and pinned the crop to
+    the near-generic metal blade. Validity still requires a blade to be present;
+    the box covers the whole keyring. Neither the attached lanyard nor the ring
+    is excluded from the box any more.
+    """
+    prompt = _localize_prompt("keys")
+
+    assert "metal key blade must be present" in prompt
+    assert "whole keyring" in prompt
+    assert "lanyard, strap" not in prompt  # the old "do not substitute ... lanyard" exclusion
 
 
 def test_temporal_boxes_preserve_frame_indices() -> None:
