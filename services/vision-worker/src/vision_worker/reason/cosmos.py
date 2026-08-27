@@ -47,15 +47,34 @@ logger = logging.getLogger(__name__)
 
 #: Bumped whenever the prompt changes in a way that could move an answer, so a
 #: recorded run can say which wording produced it -- carried on the DetectorRef.
-PROMPT_VERSION = "cosmos-reason-v1"
+#: v2 states the box extent (`_EXTENT_RULE`, spike 12c).
+PROMPT_VERSION = "cosmos-reason-v2"
 
 #: Registration uses a separate single-frame prompt. Event reasoning asks what
 #: happened across time, while enrollment must abstain unless the crop contains
 #: the physical target itself. Keeping the versions separate avoids pretending
-#: an enrollment-only safety change moved event semantics.
-LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v3"
-TEMPORAL_LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-temporal-v1"
+#: an enrollment-only safety change moved event semantics. The -v4/-v2 bumps add
+#: the extent rule and stop excluding the attached parts it now includes.
+LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-localize-v4"
+TEMPORAL_LOCALIZE_PROMPT_VERSION = "cosmos-enrollment-temporal-v2"
 REFERENCE_PROMPT_VERSION = "cosmos-enrollment-reference-v1"
+
+#: The extent rule (spike 12c). Naming what to include takes the worst noun from
+#: grounding IoU 0.12 -> 0.92 and kills a temperature-0 bimodal swing: containment
+#: was always ~100%, but without this the model silently boxes the single most
+#: recognizable *part* -- a keyring's bare metal keys -- and crops away the ring,
+#: fob and lanyard that tell one instance from another (spike 3c: identity F1
+#: 0.776 -> 0.939 on the same images and backbone). The closing clause guards the
+#: failure that held an earlier attempt: "box the whole object" was once read as
+#: "box the whole frame", which re-admits the keyboard the validity rule rejects.
+#: Label-agnostic on purpose, so it drops into the multi-label event prompt too.
+_EXTENT_RULE = (
+    "Draw each box around the whole object a person would point to as theirs, "
+    "including the parts permanently attached to it -- a keyring's ring, fob and "
+    "lanyard, a mug's handle, or eyeglasses' arms -- not only its single most "
+    "recognizable part. Keep the box tight to that object itself: never let it "
+    "grow to cover the hand holding it, the surface beneath it, or the whole frame."
+)
 
 #: The model's own action vocabulary. The first three are memory events; the
 #: last two are how it declines. `carried` covers an object in transit.
@@ -82,6 +101,8 @@ grounding tag on its own line, using coordinates from 0 to 1000 with the origin 
 top-left of the LAST frame:
 <ref>LABEL</ref><box>[x_min, y_min, x_max, y_max]</box>
 
+{extent}
+
 Then, after the tags, output a single JSON array. One entry per object you tagged:
 [{{"label": "LABEL", "action": "ACTION", "location": "a short phrase a person would \
 recognise, e.g. on the kitchen table next to a mug"}}]
@@ -93,10 +114,12 @@ Use "placed" only if the object is set down and left at rest during these frames
 answer, not a failure. Report only objects you actually see. Do not invent anything."""
 
 _LOCALIZE_REQUIREMENTS = {
-    "keys": """KEYS means portable metal house, apartment, office, or vehicle keys, possibly \
-on a keyring. Computer keyboard keys, piano keys, keypad buttons, laptop parts, and images of keys \
-on a screen are NOT the target. A valid box must include a recognizable physical metal key blade; \
-a keyboard must produce NO_OBJECT.""",
+    "keys": """KEYS means portable metal house, apartment, office, or vehicle keys, usually on a \
+keyring with a ring, fob, lanyard, or colored charm. Computer keyboard keys, piano keys, keypad \
+buttons, laptop parts, and images of keys on a screen are NOT the target and must produce \
+NO_OBJECT. A recognizable physical metal key blade must be present for the target to be valid; \
+the box itself then covers the whole keyring the wearer carries, ring and fob and lanyard \
+included, not the blade alone.""",
     "wallet": "WALLET means the physical wallet body, not a card, phone, or image on a screen.",
     "glasses": "GLASSES means wearable eyeglasses or sunglasses, not glassware or a screen image.",
     "mug": "MUG means the physical drinking vessel body, not a screen image or isolated handle.",
@@ -108,10 +131,11 @@ registration. The target label is: {label}.
 Target-specific meaning:
 {requirements}
 
-Find the physical target object itself. A valid box must tightly enclose pixels that make \
-the target visually recognizable. Do not substitute an attached cord, lanyard, strap, the \
-holder's hand, an image displayed on a monitor, or the surrounding floor, wall, table, or other \
-background. If a recognizable {label} is not clearly visible, output exactly NO_OBJECT.
+Find the physical target object itself. Do not box the holder's hand, an image displayed on a \
+monitor, or the surrounding floor, wall, table, or other background in place of the target. If a \
+recognizable {label} is not clearly visible, output exactly NO_OBJECT.
+
+{extent}
 
 If a recognizable {label} is clearly visible, output exactly one line and nothing else:
 <ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
@@ -126,15 +150,16 @@ Target-specific meaning:
 
 Search across time for the deliberately presented physical target. Temporal continuity matters: \
 the same handheld object should persist or rotate across nearby frames. Ignore static background, \
-the wearer's hand by itself, laptop keyboards, screen images, cords, and label homonyms. A frame \
+the wearer's hand by itself, laptop keyboards, screen images, and label homonyms. A frame \
 with no clearly recognizable physical target is correctly omitted.
+
+{extent}
 
 For every frame where the target itself is clearly recognizable, output one line:
 <frame>INDEX</frame><ref>{label}</ref><box>[x_min, y_min, x_max, y_max]</box>
 
 INDEX is the zero-based frame number shown before each image. Coordinates are 0 to 1000 with \
-top-left origin and must tightly enclose the target. Output exactly NO_OBJECT if no frame \
-qualifies. Output no prose."""
+top-left origin. Output exactly NO_OBJECT if no frame qualifies. Output no prose."""
 
 _REFERENCE_REQUIREMENTS = {
     "keys": """VALID requires a clearly visible metal key blade with its shaft and cut \
@@ -165,7 +190,9 @@ def _localize_requirements(label: str) -> str:
 
 
 def _localize_prompt(label: str) -> str:
-    return _LOCALIZE_PROMPT.format(label=label, requirements=_localize_requirements(label))
+    return _LOCALIZE_PROMPT.format(
+        label=label, requirements=_localize_requirements(label), extent=_EXTENT_RULE
+    )
 
 
 def _temporal_localize_prompt(label: str, count: int) -> str:
@@ -173,6 +200,7 @@ def _temporal_localize_prompt(label: str, count: int) -> str:
         label=label,
         count=count,
         requirements=_localize_requirements(label),
+        extent=_EXTENT_RULE,
     )
 
 
@@ -405,7 +433,9 @@ class CosmosReasoner:
         content: list[dict[str, Any]] = [
             {
                 "type": "text",
-                "text": _PROMPT.format(count=len(frames), labels=", ".join(labels)),
+                "text": _PROMPT.format(
+                    count=len(frames), labels=", ".join(labels), extent=_EXTENT_RULE
+                ),
             }
         ]
         for frame in frames:
