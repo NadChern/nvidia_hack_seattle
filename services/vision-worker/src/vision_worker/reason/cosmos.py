@@ -210,10 +210,13 @@ class CosmosReasonerConfig:
 
     base_url: str = "http://127.0.0.1:8001/v1"
     model: str = "nvidia/Cosmos3-Nano"
-    #: Frames sent per window. Kept small: each image is hundreds of tokens
-    #: against an 8192 context, and more frames means more latency on a call
-    #: that is already ~5s+. 3-4 is enough to read a placement.
-    max_frames: int = 4
+    #: Frames sent per window, sampled endpoint-inclusive across its span. Each
+    #: image is hundreds of tokens against an 8192 context and adds latency, so
+    #: this is kept as low as detection allows -- but it is coupled to the window
+    #: width: too few frames over a wide window fall either side of the placement
+    #: and lose the before/after transition. The live value comes from
+    #: `settings.reason_max_frames` (see its note); this default is for direct use.
+    max_frames: int = 8
     #: A default event confidence -- Cosmos gives no numeric score, and the
     #: memory contract needs one for `confidence.event`. Identity confidence is
     #: computed separately from the C-RADIOv4 cosine downstream.

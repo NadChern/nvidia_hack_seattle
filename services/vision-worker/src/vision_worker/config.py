@@ -200,20 +200,41 @@ class Settings(BaseSettings):
     reason_base_url: str = "http://127.0.0.1:8001/v1"
     reason_model: str = "nvidia/Cosmos3-Nano"
     #: The rolling window handed to the reasoner, and how often a new one fires.
-    #: Cosmos is ~5s+/call warm, so windows are short (few frames) and roughly
-    #: non-overlapping -- the pipeline's event dedup tolerates a slow cadence.
-    #: One window is analyzed at a time (one GPU, one model server).
-    reason_window_seconds: float = Field(default=6.0, gt=0)
+    #: The window must be wide enough to contain a placement's *before/after*
+    #: contrast -- "holding" early, "put down and walked away" late. A tight
+    #: window shows only continuous motion toward the surface and misses the
+    #: event entirely (spike 5b: a +/-5 s window took placement detection from
+    #: 2/2 to 0/2). Cosmos still sees only `reason_max_frames` frames,
+    #: endpoint-subsampled across this span, so a wider window costs no extra
+    #: tokens -- it just spreads those frames far enough apart for the transition
+    #: to be legible. Kept below `evidence_ring_seconds` so the ring can always
+    #: supply the frames. Windows now overlap (span > interval), so one placement
+    #: is seen by several of them; `event_cooldown_seconds` covers the span so it
+    #: is written once. (The exact minimum width is unmeasured -- the spike only
+    #: bracketed it between a ~10 s window that failed and a 28 s clip that passed.)
+    reason_window_seconds: float = Field(default=20.0, gt=0)
     reason_interval_seconds: float = Field(default=7.0, gt=0)
-    reason_max_frames: int = Field(default=4, ge=1, le=16)
+    #: Frames sampled (endpoint-inclusive) across the window and sent to the
+    #: reasoner. This is now coupled to the window width: over a 20 s window, 4
+    #: frames sit ~7 s apart and a local LFM2.5-VL proxy missed the placement even
+    #: on the wide clip, while 8 frames (~3 s apart) recovered it for both a large
+    #: object and the small/thin keyring that is the demo's hard case. Wider
+    #: window + too-sparse frames loses the before/after transition between two
+    #: samples. 8 stays within the reasoner's context (each frame is hundreds of
+    #: tokens against 8192) at some added latency; the exact floor is model-
+    #: specific, so this is a tuning knob to revisit against real Cosmos.
+    reason_max_frames: int = Field(default=8, ge=1, le=16)
     #: Cosmos gives no numeric score; the memory contract needs one for
     #: `confidence.event`. Identity confidence is computed from the cosine.
     reason_event_confidence: float = Field(default=0.85, ge=0.0, le=1.0)
     reason_max_tokens: int = Field(default=320, ge=64)
     reason_timeout_s: float = Field(default=120.0, gt=0)
     #: How long the same (object, action) is suppressed after a write, so
-    #: overlapping windows do not re-report one placement many times.
-    event_cooldown_seconds: float = Field(default=20.0, gt=0)
+    #: overlapping windows do not re-report one placement many times. A placement
+    #: lingers in every window until its "holding" frame ages out ~one
+    #: `reason_window_seconds` later, so this must cover that span or the event is
+    #: rewritten once per interval across it -- enforced as >= the window below.
+    event_cooldown_seconds: float = Field(default=25.0, gt=0)
     #: Whether picked_up/carried are written to memory alongside placed. Off by
     #: default: at ~1fps Cosmos hallucinates handling on a resting object, and a
     #: single false pickup flips a confirmed placement to "moved afterward" -- so
@@ -408,6 +429,14 @@ class Settings(BaseSettings):
             raise ValueError(
                 "registration_min_mask_box_ratio cannot exceed registration_max_mask_box_ratio"
             )
+        # The reasoning window is served from the evidence ring, so it cannot
+        # reach further back than the ring retains.
+        if self.reason_window_seconds > self.evidence_ring_seconds:
+            raise ValueError("reason_window_seconds cannot exceed evidence_ring_seconds")
+        # A placement lingers in overlapping wide windows for ~one window span;
+        # the cooldown must cover it or one placement is written many times.
+        if self.event_cooldown_seconds < self.reason_window_seconds:
+            raise ValueError("event_cooldown_seconds cannot be below reason_window_seconds")
         return self
 
     @property
