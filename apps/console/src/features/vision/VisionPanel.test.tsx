@@ -32,10 +32,10 @@ const status = {
   reasoner: {
     kind: "cosmos",
     model: "nvidia/Cosmos3-Nano",
-    window_seconds: 6,
+    window_seconds: 20,
     interval_seconds: 7,
-    max_frames: 4,
-    event_cooldown_seconds: 20,
+    max_frames: 8,
+    event_cooldown_seconds: 25,
     promote_motion_events: false,
   },
   identity: {

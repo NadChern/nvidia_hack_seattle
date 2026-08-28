@@ -23,8 +23,10 @@ matches one durable personal-object identity and passes the promotion policy.
 
 ### Window reasoning
 
-Cosmos receives at most a few frames from a roughly six-second window. It reports only configured,
-registered labels visible in the final frame and classifies each as:
+Cosmos receives up to eight frames sampled across a roughly twenty-second window -- wide enough to
+span a placement's before/after contrast (held, then put down and walked away), which a tight window
+hides. It reports only configured, registered labels visible in the final frame and classifies each
+as:
 
 - `placed`
 - `picked_up`
@@ -114,10 +116,10 @@ All settings use the `VMA_` prefix.
 | `REASON_KIND` | `cosmos` | `cosmos` or deterministic `fixture` |
 | `REASON_BASE_URL` | `http://127.0.0.1:8001/v1` | Cosmos OpenAI-compatible endpoint |
 | `REASON_MODEL` | `nvidia/Cosmos3-Nano` | Multimodal reasoner |
-| `REASON_WINDOW_SECONDS` | `6` | Evidence window duration |
+| `REASON_WINDOW_SECONDS` | `20` | Evidence window duration -- wide enough to show a placement's before/after contrast |
 | `REASON_INTERVAL_SECONDS` | `7` | Minimum analysis cadence |
-| `REASON_MAX_FRAMES` | `4` | Frames sent per Cosmos call |
-| `EVENT_COOLDOWN_SECONDS` | `20` | Same-object/action deduplication window |
+| `REASON_MAX_FRAMES` | `8` | Frames sent per Cosmos call (dense enough across the wide window to catch the transition) |
+| `EVENT_COOLDOWN_SECONDS` | `25` | Same-object/action deduplication window -- covers a full evidence-window span |
 | `PROMOTE_MOTION_EVENTS` | `false` | Whether pickup/carried may write Memory |
 | `IDENTITY_KIND` | `none` | Use `radio` on the GN100 real-model profile |
 | `IDENTITY_MIN_COSINE` | configurable | Personal-gallery write threshold |
