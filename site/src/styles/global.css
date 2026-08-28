@@ -87,7 +87,10 @@ h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -0.02em; }
   font-size: 13px;
   color: var(--muted);
   background: var(--surface);
+  text-decoration: none;
+  transition: border-color 0.15s ease, color 0.15s ease;
 }
+a.hero-badge:hover { border-color: var(--accent); color: var(--text); }
 .hero-badge .spark { color: var(--accent); font-weight: 700; }
 .hero-title {
   font-size: clamp(2.6rem, 8vw, 5rem);
