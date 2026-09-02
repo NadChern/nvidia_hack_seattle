@@ -19,6 +19,7 @@ import { team } from '../data/team';
               {member.initials}
             </div>
             <div class="member-name">{member.name}</div>
+            {member.role && <div class="member-role">{member.role}</div>}
             <div class="member-links">
               {
                 member.linkedin && (

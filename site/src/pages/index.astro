@@ -2,14 +2,19 @@
 import SeoHead from '../components/SeoHead.astro';
 import Hero from '../components/Hero.astro';
 import Problem from '../components/Problem.astro';
+import WhatsNext from '../components/WhatsNext.astro';
 import Capabilities from '../components/Capabilities.astro';
 import Demo from '../components/Demo.astro';
 import Stack from '../components/Stack.astro';
-import Status from '../components/Status.astro';
 import Architecture from '../components/Architecture.astro';
+import Status from '../components/Status.astro';
 import Privacy from '../components/Privacy.astro';
 import Team from '../components/Team.astro';
+import Press from '../components/Press.astro';
+import ProjectContact from '../components/ProjectContact.astro';
 import '../styles/global.css';
+
+const BASE = import.meta.env.BASE_URL;
 ---
 <!doctype html>
 <html lang="en">
@@ -23,18 +28,28 @@ import '../styles/global.css';
     <Hero />
     <main>
       <Problem />
+      <WhatsNext />
       <Capabilities />
       <Demo />
       <Stack />
-      <Status />
       <Architecture />
+      <Status />
       <Privacy />
       <Team />
+      <Press />
+      <ProjectContact />
     </main>
     <footer class="footer">
       <div class="container footer-inner">
-        <span>MEMO · Built for the NVIDIA Spark Hackathon Seattle 2026.</span>
-        <span>Local-first and private by default. · <a href="https://github.com/NadChern/nvidia_hack_seattle" target="_blank" rel="noopener noreferrer">Source on GitHub</a></span>
+        <div class="footer-lines">
+          <p>🏆 Winner, NVIDIA Spark Hackathon Seattle 2026</p>
+          <p>Built by a Seattle-based team including local students.</p>
+          <p>Now exploring where MEMO can go beyond the hackathon.</p>
+          <p>Local-first and private by default.</p>
+        </div>
+        <div class="footer-links">
+          <a href={`${BASE}press-kit/`}>Press kit</a> · <a href="https://github.com/NadChern/nvidia_hack_seattle" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+        </div>
       </div>
     </footer>
   </body>

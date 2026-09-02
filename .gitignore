@@ -12,6 +12,8 @@ clips/
 *.mp4
 *.mkv
 *.mov
+# ...except committed press-kit assets.
+!site/public/press/*.mp4
 
 .venv/
 **/.venv/
