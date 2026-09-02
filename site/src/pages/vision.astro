@@ -1,0 +1,513 @@
+---
+import SeoHead from '../components/SeoHead.astro';
+import EmailReveal from '../components/EmailReveal.astro';
+import Team from '../components/Team.astro';
+import '../styles/global.css';
+
+const BASE = import.meta.env.BASE_URL;
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <SeoHead
+      title="MEMO Vision"
+      description="Why MEMO exists, how evidence-only visual memory works, and where we go next: from a working RayNeo X3 Pro + GN100 prototype toward a first commercial hypothesis."
+    />
+  </head>
+  <body>
+    <header class="hero presskit-hero">
+      <div class="container">
+        <a class="hero-badge" href={BASE}>&larr; Back to MEMO</a>
+        <h1 class="hero-title" style="font-size: clamp(2rem, 5vw, 3.2rem);">Vision<span class="accent">.</span></h1>
+        <p class="hero-sub">MEMO gives AI glasses a memory of the physical world, without recording your whole day.</p>
+        <p class="hero-impact">We&rsquo;re building a visual memory layer for AI glasses &mdash; with adults and older adults as our first market.</p>
+      </div>
+    </header>
+
+    <main>
+      <section id="vision-problem">
+        <div class="container">
+          <p class="section-kicker">The problem</p>
+          <h2 class="section-title">Everyday memory gets harder. Family isn&rsquo;t always in the room.</h2>
+          <p class="prose">As people age, small everyday memory lapses &mdash; where did I put this, did I already do that, what happened earlier &mdash; get more frequent, and more disruptive. The people who&rsquo;d normally help, adult children and other family, aren&rsquo;t always there when the question comes up.</p>
+          <p class="prose">Today&rsquo;s AI glasses can see and answer in the moment, but that isn&rsquo;t the same as a memory. Once the moment passes, there&rsquo;s no trustworthy record to check later, and no easy way to bring a trusted person in when it calls for more than a quick answer.</p>
+        </div>
+      </section>
+
+      <section id="vision-pillars">
+        <div class="container">
+          <p class="section-kicker">MEMO</p>
+          <h2 class="section-title">Visual memory, a remote call, and day-to-day AI &mdash; one local system.</h2>
+          <p class="section-sub">Tap a card to see how it actually works.</p>
+          <div class="grid-3">
+            <div class="flip-card" tabindex="0" role="button" aria-pressed="false" aria-label="Visual Memory. Activate to see how it works.">
+              <div class="flip-card-inner">
+                <div class="flip-card-face flip-card-front">
+                  <div class="card-icon">&#8982;</div>
+                  <h3 class="card-title">Visual Memory</h3>
+                  <p class="card-tag">Evidence, not footage</p>
+                  <p class="card-text">Confirmed sightings of real objects and places become a durable, queryable memory &mdash; built from bounded evidence, not a video archive.</p>
+                  <div class="card-foot"><b>Outcome:</b> a memory you can ask, and trust the answer.</div>
+                  <p class="flip-hint">Tap to see how it works &#8635;</p>
+                </div>
+                <div class="flip-card-face flip-card-back">
+                  <p class="flip-back-title">How it works</p>
+                  <div class="flip-diagram">
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7.5 11-7.5S23 12 23 12s-4 7.5-11 7.5S1 12 1 12z"/><circle cx="12" cy="12" r="3"/></svg></div>
+                      <div class="flip-diagram-label">Seen</div>
+                    </div>
+                    <div class="flip-diagram-arrow">&rarr;</div>
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
+                      <div class="flip-diagram-label">Confirmed</div>
+                    </div>
+                    <div class="flip-diagram-arrow">&rarr;</div>
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></div>
+                      <div class="flip-diagram-label">Remembered</div>
+                    </div>
+                  </div>
+                  <p class="flip-back-caption">A confirmed sighting becomes a durable memory, with its evidence attached &mdash; not a video file.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flip-card" tabindex="0" role="button" aria-pressed="false" aria-label="Remote Call. Activate to see how it works.">
+              <div class="flip-card-inner">
+                <div class="flip-card-face flip-card-front">
+                  <div class="card-icon">&#9678;</div>
+                  <h3 class="card-title">Remote Call</h3>
+                  <p class="card-tag">Human in the loop</p>
+                  <p class="card-text">When judgment matters more than an automated answer, MEMO opens a live call to a trusted person, seeing what the wearer sees.</p>
+                  <div class="card-foot"><b>Outcome:</b> human judgment stays within reach, exactly when it matters.</div>
+                  <p class="flip-hint">Tap to see how it works &#8635;</p>
+                </div>
+                <div class="flip-card-face flip-card-back">
+                  <p class="flip-back-title">How it works</p>
+                  <div class="flip-diagram">
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="13" r="3.3"/><circle cx="18" cy="13" r="3.3"/><path d="M9.3 13h5.4M2.5 12l1-2M21.5 12l-1-2"/></svg></div>
+                      <div class="flip-diagram-label">Wearer</div>
+                    </div>
+                    <div class="flip-diagram-arrow">
+                      <div>&rarr;</div>
+                      <div class="flip-diagram-arrow-label">Live call</div>
+                    </div>
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+                      <div class="flip-diagram-label">Family</div>
+                    </div>
+                  </div>
+                  <p class="flip-back-caption">One request opens a live call so a trusted person can see and hear what the wearer does.</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="flip-card" tabindex="0" role="button" aria-pressed="false" aria-label="Day-to-Day AI. Activate to see how it works.">
+              <div class="flip-card-inner">
+                <div class="flip-card-face flip-card-front">
+                  <div class="card-icon">&#9673;</div>
+                  <h3 class="card-title">Day-to-Day AI</h3>
+                  <p class="card-tag">Hands-free, glasses-native</p>
+                  <p class="card-text">Everyday questions, answered locally, without pulling out a phone or repeating context the system should already have.</p>
+                  <div class="card-foot"><b>Outcome:</b> assistance that fits into the day instead of interrupting it.</div>
+                  <p class="flip-hint">Tap to see how it works &#8635;</p>
+                </div>
+                <div class="flip-card-face flip-card-back">
+                  <p class="flip-back-title">How it works</p>
+                  <div class="flip-diagram">
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+                      <div class="flip-diagram-label">Ask</div>
+                    </div>
+                    <div class="flip-diagram-arrow">&rarr;</div>
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="15" x2="23" y2="15"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="15" x2="4" y2="15"/></svg></div>
+                      <div class="flip-diagram-label">On-device</div>
+                    </div>
+                    <div class="flip-diagram-arrow">&rarr;</div>
+                    <div class="flip-diagram-node">
+                      <div class="flip-diagram-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.4 8.4 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></div>
+                      <div class="flip-diagram-label">Answers</div>
+                    </div>
+                  </div>
+                  <p class="flip-back-caption">No cloud round-trip &mdash; the question is heard, reasoned over, and answered on the same local hardware.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="vision-how">
+        <div class="container">
+          <p class="section-kicker">How it works</p>
+          <h2 class="section-title">Event-triggered evidence, understood once, remembered, retrievable later.</h2>
+          <div class="arch">
+            <div class="arch-flow">
+              <div class="arch-node hero"><div class="k">1</div><div class="v">Event-triggered evidence</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">2</div><div class="v">Understanding</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">3</div><div class="v">Memory</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">4</div><div class="v">Retrieval</div></div>
+            </div>
+            <p class="status-note">MEMO doesn&rsquo;t record continuously. A meaningful event triggers a short capture, a model turns that capture into an evidence-backed memory, and later a question retrieves it &mdash; with the evidence to back it up.</p>
+
+            <figure class="presskit-photo" style="max-width: 980px; margin: 36px auto 0;">
+              <img src={`${BASE}vision/diagram.png`} alt="MEMO core product diagram: perceive from the glasses, hold a short ephemeral context, understand when something meaningful happens, remember it as semantic memory instead of video, then retrieve it later by asking." />
+              <figcaption>MEMO remembers events, not recordings.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section id="vision-privacy">
+        <div class="container">
+          <p class="section-kicker">Privacy thesis</p>
+          <h2 class="section-title">Evidence, not surveillance.</h2>
+          <p class="privacy-lead">A useful memory does not require continuous recording. MEMO&rsquo;s premise is that a short, bounded clip of a confirmed event is enough to make an answer trustworthy &mdash; and that anything beyond that evidence window is a liability, not a feature. No rolling video of your day, no footage of the people around you, no record kept because it might someday be useful.</p>
+        </div>
+      </section>
+
+      <section id="vision-why-now">
+        <div class="container">
+          <p class="section-kicker">Why now</p>
+          <h2 class="section-title">Three curves crossed at once.</h2>
+          <div class="privacy-cards">
+            <article class="privacy-card">
+              <div class="pc-ic">&#9673;</div>
+              <h3>Multimodal models got good enough</h3>
+              <p>Vision-language models are finally reliable enough to turn a raw frame into an evidence-backed memory &mdash; not just a caption.</p>
+            </article>
+            <article class="privacy-card">
+              <div class="pc-ic">&#9678;</div>
+              <h3>Smart glasses became wearable</h3>
+              <p>Camera-equipped glasses like the RayNeo X3 Pro are light and unobtrusive enough for daily use, not just a demo.</p>
+            </article>
+            <article class="privacy-card">
+              <div class="pc-ic">&#8982;</div>
+              <h3>Edge AI hardware caught up</h3>
+              <p>Compact local hardware, such as the Acer GN100, can now run perception, speech, and reasoning together, without sending anything to the cloud.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="vision-thesis">
+        <div class="container">
+          <p class="section-kicker">The thesis</p>
+          <h2 class="section-title">AI glasses will need memory, not just intelligence.</h2>
+          <p class="prose">Today&rsquo;s assistants mostly reason over the present moment. A wearable assistant becomes substantially more useful when it can remember the physical world over time. MEMO is building that memory layer:</p>
+
+          <div class="arch" style="margin-top: 8px;">
+            <div class="arch-flow">
+              <div class="arch-node"><div class="k">1</div><div class="v">Perception</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">2</div><div class="v">Evidence</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">3</div><div class="v">Memory</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">4</div><div class="v">Retrieval</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node hero"><div class="k">5</div><div class="v">Action</div></div>
+            </div>
+          </div>
+
+          <p class="privacy-lead" style="margin-top: 32px;">Not just an interesting smart-glasses app for older adults &mdash; a visual memory layer for wearable AI, with older adults as the first market.</p>
+        </div>
+      </section>
+
+      <section id="vision-today">
+        <div class="container">
+          <p class="section-kicker">What exists today</p>
+          <h2 class="section-title">A working prototype, not a pitch deck.</h2>
+          <p class="section-sub">MEMO runs end to end today, on real hardware, in public.</p>
+          <div class="press-grid" style="margin-top: 28px;">
+            <div class="press-block">
+              <h3>Working prototype</h3>
+              <p>RayNeo X3 Pro glasses paired to a single Acer GN100, running perception, speech, reasoning, and memory entirely locally.</p>
+            </div>
+            <div class="press-block">
+              <h3>Hackathon winner</h3>
+              <p>Winner, NVIDIA Spark Hackathon Seattle 2026, judged on a live, working system.</p>
+            </div>
+            <div class="press-block">
+              <h3>Public demo</h3>
+              <p>A recorded demo and a live in-person walkthrough are both available on request.</p>
+            </div>
+            <div class="press-block">
+              <h3>Runs locally</h3>
+              <p>The current prototype runs locally, keeping visual and personal context on local hardware.</p>
+            </div>
+          </div>
+          <div class="press-links" style="margin-top: 28px;">
+            <a class="btn btn-primary" href={`${BASE}#demo`}>Watch the demo</a>
+            <a class="btn btn-ghost" href={`${BASE}press-kit/`}>Press kit</a>
+            <a class="btn btn-ghost" href="https://github.com/NadChern/nvidia_hack_seattle" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="vision-commercial">
+        <div class="container">
+          <p class="section-kicker">Where we start</p>
+          <h2 class="section-title">Adults and older adults who want to remember, stay connected, and get everyday help.</h2>
+          <p class="prose">MEMO starts with adults and older adults who want help remembering everyday things, staying connected to family, and getting contextual assistance through smart glasses.</p>
+
+          <div class="privacy-cards" style="margin-top: 36px;">
+            <article class="privacy-card">
+              <div class="pc-ic">&#8982;</div>
+              <h3>Memory</h3>
+              <p>&ldquo;Where did I leave my keys?&rdquo; &ldquo;Did I already do this?&rdquo; &ldquo;What happened earlier?&rdquo;</p>
+            </article>
+            <article class="privacy-card">
+              <div class="pc-ic">&#9678;</div>
+              <h3>Connection</h3>
+              <p>Call a family member or caregiver directly from the glasses when help is needed.</p>
+            </article>
+            <article class="privacy-card">
+              <div class="pc-ic">&#9673;</div>
+              <h3>Daily assistance</h3>
+              <p>Ask what to cook, what an object is, what to do next, or get contextual guidance.</p>
+            </article>
+          </div>
+
+          <p class="privacy-lead" style="margin-top: 40px;">MEMO is not designed to continuously record a person&rsquo;s life. It creates selective, evidence-based memories when useful events occur.</p>
+        </div>
+      </section>
+
+      <section id="vision-buyer">
+        <div class="container">
+          <p class="section-kicker">Who might pay</p>
+          <h2 class="section-title">Who might pay?</h2>
+          <p class="prose">One hypothesis is that the wearer is the user while an adult child or family member may be the buyer. If that holds, it would matter for the business model &mdash; but like the questions below, it&rsquo;s untested.</p>
+
+          <div class="arch" style="margin-top: 36px;">
+            <div class="arch-flow">
+              <div class="arch-node hero"><div class="k">Start</div><div class="v">Direct-to-consumer</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">Then</div><div class="v">Family-supported adoption</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">Later</div><div class="v">Senior living / care organizations</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="vision-validate">
+        <div class="container">
+          <p class="section-kicker">What we need to validate</p>
+          <h2 class="section-title">Four open questions, before any market claim.</h2>
+          <div class="press-grid" style="margin-top: 28px;">
+            <div class="press-block">
+              <h3>Customer problem</h3>
+              <p>Is the memory and connection gap we&rsquo;re solving actually a top-of-mind problem for older adults and their families, or a nice-to-have?</p>
+            </div>
+            <div class="press-block">
+              <h3>Workflow fit</h3>
+              <p>Does glasses-based use fit naturally into daily life, or does it add friction that outweighs the benefit?</p>
+            </div>
+            <div class="press-block">
+              <h3>Willingness to pay</h3>
+              <p>Will a family pay for this, and at what price relative to what they already spend on care and safety tools?</p>
+            </div>
+            <div class="press-block">
+              <h3>Deployment model</h3>
+              <p>Hardware, setup, and support &mdash; what does it take to actually get this into someone&rsquo;s home and daily routine?</p>
+            </div>
+          </div>
+          <p class="status-note">These are open questions, not results. We have not run paid pilots, signed customers, or generated revenue &mdash; and won&rsquo;t claim otherwise.</p>
+        </div>
+      </section>
+
+      <section id="vision-roadmap">
+        <div class="container">
+          <p class="section-kicker">Roadmap</p>
+          <h2 class="section-title">From working prototype to validated pilot.</h2>
+          <div class="arch">
+            <div class="arch-flow">
+              <div class="arch-node"><div class="k">Now</div><div class="v">MVP hardening</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">Next</div><div class="v">Customer discovery</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">Then</div><div class="v">First pilot</div></div>
+              <div class="arch-arrow">&rarr;</div>
+              <div class="arch-node"><div class="k">After</div><div class="v">Measured results</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <Team />
+
+      <section id="vision-investors">
+        <div class="container">
+          <p class="section-kicker">Investors &amp; partners</p>
+          <h2 class="section-title">Building MEMO&rsquo;s next chapter.</h2>
+          <p class="section-sub">If evidence-based visual memory for older adults, their families, and the care organizations that support them is interesting to you, we&rsquo;d like to talk.</p>
+          <div class="press-contact" style="margin-top: 28px;">
+            <div class="press-contact-who">
+              <div class="press-contact-name">Alexander Kuznetsov</div>
+              <div class="press-contact-role">Investor &amp; partner contact</div>
+            </div>
+            <div class="press-contact-links">
+              <EmailReveal user="kuznecov.alexandr" domain="gmail.com" />
+              <a href="https://www.linkedin.com/in/alexskuznetsov/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <div class="footer-lines">
+          <p>&#127942; Winner, NVIDIA Spark Hackathon Seattle 2026</p>
+          <p>Built by a Seattle-based team including local students.</p>
+          <p>Now exploring where MEMO can go beyond the hackathon.</p>
+          <p>Local-first and private by default.</p>
+        </div>
+        <div class="footer-links">
+          <a href={`${BASE}press-kit/`}>Press kit</a> &middot; <a href={`${BASE}vision/`}>Vision</a> &middot; <a href="https://github.com/NadChern/nvidia_hack_seattle" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.querySelectorAll<HTMLElement>('.flip-card').forEach((card) => {
+        const toggle = () => {
+          const flipped = card.classList.toggle('is-flipped');
+          card.setAttribute('aria-pressed', String(flipped));
+        };
+        card.addEventListener('click', toggle);
+        card.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggle();
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
+
+<style>
+  .flip-card {
+    cursor: pointer;
+    outline: none;
+  }
+  .flip-card-inner {
+    position: relative;
+    min-height: 380px;
+    transition: transform 0.6s cubic-bezier(0.4, 0.2, 0.2, 1);
+    transform-style: preserve-3d;
+  }
+  .flip-card.is-flipped .flip-card-inner { transform: rotateY(180deg); }
+  .flip-card-face {
+    position: absolute;
+    inset: 0;
+    backface-visibility: hidden;
+    -webkit-backface-visibility: hidden;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    padding: 26px;
+    display: flex;
+    flex-direction: column;
+    transition: border-color 0.15s ease;
+  }
+  .flip-card:hover .flip-card-front { border-color: var(--border-strong); }
+  .flip-card:focus-visible { box-shadow: 0 0 0 2px var(--accent-dim); border-radius: var(--radius); }
+  .flip-card-back { transform: rotateY(180deg); }
+  .flip-hint {
+    margin: auto 0 0;
+    padding-top: 16px;
+    color: var(--accent);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+  }
+  .flip-back-title {
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin: 0 0 26px;
+  }
+  .flip-diagram {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 2px;
+    flex: 1;
+    width: 100%;
+  }
+  .flip-diagram-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    flex: 1 1 0;
+    min-width: 0;
+    max-width: 92px;
+  }
+  .flip-diagram-icon {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .flip-diagram-icon svg {
+    width: 19px;
+    height: 19px;
+    flex-shrink: 0;
+  }
+  .flip-diagram-label {
+    font-size: 11.5px;
+    color: var(--muted);
+    text-align: center;
+    line-height: 1.3;
+  }
+  .flip-diagram-arrow {
+    color: var(--muted-2);
+    font-size: 15px;
+    margin-top: 13px;
+    flex: 0 0 auto;
+    text-align: center;
+  }
+  .flip-diagram-arrow-label {
+    font-size: 9.5px;
+    color: var(--muted-2);
+    text-align: center;
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .flip-back-caption {
+    color: var(--muted);
+    font-size: 0.92rem;
+    margin: 22px 0 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .flip-card-inner { transition: none; }
+  }
+  @media (max-width: 900px) {
+    .flip-card-inner { min-height: 340px; }
+  }
+  @media (max-width: 560px) {
+    .flip-card-face { padding: 20px; }
+    .flip-diagram-icon { width: 38px; height: 38px; }
+    .flip-diagram-icon svg { width: 17px; height: 17px; }
+    .flip-diagram-arrow { font-size: 13px; margin-top: 11px; }
+  }
+</style>

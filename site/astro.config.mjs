@@ -7,4 +7,8 @@ export default defineConfig({
   base: '/nvidia_hack_seattle/',
   output: 'static',
   trailingSlash: 'always',
+  // Only affects `astro dev` (e.g. sharing via a Cloudflare quick tunnel); no effect on the static build.
+  server: {
+    allowedHosts: true,
+  },
 });
