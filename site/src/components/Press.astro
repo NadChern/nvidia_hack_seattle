@@ -1,0 +1,46 @@
+---
+import EmailReveal from './EmailReveal.astro';
+const BASE = import.meta.env.BASE_URL;
+---
+<section id="press">
+  <div class="container">
+    <p class="section-kicker">For journalists</p>
+    <h2 class="section-title">The story, the award, and how to reach us.</h2>
+    <p class="section-sub">MEMO was created by a Seattle-based team including local students and won the NVIDIA Spark Hackathon Seattle 2026. We are available for interviews and live demonstrations in the Seattle area.</p>
+
+    <div class="press-grid">
+      <div class="press-block">
+        <h3>Story angle</h3>
+        <p>How a local team is exploring wearable AI for everyday memory, independence, and trusted family assistance.</p>
+      </div>
+      <div class="press-block">
+        <h3>Award</h3>
+        <p>Winner, NVIDIA Spark Hackathon Seattle 2026.</p>
+      </div>
+      <div class="press-block">
+        <h3>Team</h3>
+        <p>Seattle-based, including local students. See the full team above.</p>
+      </div>
+      <div class="press-block">
+        <h3>Availability</h3>
+        <p>Available for interviews and live demos in the Seattle area.</p>
+      </div>
+    </div>
+
+    <div class="press-contact">
+      <div class="press-contact-who">
+        <div class="press-contact-name">Alexander Kuznetsov</div>
+        <div class="press-contact-role">Press contact</div>
+      </div>
+      <div class="press-contact-links">
+        <EmailReveal user="kuznecov.alexandr" domain="gmail.com" />
+        <a href="https://www.linkedin.com/in/alexskuznetsov/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+      </div>
+    </div>
+
+    <div class="press-links">
+      <a class="btn btn-primary" href="#demo">Watch the demo</a>
+      <a class="btn btn-ghost" href={`${BASE}press-kit/`}>Press kit</a>
+    </div>
+  </div>
+</section>

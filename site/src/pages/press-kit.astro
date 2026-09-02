@@ -1,0 +1,162 @@
+---
+import SeoHead from '../components/SeoHead.astro';
+import EmailReveal from '../components/EmailReveal.astro';
+import { team } from '../data/team';
+import '../styles/global.css';
+
+const BASE = import.meta.env.BASE_URL;
+const VIDEO_ID = 'LyBFO-cAuKE';
+const EMBED = `https://www.youtube-nocookie.com/embed/${VIDEO_ID}`;
+
+const oneLiner = 'MEMO is a local-first visual memory assistant that remembers where things are, answers everyday questions, and brings a trusted person to help when it matters.';
+
+const longDescription = "MEMO is a local-first visual memory assistant built by a Seattle-based team, including local students, for the NVIDIA Spark Hackathon Seattle 2026 — which the team won. Worn on smart glasses, MEMO remembers where everyday items like keys or a wallet were last placed, answers simple questions hands-free, and brings a trusted family member into the loop when human judgment matters more than an automated answer. Every part of the system — perception, speech, reasoning, and memory — runs locally on a single Acer GN100, so nothing is sent to the cloud. MEMO explores how wearable AI can support older adults' everyday memory and independence while keeping trusted family within reach.";
+
+const photos = [
+  { key: 'hero', label: 'MEMO hero image', src: `${BASE}og.png`, alt: 'MEMO hero image: dark background, MEMO wordmark, NVIDIA Spark Hackathon Seattle 2026 Winner badge' },
+  { key: 'award', label: 'Award / winner photo', src: `${BASE}press/award.jpg`, alt: 'The MEMO team on stage with the NVIDIA and Acer banners, next to a screen reading "Best Use of Nemotron Lightning Winner: Memo"' },
+  { key: 'team', label: 'Team photo', src: `${BASE}press/team.jpg`, alt: 'Two members of the MEMO team working together at their desks during the hackathon' },
+];
+
+const hardwarePhotos = [
+  { key: 'rayneo', src: `${BASE}press/rayneo.jpg`, alt: 'RayNeo X3 Pro smart glasses, three-quarter angle' },
+  { key: 'rayneo-back', src: `${BASE}press/rayneo-back.jpg`, alt: 'RayNeo X3 Pro smart glasses, rear view' },
+  { key: 'rayneo-dark', src: `${BASE}press/rayneo-dark.jpg`, alt: 'RayNeo X3 Pro smart glasses, rear view on dark background' },
+];
+---
+<!doctype html>
+<html lang="en">
+  <head>
+    <SeoHead
+      title="MEMO Press Kit"
+      description="Press kit for MEMO: award wording, project descriptions, team, and contact information. NVIDIA Spark Hackathon Seattle 2026 winner."
+    />
+  </head>
+  <body>
+    <header class="hero presskit-hero">
+      <div class="container">
+        <a class="hero-badge" href={BASE}>&larr; Back to MEMO</a>
+        <h1 class="hero-title" style="font-size: clamp(2rem, 5vw, 3.2rem);">Press kit<span class="accent">.</span></h1>
+        <p class="hero-sub">Everything a journalist needs for a story on MEMO: award wording, descriptions, photos, video, and direct contact.</p>
+      </div>
+    </header>
+
+    <main>
+      <section>
+        <div class="container">
+          <p class="section-kicker">Award wording</p>
+          <h2 class="section-title">Winner, NVIDIA Spark Hackathon Seattle 2026.</h2>
+          <p class="section-sub">Use this exact wording when crediting the award.</p>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <p class="section-kicker">Descriptions</p>
+          <h2 class="section-title">Copy-ready project descriptions.</h2>
+          <div class="press-block" style="margin-top: 28px;">
+            <h3>One sentence</h3>
+            <p>{oneLiner}</p>
+          </div>
+          <div class="press-block" style="margin-top: 18px;">
+            <h3>~100 words</h3>
+            <p>{longDescription}</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <p class="section-kicker">Team</p>
+          <h2 class="section-title">Seattle-based, including local students.</h2>
+          <div class="press-grid" style="margin-top: 28px;">
+            {team.map((member) => (
+              <div class="press-block">
+                <h3>{member.name}</h3>
+                <p><a href={member.linkedin} target="_blank" rel="noopener noreferrer">LinkedIn</a></p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <p class="section-kicker">Video</p>
+          <h2 class="section-title">60-second demo.</h2>
+          <div class="video-frame">
+            <iframe
+              src={EMBED}
+              title="MEMO demo"
+              loading="lazy"
+              referrerpolicy="strict-origin-when-cross-origin"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+              allowfullscreen
+              frameborder="0"
+            ></iframe>
+          </div>
+
+          <h3 class="presskit-subtitle">Team clip</h3>
+          <div class="video-frame video-frame-native">
+            <video src={`${BASE}press/team_video.mp4`} controls preload="metadata"></video>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <p class="section-kicker">Photos</p>
+          <h2 class="section-title">Hero, award, and team photos.</h2>
+          <p class="section-sub">Right-click or long-press any image to save it.</p>
+
+          <div class="presskit-photos">
+            {photos.map((photo) => (
+              <figure class="presskit-photo">
+                <img src={photo.src} alt={photo.alt} />
+                <figcaption>{photo.label}</figcaption>
+              </figure>
+            ))}
+          </div>
+
+          <h3 class="presskit-subtitle" style="text-align: left; margin-top: 48px;">Hardware &mdash; RayNeo X3 Pro</h3>
+          <p class="section-sub" style="margin-top: 8px;">MEMO runs on RayNeo X3 Pro smart glasses. Product photography courtesy RayNeo.</p>
+          <div class="presskit-photos presskit-photos-3">
+            {hardwarePhotos.map((photo) => (
+              <figure class="presskit-photo">
+                <img src={photo.src} alt={photo.alt} />
+              </figure>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="container">
+          <p class="section-kicker">Contact</p>
+          <h2 class="section-title">Direct press contact.</h2>
+          <div class="press-contact" style="margin-top: 28px;">
+            <div class="press-contact-who">
+              <div class="press-contact-name">Alexander Kuznetsov</div>
+              <div class="press-contact-role">Press contact &middot; available for interviews and live demos in the Seattle area</div>
+            </div>
+            <div class="press-contact-links">
+              <EmailReveal user="kuznecov.alexandr" domain="gmail.com" />
+              <a href="https://www.linkedin.com/in/alexskuznetsov/" target="_blank" rel="noopener noreferrer">LinkedIn</a>
+            </div>
+          </div>
+          <div class="press-links" style="margin-top: 28px;">
+            <a class="btn btn-primary" href={`${BASE}#demo`}>Back to demo</a>
+            <a class="btn btn-ghost" href="https://github.com/NadChern/nvidia_hack_seattle" target="_blank" rel="noopener noreferrer">Source on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="container footer-inner">
+        <span>&#127942; Winner, NVIDIA Spark Hackathon Seattle 2026</span>
+        <span>Built by a Seattle-based team including local students. Local-first and private by default.</span>
+      </div>
+    </footer>
+  </body>
+</html>
