@@ -1,0 +1,139 @@
+#cloud-config
+# First boot of the demo box. Everything here is on the critical path of the
+# ~20-minute lead time before a customer call, so it does as little as possible:
+# the driver and CUDA userspace come from the image, and the checkpoints come
+# from the mounted filesystem. What is left is the tunnel, the runtime, and the
+# mount.
+
+users:
+  - name: memo
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ["ALL=(ALL) NOPASSWD:ALL"]
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+write_files:
+  # --- WireGuard -----------------------------------------------------------
+  # The glasses stream is WebRTC and wants UDP 7882. An SSH tunnel forwards TCP
+  # only, which would force LiveKit onto its TCP fallback and put head-of-line
+  # blocking back on a video path that took an H.265 switch and a bitrate floor
+  # to reach 15 fps. WireGuard carries UDP, so deploy/livekit.yaml's
+  # trusted-LAN assumptions (use_external_ip: false, no TURN) remain true and
+  # nothing is exposed to the public internet except this one port.
+  - path: /etc/wireguard/wg0.conf
+    permissions: "0600"
+    content: |
+      [Interface]
+      Address = 10.10.0.1/24
+      ListenPort = ${wireguard_listen_port}
+      PostUp = wg set %i private-key /etc/wireguard/server.key
+      SaveConfig = false
+
+      [Peer]
+      # The operator laptop. Glasses reach the stack through it.
+      PublicKey = ${wireguard_peer_public_key}
+      AllowedIPs = 10.10.0.2/32
+
+  # --- Model cache ---------------------------------------------------------
+  # The Nebius filesystem arrives as a virtiofs tag, not a block device. It must
+  # NOT be formatted -- it already holds the checkpoints, and reformatting is
+  # the one mistake that turns a 20-minute boot into a 40-minute download.
+  - path: /etc/systemd/system/mnt-models.mount
+    content: |
+      [Unit]
+      Description=MEMO model cache (persistent across demo sessions)
+      After=local-fs.target
+
+      [Mount]
+      What=${models_mount_tag}
+      Where=/mnt/models
+      Type=virtiofs
+      Options=defaults
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Read by compose and by the model servers. HF_HOME on the mounted filesystem
+  # is what makes a warm boot warm.
+  - path: /etc/memo/stack.env
+    permissions: "0640"
+    content: |
+      HF_HOME=/mnt/models/huggingface
+      HF_HUB_ENABLE_HF_TRANSFER=1
+      %{ if hf_token != "" ~}
+      HF_TOKEN=${hf_token}
+      %{ endif ~}
+      # LiveKit must advertise the tunnel address, never the public one: media
+      # is meant to stay inside WireGuard. Advertising the public IP would make
+      # ICE offer a route that bypasses the tunnel entirely.
+      VMA_BIND_ADDR=10.10.0.1
+      LIVEKIT_RTC_NODE_IP_IPV4=10.10.0.1
+      VMA_LIVEKIT_PUBLIC_URL=ws://10.10.0.1:7880
+      VMA_ENVIRONMENT=deploy
+
+  # Readiness gate. up.sh polls this, because `terraform apply` returning means
+  # the VM exists -- which is several minutes before any model can answer.
+  - path: /usr/local/bin/memo-ready
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Exit 0 only when every endpoint a demo needs actually answers.
+      # Prints one line per check so a failure names itself.
+      set -uo pipefail
+      fail=0
+      check() {
+        local name=$1 url=$2
+        if curl -sf --max-time 5 "$url" >/dev/null 2>&1; then
+          echo "  ok      $name"
+        else
+          echo "  waiting $name"; fail=1
+        fi
+      }
+      mountpoint -q /mnt/models && echo "  ok      model cache mounted" \
+        || { echo "  MISSING model cache"; fail=1; }
+      ip link show wg0 >/dev/null 2>&1 && echo "  ok      wireguard up" \
+        || { echo "  waiting wireguard"; fail=1; }
+      check "nemotron (vLLM :8000)"  http://127.0.0.1:8000/health
+      check "grounder (:8001)"       http://127.0.0.1:8001/health
+      check "application-memory"     http://127.0.0.1:8081/v1/status
+      check "vision-worker"          http://127.0.0.1:8082/v1/status
+      check "speech"                 http://127.0.0.1:8085/v1/status
+      exit $fail
+
+package_update: true
+packages:
+  - wireguard
+  - wireguard-tools
+  - curl
+  - jq
+  - git
+
+runcmd:
+  # Mount the cache before anything that might try to download into it.
+  - [systemctl, daemon-reload]
+  - [systemctl, enable, --now, mnt-models.mount]
+  - [mkdir, -p, /mnt/models/huggingface]
+  - [chown, -R, "memo:memo", /mnt/models]
+
+  # WireGuard: generate the server key on first boot and record the public half
+  # where up.sh can read it back for the laptop's peer config.
+  - bash -c 'umask 077; wg genkey > /etc/wireguard/server.key'
+  - bash -c 'wg pubkey < /etc/wireguard/server.key > /etc/wireguard/server.pub'
+  - bash -c 'chmod 644 /etc/wireguard/server.pub'
+  - [sysctl, -w, net.ipv4.ip_forward=1]
+  - [systemctl, enable, --now, "wg-quick@wg0"]
+
+  # Container runtime with GPU access. Skipped when the image already has it,
+  # which the CUDA image families do -- this is the fallback path, and it is
+  # why image_family is not something to change casually.
+  - bash -c 'command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh'
+  - bash -c 'command -v nvidia-ctk >/dev/null || (curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed "s#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g" > /etc/apt/sources.list.d/nvidia-container-toolkit.list && apt-get update && apt-get install -y nvidia-container-toolkit)'
+  - [nvidia-ctk, runtime, configure, --runtime=docker]
+  - [systemctl, restart, docker]
+
+  # A marker up.sh waits on before it starts polling readiness, so "still
+  # booting" and "booted but unhealthy" are distinguishable.
+  - [touch, /var/lib/cloud/memo-provisioned]
+
+final_message: "MEMO demo box provisioned in $UPTIME seconds. Bring the stack up with deploy/nebius/up.sh."

@@ -1,0 +1,130 @@
+# The model servers -- the half of the stack that has never been in Compose.
+#
+#   docker compose -f compose.yaml -f compose.gpu.yaml -f compose.cloud.yaml up -d
+#
+# Until now Nemotron and the reasoner were started by hand on the GN100 and
+# reached over HTTP; nothing in the repository launched them. That was
+# survivable when one person ran one machine. It is not survivable when the box
+# is created and destroyed around each customer call, so they are declared here.
+#
+# THE ONE THING TO GET RIGHT: `--gpu-memory-utilization`.
+#
+# vLLM's default is 0.9 *of the whole card*, and it takes what it is offered
+# whether or not the model needs it. Two servers both defaulting to 0.9 do not
+# split the card -- the first one started takes ~90% and the second dies at
+# startup with an allocation error that reads like a model problem. The
+# fractions below are explicit and must sum, with the in-process models in
+# compose.gpu.yaml (C-RADIO, SAM2, Parakeet, Kokoro), to comfortably under 1.0.
+#
+# They are placeholders sized from derived weights, NOT from measurement:
+# docs/spikes/cloud-vram/ exists to replace them with measured values, and
+# `runs/` is empty until someone rents a card. Treat a stack that OOMs on
+# startup as a sizing result, not a bug.
+services:
+  # --- Agent reasoning and tool routing ------------------------------------
+  nemotron:
+    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.13.0}
+    command:
+      - --model=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      - --port=8000
+      - --served-model-name=openai/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+      # ~17-19 GiB of NVFP4 weights on a 141 GiB card. Raise only against a
+      # measured co-resident total.
+      - --gpu-memory-utilization=${VMA_NEMOTRON_GPU_FRACTION:-0.20}
+      # The model card's own guidance: fp8 KV halves cache cost, and prefix
+      # caching matters because every turn re-sends the same tool preamble.
+      - --kv-cache-dtype=fp8
+      - --enable-prefix-caching
+    environment:
+      HF_HOME: /var/cache/models/huggingface
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      # The persistent Nebius filesystem. Weights survive the instance, which
+      # is what makes a 20-minute pre-demo boot possible at all.
+      - /mnt/models:/var/cache/models
+    ports:
+      - "127.0.0.1:8000:8000"
+    networks:
+      - internal
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      # ~18 GiB off a network filesystem. Too short a period here reports the
+      # container unhealthy while it is loading normally, and compose restarts
+      # it into an endless loop that never finishes a load.
+      start_period: 600s
+    restart: unless-stopped
+
+  # --- Grounder and event reasoner -----------------------------------------
+  # `command` is overridden per candidate rather than duplicated into five
+  # services: the bake-off (docs/spikes/grounder-bakeoff/) may replace Cosmos,
+  # and one switchable service keeps the winner a config change.
+  #
+  # Cosmos is BF16-only upstream -- no FP8/FP4 path -- so this arm alone is
+  # ~32 GiB of weights, about 45% of the whole budget. A Qwen3-VL winner would
+  # cut that to ~8-18 GiB and change which card is needed.
+  grounder:
+    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.13.0}
+    command:
+      - --model=${VMA_GROUNDER_MODEL:-nvidia/Cosmos3-Nano}
+      - --port=8001
+      - --served-model-name=${VMA_GROUNDER_MODEL:-nvidia/Cosmos3-Nano}
+      - --gpu-memory-utilization=${VMA_GROUNDER_GPU_FRACTION:-0.35}
+      # Matches reason/cosmos.py's assumption; 8 frames of a window at a few
+      # hundred tokens each must fit inside it.
+      - --max-model-len=8192
+    environment:
+      HF_HOME: /var/cache/models/huggingface
+      HF_TOKEN: "${HF_TOKEN:-}"
+    volumes:
+      - /mnt/models:/var/cache/models
+    ports:
+      - "127.0.0.1:8001:8001"
+    networks:
+      - internal
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 60
+      # 32 GiB is the slowest thing on the box to load.
+      start_period: 900s
+    restart: unless-stopped
+
+  # Point the two consumers at the servers above. Both already read these from
+  # config; only the hostnames change, from 127.0.0.1 to Compose service names.
+  vision:
+    environment:
+      VMA_REASON_KIND: cosmos
+      VMA_REASON_BASE_URL: http://grounder:8001/v1
+      VMA_REASON_MODEL: "${VMA_GROUNDER_MODEL:-nvidia/Cosmos3-Nano}"
+      VMA_IDENTITY_KIND: radio
+      VMA_IDENTITY_DEVICE: cuda
+    depends_on:
+      grounder:
+        condition: service_healthy
+
+  agent:
+    environment:
+      VMA_AGENT_BACKEND: llm
+      VMA_LLM_BASE_URL: http://nemotron:8000/v1
+      VMA_LLM_MODEL: openai/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
+    depends_on:
+      nemotron:
+        condition: service_healthy

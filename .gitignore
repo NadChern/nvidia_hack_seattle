@@ -44,3 +44,9 @@ site/.astro/
 # Claude Code role/task prompt files -- planning scratch for driving an
 # agent through a feature, not project source. Local to whoever wrote them.
 role-prompts/
+
+# Nebius deploy: project ids and operator keys -- not secret, not ours to publish
+deploy/nebius/**/terraform.tfvars
+deploy/nebius/**/.terraform/
+deploy/nebius/**/.terraform.lock.hcl
+deploy/nebius/**/terraform.tfstate*
