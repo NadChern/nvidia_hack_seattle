@@ -111,21 +111,22 @@ is not shippable either, and no column here would catch it.
 
 ## Annotation status
 
-**Nothing is annotated yet.** `clips/recordings/` holds twelve files — six
-distinct scenes, two of them also present as gateway-quality (`_hi`, 720p/10 fps)
-and relay-quality (`_relay`, 360p/6 fps) re-encodes. Prefer the re-encodes: the
-deployment never sees the 4 K original, and an event score on pristine footage
-measures a call that is never made.
+**One of twelve done, three worth doing, and one clip still missing.**
+`clips/recordings/` holds twelve files but only six distinct scenes, two of them
+also present as gateway-quality (`_hi`, 720p/10 fps) and relay-quality
+(`_relay`, 360p/6 fps) re-encodes. Prefer the re-encodes: the deployment never
+sees the 4 K original, and an event score on pristine footage measures a call
+that is never made.
 
-| Clip | Duration | Resolution | Contents | Annotated |
-|---|---|---|---|---|
-| VID_20260819_120633 | 19.8 s | 3840×2160 @30 | ? | ☐ |
-| VID_20260819_120701 | 18.5 s | 3840×2160 @30 | ? | ☐ |
-| VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | 3840×2160 @30 | ? | ☐ |
-| **VID_20260819_120802_hi** | 28.1 s | 1280×720 @10 | wallet placed on a desk at t≈4.5 s, wearer leaves and returns | **done** |
-| VID_20260819_120802 (+ `_relay` `_win`) | 28.5 s | 3840×2160 @30 | same scene, other encodes | ☐ |
-| VID_20260819_160630 | 47.0 s | 3840×2160 @120 | ? | ☐ |
-| VID_20260819_162151 | 61.7 s | 3840×2160 @30 | ? | ☐ |
+| Clip | Duration | Contents | Annotate? |
+|---|---|---|---|
+| VID_20260819_120633 | 19.8 s | **enrollment** — keys rotated in hand, no placement | no |
+| VID_20260819_120701 | 18.5 s | **enrollment** — wallet rotated in hand, no placement | no |
+| VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | keys placed on the desk t≈4.7, walk to kitchen, return t≈20 | **yes** (`_hi`) |
+| **VID_20260819_120802_hi** | 28.1 s | wallet placed on the desk t≈4.5, walk to kitchen, return t≈19.5 | **done** |
+| VID_20260819_120802 (+ `_relay` `_win`) | 28.5 s | same scene, other encodes | later |
+| VID_20260819_160630 | 47.0 s | multi-object — keys and wallet, several placements and pickups across two rooms | **yes** |
+| VID_20260819_162151 | 61.7 s | keys placed on the desk, then on a hall console t≈49.4, held in shot to the end | **yes** |
 
 The one finished annotation was machine-drafted and then **corrected by hand in
 the annotator** (2026-09-02), which is where the visibility bug below was found.
@@ -138,18 +139,52 @@ At 20 s windows firing every 7 s, that is roughly 4 windows per short clip and 8
 for the longest — call it 35 model calls per arm, 175 across five arms. Cheap
 enough to re-run when a prompt changes, which is the point.
 
-Annotate the quiet stretches too. Gate 2 — the one that decides the winner — is
-measured **only** on windows where the object is present and truth says nothing
-happened, so a corpus of nothing but placements cannot answer the question this
-axis exists to ask. The wallet clip still has **zero** such windows even after a
-careful annotation, and the reason is worth knowing before recording more
-footage: the wallet is back in shot from t=19.5, but the 20 s window ending at
-t=21 reaches back to t=1 and so still contains the placement, and the next
-window ends at t=28 with the wearer facing the window. **A quiet window needs
-the object in shot at a window boundary that is more than 20 s after the last
-event** — in practice, footage that keeps the object in view for half a minute
-with nothing happening. None of the twelve recordings was shot with that in
-mind.
+### Two of the twelve are the wrong kind of footage
+
+`120633` and `120701` are **enrollment** clips — the object held up and rotated
+in front of the camera for the whole runtime. They belong to
+`eval_registration.py`; they contain no placement and cannot contribute a single
+event. The `_relay`, `_win` and 4 K variants of `120727`/`120802` are re-encodes
+of scenes already covered, so annotating them by hand is not new evidence about
+a model, it is a resolution ablation — and one that should be done by
+transferring truth across encodes on the time axis, which is a tool feature
+nobody has written, rather than by annotating the same scene three times.
+
+That leaves **three** worth the afternoon: `120727_hi`, `160630`, `162151`.
+
+### Gate 2 needs footage that does not exist yet
+
+Gate 2 — the one that decides the winner — is measured **only** on windows where
+the object is present and truth says nothing happened. A window's span is
+`reason_window_seconds` long, so it is quiet only if **no event falls in the
+preceding 20 s** and the object is still in its last frame. That is a much
+stronger requirement than "a stretch where nothing happens", and it is the
+reason the wallet clip yields zero quiet windows even after a careful
+annotation: the wallet is back in shot from t=19.5, but the window ending at
+t=21 reaches back to t=1 and still contains the placement, and the next ends at
+t=28 with the wearer facing the window.
+
+Measured across the corpus, the longest event-free stretch with the object in
+shot is **≈12 s** — `162151`, keys on the hall console from t≈49.4 to the end at
+61.7. `160630`'s best is ≈4 s. Every recording was shot as "here is a thing
+happening", which is the natural way to shoot a demo and the wrong way to
+measure a false-positive rate.
+
+So annotating all three remaining clips raises the placement count from 1 to
+perhaps six or eight — enough for gate 1 to mean something — and leaves gate 2
+at **0/0**, unmeasurable. That takes one new recording, and the brief is
+specific:
+
+> Put the object down somewhere it stays. Then keep it in frame, doing nothing
+> to it, for **at least 45 seconds** — sit at the desk, read, look around the
+> room, let the object drift in and out of the centre. No hands on it, no other
+> objects placed or picked up. Two or three minutes of that yields five or six
+> quiet windows; a 30 s clip yields one.
+
+Until that exists, an arm can clear gates 1 and 3 and the bake-off still cannot
+say whether it hallucinates placements — which is the failure the product
+cannot absorb, so "we ran it and it looked fine" would be the wrong conclusion
+to draw from a run on today's corpus.
 
 ## What the first annotated clip already shows
 
