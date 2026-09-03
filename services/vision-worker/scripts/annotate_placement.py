@@ -209,31 +209,53 @@ PAGE = """<!doctype html>
 <html><head><meta charset="utf-8"><title>placement annotator</title>
 <style>
  :root { color-scheme: dark; --line:#2c3140; --ink:#e6e9f0; --dim:#8b93a7; --hot:#ffb347; }
- body { margin:0; background:#14171f; color:var(--ink);
+ html, body { height:100%; }
+ /* The whole app is one viewport-tall column: the frame must never push the
+    controls off-screen, because annotating is stepping through frames and a
+    page that scrolls turns every step into a scroll. */
+ body { margin:0; background:#14171f; color:var(--ink); overflow:hidden;
+        display:flex; flex-direction:column;
         font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; }
- header { display:flex; gap:14px; align-items:center; flex-wrap:wrap;
+ header { display:flex; gap:14px; align-items:center; flex-wrap:wrap; flex:0 0 auto;
           padding:8px 12px; border-bottom:1px solid var(--line); }
  header input { background:#1c2029; border:1px solid var(--line); color:var(--ink);
                 padding:3px 6px; font:inherit; border-radius:3px; }
- main { display:flex; gap:12px; padding:12px; align-items:flex-start; }
- #stage { position:relative; line-height:0; flex:1 1 auto; max-width:70vw; }
- #frame { width:100%; height:auto; display:block; border-radius:4px; }
- #overlay { position:absolute; inset:0; width:100%; height:100%; cursor:crosshair; }
- aside { width:330px; flex:0 0 auto; }
+ main { display:flex; gap:12px; padding:12px; flex:1 1 auto; min-height:0; }
+ /* min-height:0 is what lets a flex item shrink below its content; without it
+    the tall portrait frame wins and the column overflows again. */
+ #viewer { flex:1 1 auto; min-width:0; min-height:0;
+           display:flex; flex-direction:column; gap:8px; }
+ #stage { position:relative; flex:1 1 auto; min-width:0; min-height:0;
+          display:flex; align-items:center; justify-content:center; }
+ #scrub { flex:0 0 auto; width:100%; accent-color:var(--hot); }
+ #frame { max-width:100%; max-height:100%; width:auto; height:auto;
+          display:block; border-radius:4px; }
+ /* Positioned from JS onto the image's rendered rect: with object-fit-style
+    letterboxing the image no longer fills the stage, so `inset:0` would put
+    the drawing surface somewhere the picture is not. */
+ #overlay { position:absolute; cursor:crosshair; }
+ aside { width:330px; flex:0 0 auto; overflow-y:auto; min-height:0; }
  h2 { font-size:12px; text-transform:uppercase; letter-spacing:.08em;
       color:var(--dim); margin:14px 0 6px; }
+ details { margin-top:12px; }
+ details summary { cursor:pointer; font-size:12px; text-transform:uppercase;
+                   letter-spacing:.08em; color:var(--dim); }
+ details div { color:var(--dim); margin-top:6px; }
  .row { display:flex; justify-content:space-between; gap:8px; padding:2px 0;
         border-bottom:1px solid #1e2230; }
  .row button { background:none; border:none; color:var(--dim); cursor:pointer; font:inherit; }
  .row button:hover { color:#ff7b7b; }
  .row.here { color:var(--hot); }
+ .row span.seek { cursor:pointer; }
+ .row span.seek:hover { color:var(--hot); text-decoration:underline; }
  button.go { background:#2a3040; border:1px solid var(--line); color:var(--ink);
              padding:5px 10px; font:inherit; border-radius:3px; cursor:pointer; }
  button.go:hover { background:#343c50; }
  select, textarea { background:#1c2029; border:1px solid var(--line); color:var(--ink);
                     font:inherit; border-radius:3px; padding:3px 6px; width:100%; }
- #status { color:var(--dim); padding:0 12px 10px; }
- #rule { color:var(--dim); }
+ #status { color:var(--dim); padding:4px 12px 8px; flex:0 0 auto;
+           border-top:1px solid var(--line); white-space:nowrap;
+           overflow:hidden; text-overflow:ellipsis; }
  kbd { background:#242936; border:1px solid var(--line); border-radius:3px; padding:0 4px; }
  .warn { color:#ff7b7b; } .ok { color:#7bd88f; } .mid { color:var(--hot); }
 </style></head><body>
@@ -246,7 +268,10 @@ PAGE = """<!doctype html>
   <span id="saved"></span>
 </header>
 <main>
-  <div id="stage"><img id="frame" alt=""><canvas id="overlay"></canvas></div>
+  <div id="viewer">
+    <div id="stage"><img id="frame" alt=""><canvas id="overlay"></canvas></div>
+    <input id="scrub" type="range" min="0" value="0" step="1">
+  </div>
   <aside>
     <div id="where">-</div>
     <div id="pixels">-</div>
@@ -260,14 +285,14 @@ PAGE = """<!doctype html>
     <button class="go" id="addevent">add event at this frame</button>
     <div id="events"></div>
     <h2>notes</h2><textarea id="notes" rows="3"></textarea>
-    <h2>the visibility rule</h2>
-    <div id="rule">Box the object on the <b>first</b> and <b>last</b> frame it is visible.
+    <details open><summary>the visibility rule</summary>
+      <div>Box the object on the <b>first</b> and <b>last</b> frame it is visible.
       Outside that range the scorer treats it as <b>absent</b> &mdash; it expects the model to
-      return no box there, and counts one that does as a phantom.</div>
-    <h2>keys</h2>
-    <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> step &middot; <kbd>&darr;</kbd><kbd>&uarr;</kbd> x10
+      return no box there, and counts one that does as a phantom.</div></details>
+    <details><summary>keys</summary>
+      <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> step &middot; <kbd>&darr;</kbd><kbd>&uarr;</kbd> x10
       &middot; drag to box &middot; <kbd>d</kbd> drop box &middot; <kbd>p</kbd> play
-      &middot; <kbd>s</kbd> save</div>
+      &middot; <kbd>s</kbd> save</div></details>
   </aside>
 </main>
 <div id="status">loading...</div>
@@ -275,7 +300,23 @@ PAGE = """<!doctype html>
 let M = null, pos = 0, playing = null;
 let truth = {object_id:"keys_01", label:"keys", distractor_ids:[], boxes:{}, events:[], notes:""};
 const $ = (id) => document.getElementById(id);
-const img = $("frame"), cv = $("overlay"), ctx = cv.getContext("2d");
+const img = $("frame"), cv = $("overlay"), ctx = cv.getContext("2d"), stage = $("stage");
+
+function syncOverlay() {
+  // The image is letterboxed inside the stage (it is fit to whichever of width
+  // or height binds first), so the drawing surface has to be placed on the
+  // picture rather than on its container -- otherwise a box drawn at the top
+  // left of the image lands in the empty margin beside it.
+  const r = img.getBoundingClientRect(), s = stage.getBoundingClientRect();
+  if (!r.width || !r.height) return false;
+  cv.style.left = (r.left - s.left) + "px";
+  cv.style.top = (r.top - s.top) + "px";
+  cv.style.width = r.width + "px";
+  cv.style.height = r.height + "px";
+  cv.width = Math.round(r.width);
+  cv.height = Math.round(r.height);
+  return true;
+}
 
 function frameNow() { return M.frames[pos]; }
 
@@ -296,7 +337,7 @@ function verdict(px) {
 }
 
 function draw() {
-  cv.width = cv.clientWidth; cv.height = cv.clientHeight;
+  if (!syncOverlay()) return;
   ctx.clearRect(0, 0, cv.width, cv.height);
   const f = frameNow(), exact = truth.boxes[f.index], b = exact || boxAt(f.index);
   if (!b) { $("pixels").textContent = "no box here"; return; }
@@ -316,15 +357,20 @@ function render() {
   $("where").textContent = "frame " + f.index + "  t=" + f.t.toFixed(2) + "s   (" +
     (pos+1) + "/" + M.frames.length + ")";
   const keys = Object.keys(truth.boxes).map(Number).sort((a,b) => a-b);
+  // Rows seek. Reviewing someone else's annotation is mostly "show me the
+  // frame this box is on", and arrowing 40 frames to get there is the reason
+  // a draft goes unchecked.
   $("boxes").innerHTML = keys.map(k =>
-    "<div class='row" + (k === f.index ? " here" : "") + "'><span>frame " + k +
+    "<div class='row" + (k === f.index ? " here" : "") +
+    "'><span class=seek onclick='seekIndex(" + k + ")'>frame " + k +
     "</span><button onclick='dropBox(" + k + ")'>drop</button></div>").join("") ||
     "<div class=row><span style='color:#8b93a7'>none yet</span></div>";
   $("events").innerHTML = truth.events.map((e, i) =>
-    "<div class=row><span>" + e.t.toFixed(2) + "s " + e.action +
-    (e.location ? " &middot; " + e.location : "") +
+    "<div class=row><span class=seek onclick='seekTime(" + e.t + ")'>" +
+    e.t.toFixed(2) + "s " + e.action + (e.location ? " &middot; " + e.location : "") +
     "</span><button onclick='dropEvent(" + i + ")'>drop</button></div>").join("") ||
     "<div class=row><span style='color:#8b93a7'>none yet</span></div>";
+  $("scrub").value = pos;
   draw();
 }
 
@@ -358,6 +404,20 @@ cv.addEventListener("mouseup", (e) => {
 });
 
 function step(n) { pos = Math.min(M.frames.length-1, Math.max(0, pos + n)); render(); }
+function seekIndex(index) {
+  const at = M.frames.findIndex(f => f.index === index);
+  if (at >= 0) { pos = at; render(); }
+}
+function seekTime(t) {
+  // Nearest frame, because an event's t is a frame timestamp but a hand-typed
+  // one need not be.
+  let best = 0;
+  M.frames.forEach((f, i) => {
+    if (Math.abs(f.t - t) < Math.abs(M.frames[best].t - t)) best = i;
+  });
+  pos = best; render();
+}
+$("scrub").addEventListener("input", (e) => { pos = Number(e.target.value); render(); });
 
 $("addevent").onclick = () => {
   truth.events.push({t: frameNow().t, action: $("action").value,
@@ -409,6 +469,7 @@ fetch("manifest").then(r => r.json()).then(data => {
     $("notes").value = truth.notes || "";
   }
   $("clipname").textContent = M.clip;
+  $("scrub").max = M.frames.length - 1;
   $("status").textContent = M.frames.length + " frames at " + M.annotate_fps +
     " fps (stride " + M.frame_stride + " of " + M.fps.toFixed(2) + " fps source, " +
     M.width + "x" + M.height + ", " + M.duration_s.toFixed(1) + "s, rotated " +

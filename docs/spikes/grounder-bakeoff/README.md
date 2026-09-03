@@ -159,6 +159,13 @@ can never disagree.
 the visibility span: outside it the scorer expects no box and counts one as a
 phantom.
 
+The page is one viewport tall by construction — the frame is fit to the
+available height, the sidebar scrolls on its own, and the page itself never
+does. Stepping frames is the whole job, and a page that scrolls turns every
+step into a scroll. A slider under the frame scrubs; clicking a box or event in
+the sidebar jumps to it, which is how you review an annotation rather than
+re-arrow through it.
+
 Two things it shows that matter more than they look:
 
 - **Interpolated boxes are drawn dashed.** Annotate two anchors, scrub, and stop
