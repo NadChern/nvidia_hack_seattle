@@ -1,0 +1,174 @@
+{
+  "object_id": "keys_01",
+  "label": "keys",
+  "distractor_ids": [],
+  "boxes": {
+    "10": [
+      0.335,
+      0.45,
+      0.475,
+      0.64
+    ],
+    "25": [
+      0.185,
+      0.23,
+      0.56,
+      0.665
+    ],
+    "40": [
+      0.41,
+      0.51,
+      0.48,
+      0.6
+    ],
+    "70": [
+      0.245,
+      0.553,
+      0.35,
+      0.62
+    ],
+    "75": [
+      0.3431,
+      0.5477,
+      0.4111,
+      0.6187
+    ],
+    "80": [
+      0.4042,
+      0.5414,
+      0.4722,
+      0.6124
+    ],
+    "85": [
+      0.425,
+      0.542,
+      0.493,
+      0.613
+    ],
+    "90": [
+      0.4431,
+      0.5227,
+      0.5111,
+      0.5937
+    ],
+    "210": [
+      0.392,
+      0.456,
+      0.434,
+      0.473
+    ],
+    "225": [
+      0.393,
+      0.49,
+      0.45,
+      0.53
+    ],
+    "240": [
+      0.395,
+      0.531,
+      0.456,
+      0.579
+    ]
+  },
+  "events": [
+    {
+      "t": 1.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 2.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 3.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 4.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 5.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 6.6,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 7.1,
+      "action": "placed",
+      "location": "on the white desk, in front of the tablet"
+    },
+    {
+      "t": 8.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 9.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 10.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 20.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 21.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 22.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 23.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 24.1,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 25.1,
+      "action": "nothing_happened",
+      "location": null
+    }
+  ],
+  "visibility": [
+    [
+      10,
+      102
+    ],
+    [
+      198,
+      252
+    ]
+  ],
+  "notes": "DRAFT -- drafted by Claude from frame-by-frame inspection, NOT yet confirmed in the annotator. Keys carried in from t=1.1, held up to the camera t=1.6-3.6, lowered and set on the white desk at t=7.1; wearer walks to the kitchen (out of shot t=10.5-19.5) and returns to the same desk, keys still there t=20-25.2. Boundaries of the second in-shot range are the least certain part: at t=20-21 the desk is across the room and the keys are ~26 px on target, so whether they are 'in shot' is a judgement call -- check 198-215 and 245-255 first. Boxes are sparse by design; frames 95-100 and 245-250 have none, so no IoU is scored there. On the desk the keys measure 26-67 px on target at 720p, well below the ~128 px identity floor: this clip scores grounding and events, never identity. This clip's t_start is 0.1, so its windows end at t=7.1, 14.1 and 21.1, and the placement at t=7.1 lands EXACTLY on the first window's boundary (spans are `start < t <= end`) -- so window 1 counts it and the clip has two catchable placement windows instead of one. That is a knife-edge worth a reviewer's attention: t=7.1 is the first frame the keys rest on the desk, the hand is clear by t=7.6, and moving the event there costs the clip a window.",
+  "clip": "VID_20260819_120727_hi.mp4",
+  "fps": 10.0,
+  "frame_stride": 5,
+  "t_start": 0.1,
+  "duration_s": 27.2,
+  "rotate": 90,
+  "width": 720,
+  "height": 1280
+}

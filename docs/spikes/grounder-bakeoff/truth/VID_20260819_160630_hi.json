@@ -1,0 +1,192 @@
+{
+  "object_id": "keys_01",
+  "label": "keys",
+  "distractor_ids": [
+    "keys_02"
+  ],
+  "boxes": {
+    "45": [
+      0.4056,
+      0.5047,
+      0.6006,
+      0.6387
+    ],
+    "50": [
+      0.4306,
+      0.4922,
+      0.6256,
+      0.6262
+    ],
+    "55": [
+      0.3806,
+      0.5062,
+      0.5756,
+      0.6402
+    ],
+    "60": [
+      0.4028,
+      0.5188,
+      0.5978,
+      0.6528
+    ],
+    "65": [
+      0.3972,
+      0.5352,
+      0.5922,
+      0.6692
+    ],
+    "70": [
+      0.465,
+      0.537,
+      0.66,
+      0.671
+    ],
+    "75": [
+      0.4292,
+      0.6273,
+      0.6242,
+      0.7613
+    ],
+    "80": [
+      0.4097,
+      0.7164,
+      0.6047,
+      0.8504
+    ],
+    "120": [
+      0.488,
+      0.609,
+      0.567,
+      0.678
+    ],
+    "140": [
+      0.747,
+      0.594,
+      0.79,
+      0.64
+    ],
+    "420": [
+      0.11,
+      0.632,
+      0.192,
+      0.68
+    ],
+    "465": [
+      0.163,
+      0.636,
+      0.242,
+      0.68
+    ]
+  },
+  "events": [
+    {
+      "t": 1.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 3.0,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 4.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 6.0,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 7.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 9.0,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 10.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 11.5,
+      "action": "placed",
+      "location": "on the white desk, beside the wallet and the lanyard"
+    },
+    {
+      "t": 12.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 13.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 14.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 35.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 37.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 39.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 41.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 43.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 45.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 46.5,
+      "action": "nothing_happened",
+      "location": null
+    }
+  ],
+  "visibility": [
+    [
+      15,
+      145
+    ],
+    [
+      345,
+      467
+    ]
+  ],
+  "notes": "DRAFT -- drafted by Claude from frame-by-frame inspection, NOT yet confirmed in the annotator. The tracked object is the keyring with the red/purple round tag and the pale leather strap. A SECOND keyring (black fob) and a rainbow lanyard with its own keys are on the desk throughout, which is why distractor_ids is not empty -- this is the only clip in the corpus where 'is this MY keyring' is testable.\nCarried in hand from t=1.5 while the wearer walks the flat, set on the white desk at t=11.5, out of shot t=14.5-34.5 (kitchen, hall console, bedroom), then the desk is in shot again from t=34.5 to the end at t=46.7 with the keyring untouched.\nThe tail is the valuable part: hands are busy on that desk at t=40.5-43.5 but never on this keyring, so the windows ending at t=35/42/46.7 are the corpus's first windows where the object is present and nothing happens to it -- the false-placement gate is measured only there.\nBoxes are sparse and deliberately unevenly spread: 45-80 (tracked, hand), 120/140 (on the desk), 420/465 (the tail). Frames 85-115 and 345-415 have none, so no IoU is scored there -- notably the window ending at t=35 can be scored for its event but not for grounding. On the desk the keyring is 43-71 px on target, below the ~128 px identity floor.",
+  "clip": "VID_20260819_160630_hi.mp4",
+  "fps": 10.0,
+  "frame_stride": 5,
+  "t_start": 0.0,
+  "duration_s": 46.5,
+  "rotate": 90,
+  "width": 720,
+  "height": 1280
+}

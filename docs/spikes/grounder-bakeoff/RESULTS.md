@@ -1,9 +1,9 @@
 # Grounder bake-off — results
 
-**Status: not yet run**, and the event half is not yet *runnable* — it needs the
-recordings annotated first (see Annotation status). The decision rules below are
-written *before* the numbers exist, on purpose. A rule chosen after seeing the
-results is not a rule.
+**Status: not yet run.** The event half is now *runnable* — four recordings are
+annotated, three of them machine drafts awaiting review (see Annotation status).
+The decision rules below are written *before* the numbers exist, on purpose. A
+rule chosen after seeing the results is not a rule.
 
 ## Decision rule (fixed in advance)
 
@@ -111,33 +111,58 @@ is not shippable either, and no column here would catch it.
 
 ## Annotation status
 
-**One of twelve done, three worth doing, and one clip still missing.**
-`clips/recordings/` holds twelve files but only six distinct scenes, two of them
-also present as gateway-quality (`_hi`, 720p/10 fps) and relay-quality
-(`_relay`, 360p/6 fps) re-encodes. Prefer the re-encodes: the deployment never
-sees the 4 K original, and an event score on pristine footage measures a call
-that is never made.
+**Four annotated, one of them confirmed by hand.** `clips/recordings/` holds
+twelve files but only six distinct scenes, two of them also present as
+gateway-quality (`_hi`, 720p/10 fps) and relay-quality (`_relay`, 360p/6 fps)
+re-encodes. Prefer the re-encodes: the deployment never sees the 4 K original,
+and an event score on pristine footage measures a call that is never made.
 
-| Clip | Duration | Contents | Annotate? |
+| Clip | Duration | Contents | Truth |
 |---|---|---|---|
-| VID_20260819_120633 | 19.8 s | **enrollment** — keys rotated in hand, no placement | no |
-| VID_20260819_120701 | 18.5 s | **enrollment** — wallet rotated in hand, no placement | no |
-| VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | keys placed on the desk t≈4.7, walk to kitchen, return t≈20 | **yes** (`_hi`) |
-| **VID_20260819_120802_hi** | 28.1 s | wallet placed on the desk t≈4.5, walk to kitchen, return t≈19.5 | **done** |
-| VID_20260819_120802 (+ `_relay` `_win`) | 28.5 s | same scene, other encodes | later |
-| VID_20260819_160630 | 47.0 s | multi-object — keys and wallet, several placements and pickups across two rooms | **yes** |
-| VID_20260819_162151 | 61.7 s | keys placed on the desk, then on a hall console t≈49.4, held in shot to the end | **yes** |
+| VID_20260819_120633 | 19.8 s | **enrollment** — keys rotated in hand, no placement | not wanted |
+| VID_20260819_120701 | 18.5 s | **enrollment** — wallet rotated in hand, no placement | not wanted |
+| VID_20260819_120727_hi | 27.8 s | keys placed on the desk t≈7.1, walk to kitchen, return t≈20 | **draft** |
+| VID_20260819_120802_hi | 28.1 s | wallet placed on the desk t≈4.5, walk to kitchen, return t≈19.5 | **confirmed** |
+| VID_20260819_160630_hi | 46.5 s | keys placed on a desk holding a second keyring and a lanyard, left there | **draft** |
+| VID_20260819_162151_hi | 61.0 s | keys placed on the desk t≈11.5, retrieved t≈42.5, placed on the hall console t≈49 | **draft** |
+| `_relay` / `_win` / 4 K variants | — | re-encodes of scenes already covered | later |
 
-The one finished annotation was machine-drafted and then **corrected by hand in
-the annotator** (2026-09-02), which is where the visibility bug below was found.
-Its two remaining soft spots: the second in-shot range has boxes only from frame
-220, so the window ending at t=21 can be scored for its event but not for IoU;
-and its range boundaries sit on the 5-frame annotation grid, so each is accurate
-to ±0.5 s.
+`120802_hi` was machine-drafted and then **corrected by hand in the annotator**
+(2026-09-02), which is where the visibility bug below was found. The other three
+were drafted the same way on 2026-09-03 and have **not** been through the
+annotator yet; each one's `notes` field names the specific calls a reviewer
+should check, and every one of them is a visibility boundary or an object-identity
+question rather than a box.
 
-At 20 s windows firing every 7 s, that is roughly 4 windows per short clip and 8
-for the longest — call it 35 model calls per arm, 175 across five arms. Cheap
-enough to re-run when a prompt changes, which is the point.
+### What the corpus can now measure
+
+24 windows across the four clips, at the production schedule (20 s span every
+7 s, 8 frames):
+
+| Clip | Windows | Object absent | Carried | Catchable placement | **Quiet** |
+|---|---|---|---|---|---|
+| 120727_hi | 4 | 2 | 0 | 2 | 0 |
+| 120802_hi | 4 | 2 | 0 | 2 | 0 |
+| 160630_hi | 7 | 2 | 1 | 1 | **3** |
+| 162151_hi | 9 | 2 | 1 | 4 | **2** |
+| **total** | **24** | **8** | **2** | **9** | **5** |
+
+Five distinct placements, every one of them catchable in at least one window, so
+gate 1 (placement recall ≥ 0.8 *per event*) has five events to score — thin, but
+it is a number. Gate 3's latency comes free from the same 24 calls per arm, 120
+across five arms.
+
+One of the nine catchable windows is a coin-flip: `120727_hi` has `t_start` 0.1,
+which puts its windows on 7.1/14.1/21.1 and its placement at *exactly* t=7.1,
+inside the first window by the width of the `start < t <= end` comparison. The
+keys are at rest on the desk at 7.1 and the hand is clear by 7.6; annotating the
+later moment would drop that window. Whichever a reviewer picks, pick it the same
+way in every file — the rule the drafts use is **`placed` is the first frame the
+object rests on the surface**, hand still there or not.
+
+The eight *absent* windows are not filler either: they are the only place a
+phantom box is scored, and the wallet clip showed an arm can score better by
+hallucinating in them if visibility is annotated wrong.
 
 ### Two of the twelve are the wrong kind of footage
 
@@ -150,41 +175,47 @@ a model, it is a resolution ablation — and one that should be done by
 transferring truth across encodes on the time axis, which is a tool feature
 nobody has written, rather than by annotating the same scene three times.
 
-That leaves **three** worth the afternoon: `120727_hi`, `160630`, `162151`.
+### Gate 2 is measurable, and cannot be passed
 
-### Gate 2 needs footage that does not exist yet
+An earlier version of this file said gate 2 needed footage that does not exist —
+"at least 45 seconds" of the object sitting in frame untouched. **That was
+wrong**, and annotating `160630` and `162151` is what showed it. A window is
+quiet if **no event falls in its 20 s span** *and* the object is in shot **in its
+last frame**. The object does not have to be visible for the whole span. So
+every time the wearer sets something down, does other things for 20 s, and
+happens to look back at it, that is a quiet window — and looking at it for one
+more frame 7 s later is another.
 
-Gate 2 — the one that decides the winner — is measured **only** on windows where
-the object is present and truth says nothing happened. A window's span is
-`reason_window_seconds` long, so it is quiet only if **no event falls in the
-preceding 20 s** and the object is still in its last frame. That is a much
-stronger requirement than "a stretch where nothing happens", and it is the
-reason the wallet clip yields zero quiet windows even after a careful
-annotation: the wallet is back in shot from t=19.5, but the window ending at
-t=21 reaches back to t=1 and still contains the placement, and the next ends at
-t=28 with the wearer facing the window.
+`160630` yields three that way and `162151` two. The two 28 s clips yield none,
+for a different reason: they are too short for any window to get clear of their
+own placement.
 
-Measured across the corpus, the longest event-free stretch with the object in
-shot is **≈12 s** — `162151`, keys on the hall console from t≈49.4 to the end at
-61.7. `160630`'s best is ≈4 s. Every recording was shot as "here is a thing
-happening", which is the natural way to shoot a demo and the wrong way to
-measure a false-positive rate.
+Five is measurable and it is still not enough, but the arithmetic is worth being
+precise about, because it decides how much footage to shoot:
 
-So annotating all three remaining clips raises the placement count from 1 to
-perhaps six or eight — enough for gate 1 to mean something — and leaves gate 2
-at **0/0**, unmeasurable. That takes one new recording, and the brief is
-specific:
+- Gate 2 is a **rate ≤ 0.05**. With five samples the finest rate the corpus can
+  express is 0.2. One false placement fails the gate outright.
+- Zero false placements in five proves nothing: the 95% upper bound on 0/5 is
+  **≈0.45**, nine times the gate.
+- To put the upper bound *under* 0.05 on a clean run takes **≈60 quiet
+  windows** (1 − 0.05^(1/60) = 0.049).
 
-> Put the object down somewhere it stays. Then keep it in frame, doing nothing
-> to it, for **at least 45 seconds** — sit at the desk, read, look around the
-> room, let the object drift in and out of the centre. No hands on it, no other
-> objects placed or picked up. Two or three minutes of that yields five or six
-> quiet windows; a 30 s clip yields one.
+So gate 2 as written can be **failed** on today's corpus but not **passed**, and
+an arm that comes through clean should be reported as "no false placements in 5
+windows", never as "passes gate 2".
 
-Until that exists, an arm can clear gates 1 and 3 and the bake-off still cannot
-say whether it hallucinates placements — which is the failure the product
-cannot absorb, so "we ran it and it looked fine" would be the wrong conclusion
-to draw from a run on today's corpus.
+The recording brief changes shape accordingly. It is not one long static shot:
+
+> Put objects down where they stay, then **keep coming back to them**. Sit at
+> the desk and work, glance at the shelf, walk past the console, cook — with two
+> or three enrolled objects visible somewhere in the flat and nothing being
+> placed or picked up. Every 7 s in which an object is in frame and untouched is
+> a window; ~8 minutes of that kind of footage across a few sessions is worth
+> more than one long clip, because the frames differ.
+
+Two or three ordinary "living in the flat" recordings would do it, and they are
+much cheaper to shoot than staged placements — which is the opposite of what
+this corpus is made of, and the reason gate 2 is the number missing.
 
 ## What the first annotated clip already shows
 

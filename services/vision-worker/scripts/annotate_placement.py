@@ -771,12 +771,17 @@ def check(truth_dir: Path, clips: Path) -> int:
         smallest = ""
         if boxes and payload.get("width") and payload.get("height"):
             width, height = int(payload["width"]), int(payload["height"])
-            floor = min(_pixels(b, width, height) for b in boxes.values())
+            sizes = [_pixels(b, width, height) for b in boxes.values()]
+            floor, ceiling = min(sizes), max(sizes)
             smallest = f"{floor:.0f}{'!' if floor < PIXEL_FLOOR else ''}"
-            if floor < PIXEL_CHANCE:
+            # Only a clip where *nothing* clears chance is unscoreable. A single
+            # distant sighting among close ones is a fact about the footage, not
+            # a broken annotation -- and it is still perfectly scoreable for
+            # grounding and events, which is what this corpus is for.
+            if ceiling < PIXEL_CHANCE:
                 problems.append(
-                    f"smallest box is {floor:.0f} px on target -- below the ~{PIXEL_CHANCE:.0f} px "
-                    "at which identity reaches chance, so this clip cannot carry an identity score"
+                    f"every box is under {PIXEL_CHANCE:.0f} px on target (largest {ceiling:.0f}) "
+                    "-- identity is at chance throughout, so this clip cannot carry one"
                 )
         spans = payload.get("visibility") or []
         covered = sum(int(b) - int(a) + 1 for a, b in spans)

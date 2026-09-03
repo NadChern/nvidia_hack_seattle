@@ -89,12 +89,21 @@ object cannot report what happened in it, however clearly its earlier frames
 showed it. So a placement is only *catchable* by windows that still see the
 object at their end, and `placement_recall` is scored over those.
 
-## Annotate sparsely, on purpose
+## Annotate sparsely, on purpose — but anchor the frames that get read
 
 Boxes between two annotated frames are linearly interpolated, and the tool draws
 that interpolation dashed so you can see whether it is good enough before
-labelling another frame. Two or three anchors per clip is usually the whole job.
-Annotation burden that will not get done buys nothing.
+labelling another frame. Annotation burden that will not get done buys nothing.
+
+Where to spend the few boxes you do draw is not arbitrary. The event axis reads
+truth at exactly one frame per window — the **last** one — so those are the
+frames worth getting right. At the production schedule (20 s span every 7 s,
+`t_start` 0) they are the frames at t = 7, 14, 21, 28 … plus the clip's final
+frame, which the trailing window always ends on. Box every one of them the
+object is in shot for and the event score never touches an interpolated box at
+all; interpolation across a hand-to-surface transition is meaningless, but it
+costs nothing if no window ends there. Everything else you box is a sample for
+the *grounding* axis, which scores each annotated frame on its own.
 
 ## A clip with no event still needs a file
 
