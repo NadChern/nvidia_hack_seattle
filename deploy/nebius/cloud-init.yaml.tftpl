@@ -132,6 +132,13 @@ runcmd:
   - [nvidia-ctk, runtime, configure, --runtime=docker]
   - [systemctl, restart, docker]
 
+  # The stack itself. up.sh runs `docker compose` in /opt/memo, so something
+  # has to put it there. A plain clone works because the repository is public --
+  # no deploy key, no secret on the box, and the ref is pinned by variable so a
+  # demo runs a known commit rather than whatever main happens to be that day.
+  - [git, clone, --depth, "1", --branch, "${repo_ref}", "${repo_url}", /opt/memo]
+  - [chown, -R, "memo:memo", /opt/memo]
+
   # A marker up.sh waits on before it starts polling readiness, so "still
   # booting" and "booted but unhealthy" are distinguishable.
   - [touch, /var/lib/cloud/memo-provisioned]

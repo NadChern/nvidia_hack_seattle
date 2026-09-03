@@ -152,9 +152,5 @@ startup is a sizing result, not a bug — record it there.
   ids and quota limits.
 - **`compose config` has not been run** on the three-file merge — the merge is
   structurally checked (service names, `depends_on`, networks) but not by Docker.
-- **`/opt/memo` is assumed to exist on the box** with the repository checked out.
-  Seeding it is currently a manual step in the first `--measure` boot; folding it
-  into cloud-init needs a deploy key or a public clone and is deliberately not
-  guessed at here.
 - **Image family `ubuntu22.04-cuda12` is assumed.** Confirm against
   `nebius compute image list` for the project before the first apply.

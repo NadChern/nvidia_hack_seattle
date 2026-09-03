@@ -119,6 +119,21 @@ variable "wireguard_listen_port" {
   default = 51820
 }
 
+variable "repo_url" {
+  type        = string
+  default     = "https://github.com/NadChern/nvidia_hack_seattle.git"
+  description = "Public, so the box needs no deploy key and holds no secret."
+}
+
+variable "repo_ref" {
+  type        = string
+  default     = "main"
+  description = <<-EOT
+    Branch or tag to check out. Pin to a tag before a customer demo: "whatever
+    main was that morning" is not a thing to discover during a call.
+  EOT
+}
+
 variable "hf_token" {
   type        = string
   default     = ""
@@ -190,6 +205,8 @@ resource "nebius_compute_v1_instance" "demo" {
     wireguard_listen_port     = var.wireguard_listen_port
     models_mount_tag          = local.models_mount_tag
     hf_token                  = var.hf_token
+    repo_url                  = var.repo_url
+    repo_ref                  = var.repo_ref
   })
 
   # RECOVER would silently rebuild a box mid-demo and lose every warm model.
