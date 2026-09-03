@@ -73,8 +73,24 @@ turns it into a number.
 | **False-placement rate** | `placed` on a window where nothing happened | each one writes a **wrong location** into memory — the worst failure the product has |
 | **False-handling rate** | `picked_up`/`carried` on a resting object | the specific number that decides whether `promote_motion_events` can be turned on |
 | **Detection delay** | window end − event time | how long after a placement the memory exists |
+| **Phantom-box rate** | a box on a window where the object has left the frame | the model inventing the object it was told to look for |
 | **Latency p50/p95** | per **8-frame** call | the real realtime figure; single-image latency flatters every arm |
 | Window accuracy / macro-F1 | all five actions | diagnostic, not a gate — see below |
+
+### A placement is only catchable while the object is still in frame
+
+Boxes go in the window's **last** frame, and `CosmosReasoner._parse` returns no
+events at all when the reply carries no box. So a window whose last frame no
+longer shows the object cannot report what happened in it — however clearly its
+earlier frames showed the placement. Recall is therefore computed over
+*catchable* placements only, and the harness prints how many were excluded,
+because that number is a fact about the corpus and the window geometry rather
+than about any model.
+
+On the first annotated clip (a wallet placed on a desk, then the wearer walks
+away) it is **one window out of four**. If that holds across the corpus it is a
+finding in its own right: at a 7 s interval, the pipeline gets roughly one shot
+at each placement, and `reason_interval_seconds` matters far more than it looks.
 
 Per-window accuracy is deliberately *not* a gate. Windows overlap by 13 s, so a
 single placement is offered to three of them and the pipeline needs only the
@@ -130,6 +146,18 @@ It decodes the clip to JPEGs at ~2 fps, serves a browser annotator on
 `127.0.0.1:8770`, and writes `docs/spikes/grounder-bakeoff/truth/<clip>.json` on
 save. Drag to box, arrow keys to step, `1`–`5`/the dropdown to mark an event at
 the current frame, `s` to save.
+
+**Frames are rotated 90° clockwise on decode (`--rotate`, default 90).** PyAV
+ignores rotation metadata, so these portrait recordings decode on their side in
+every `av.open` path in this repo — this tool, the event axis, and
+`media-gateway`'s virtual-glasses `--file` publisher, which means replaying one
+of these files into the pipeline feeds the reasoner a sideways world. The
+annotator records what it applied and the scorer applies the same, so the two
+can never disagree.
+
+**Box the object on the first and last frame it is visible.** That span *is*
+the visibility span: outside it the scorer expects no box and counts one as a
+phantom.
 
 Two things it shows that matter more than they look:
 

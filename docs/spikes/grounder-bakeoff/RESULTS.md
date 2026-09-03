@@ -117,22 +117,60 @@ and relay-quality (`_relay`, 360p/6 fps) re-encodes. Prefer the re-encodes: the
 deployment never sees the 4 K original, and an event score on pristine footage
 measures a call that is never made.
 
-| Clip | Duration | Resolution | Annotated |
-|---|---|---|---|
-| VID_20260819_120633 | 19.8 s | 3840×2160 @30 | ☐ |
-| VID_20260819_120701 | 18.5 s | 3840×2160 @30 | ☐ |
-| VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | 3840×2160 @30 | ☐ |
-| VID_20260819_120802 (+ `_hi` `_relay` `_win`) | 28.5 s | 3840×2160 @30 | ☐ |
-| VID_20260819_160630 | 47.0 s | 3840×2160 @120 | ☐ |
-| VID_20260819_162151 | 61.7 s | 3840×2160 @30 | ☐ |
+| Clip | Duration | Resolution | Contents | Annotated |
+|---|---|---|---|---|
+| VID_20260819_120633 | 19.8 s | 3840×2160 @30 | ? | ☐ |
+| VID_20260819_120701 | 18.5 s | 3840×2160 @30 | ? | ☐ |
+| VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | 3840×2160 @30 | ? | ☐ |
+| **VID_20260819_120802_hi** | 28.1 s | 1280×720 @10 | wallet placed on a desk at t≈5 s | **draft** |
+| VID_20260819_120802 (+ `_relay` `_win`) | 28.5 s | 3840×2160 @30 | same scene, other encodes | ☐ |
+| VID_20260819_160630 | 47.0 s | 3840×2160 @120 | ? | ☐ |
+| VID_20260819_162151 | 61.7 s | 3840×2160 @30 | ? | ☐ |
+
+The one draft annotation is **machine-drafted, not human-confirmed** — written
+by Claude from frame-by-frame inspection and marked as such in its `notes`.
+Open it in the annotator and confirm it before any number scored against it is
+quoted to anyone.
 
 At 20 s windows firing every 7 s, that is roughly 4 windows per short clip and 8
 for the longest — call it 35 model calls per arm, 175 across five arms. Cheap
 enough to re-run when a prompt changes, which is the point.
 
 Annotate the quiet stretches too. Gate 2 — the one that decides the winner — is
-measured **only** on windows where truth says nothing happened, so a corpus of
-nothing but placements cannot answer the question this axis exists to ask.
+measured **only** on windows where the object is present and truth says nothing
+happened, so a corpus of nothing but placements cannot answer the question this
+axis exists to ask. The wallet clip has **zero** such windows: the wearer walks
+away immediately after the placement, so of its four windows one catches the
+event and three have no wallet in frame at all.
+
+## What the first annotated clip already shows
+
+Three things fell out of annotating one 28 s clip, before any model has been
+run. All three are about the corpus and the pipeline, not about any arm.
+
+1. **Everything decodes sideways.** The originals carry `rotation=-90` and PyAV
+   ignores rotation metadata, so every `av.open` path here — the annotator, the
+   event axis, and `media-gateway`'s virtual-glasses `--file` publisher — reads
+   these portrait recordings on their side. Replaying a recording into the
+   pipeline therefore hands the reasoner a rotated world. The annotator now
+   applies and records `rotate` (90 for these files) so the harness matches it,
+   but **`publisher/sources.py` still does not**, and that is a live bug in the
+   dev/demo path rather than a harness detail. The gateway's own log line says
+   the live relay arrives portrait, so this is likely replay-only — worth
+   confirming from a session log before assuming it.
+2. **One window out of four could catch the placement.** Boxes go in a window's
+   last frame and no box means no event, so a window whose last frame no longer
+   shows the object cannot report it. The wearer turns away ~3 s after setting
+   the wallet down, and only the window ending at t=7 still sees it. Recall is
+   scored over catchable placements for that reason, and if this pattern holds
+   the pipeline gets roughly one shot per placement — which makes
+   `reason_interval_seconds` a much sharper knob than it looks.
+3. **A placed object sits below the identity floor at gateway resolution.** The
+   wallet measures 241–255 px on target while held up to the camera and
+   **63–100 px** once it is on the desk, against a ~128 px floor and ~48 px
+   chance level (docs/spikes/capture-resolution). Grounding it is one problem;
+   confirming *whose* wallet it is from the placed frame is a different and
+   harder one, and no arm in this bake-off can fix it.
 
 ## How to read containment against IoU
 

@@ -643,7 +643,26 @@ class ClipTruth:
     duration_s: float
     width: int
     height: int
+    rotate: int
     notes: str
+
+    @property
+    def visible(self) -> tuple[int, int]:
+        """The frame range the object is annotated as visible in.
+
+        The annotated box span *is* the visibility span, by convention (stated
+        in the annotator and in truth/README.md): the annotator boxes the first
+        and last frame the object appears in, and outside that range the object
+        is absent. This is what lets "the model returned no box" be scored as
+        correct in one window and a miss in another, instead of being a single
+        undifferentiated no-box rate.
+        """
+        keys = sorted(self.boxes)
+        return (keys[0], keys[-1]) if keys else (0, -1)
+
+    def is_visible(self, index: int) -> bool:
+        low, high = self.visible
+        return low <= index <= high
 
     def box_at(self, index: int) -> tuple[float, float, float, float] | None:
         """The annotated box, or a linear interpolation between neighbours.
@@ -663,6 +682,21 @@ class ClipTruth:
         weight = (index - lo) / (hi - lo)
         a, b = self.boxes[lo], self.boxes[hi]
         return tuple(a[i] + (b[i] - a[i]) * weight for i in range(4))  # type: ignore[return-value]
+
+    def expected(self, start: float, end: float, last_index: int) -> tuple[str, bool]:
+        """What the pipeline should record for this window, and whether the
+        object is absent from the frame the boxes must be drawn in.
+
+        The second half is not a detail. Boxes are in the **last** frame's
+        coordinates, and `CosmosReasoner._parse` returns no events at all when
+        the reply carries no box -- so a window whose last frame no longer
+        shows the object *cannot* report what happened in it, however clearly
+        the earlier frames showed it. The expected answer there is silence, and
+        an arm that boxes something anyway has hallucinated.
+        """
+        if not self.is_visible(last_index):
+            return "nothing_happened", True
+        return self.action_in(start, end), False
 
     def action_in(self, start: float, end: float) -> str:
         """What truth says happened in `(start, end]`.
@@ -701,17 +735,26 @@ def load_truth(path: Path) -> ClipTruth:
         duration_s=float(raw.get("duration_s", 0.0)),
         width=int(raw["width"]),
         height=int(raw["height"]),
+        # Absent means the file predates rotation handling, when everything
+        # decoded sideways. Zero reproduces what that annotator saw.
+        rotate=int(raw.get("rotate", 0)),
         notes=str(raw.get("notes", "")),
     )
 
 
-def decode_clip(path: Path, stride: int, long_edge: int) -> list[ClipFrame]:
-    """Decode to JPEG data URLs at the stride the annotation used.
+def decode_clip(path: Path, stride: int, long_edge: int, rotate: int) -> list[ClipFrame]:
+    """Decode to JPEG data URLs at the stride and rotation the annotation used.
 
     Same stride, so a frame index in the reply's coordinates is a frame index
     in the truth file with no second mapping to get wrong. JPEG at
     `--long-edge` because that is what the evidence ring hands the reasoner --
     scoring pristine 4K would measure a call the deployment never makes.
+
+    Same rotation because **PyAV ignores rotation metadata**. These recordings
+    are shot portrait and carry `rotation=-90`, so every `av.open` path in this
+    repository decodes them on their side unless told otherwise -- including
+    `media-gateway`'s virtual-glasses `--file` publisher. The annotator records
+    what it applied; applying anything else here puts every box 90 degrees out.
     """
     import av
     from PIL import Image
@@ -729,6 +772,14 @@ def decode_clip(path: Path, stride: int, long_edge: int) -> list[ClipFrame]:
             usable = decoded.pts is not None and time_base is not None
             t = float(decoded.pts * time_base) if usable else position / fps
             image = Image.fromarray(decoded.to_ndarray(format="rgb24"))
+            if rotate % 360:
+                image = image.transpose(
+                    {
+                        90: Image.Transpose.ROTATE_270,
+                        180: Image.Transpose.ROTATE_180,
+                        270: Image.Transpose.ROTATE_90,
+                    }[rotate % 360]
+                )
             frames.append(ClipFrame(position, t, encode_data_url(image, long_edge)))
     return frames
 
@@ -843,9 +894,16 @@ def score_events(records: list[dict], truths: dict[str, ClipTruth]) -> dict:
         if support:
             f1s.append(f1)
 
-    quiet = [r for r in records if r["truth_action"] == "nothing_happened"]
+    # Quiet windows are the ones where the object was *there* and nothing
+    # happened to it. Windows where it had left the frame are counted
+    # separately: silence there is trivially correct and would dilute the
+    # false-positive rate that decides the axis.
+    quiet = [r for r in records if r["truth_action"] == "nothing_happened" and not r["absent"]]
     false_placed = sum(1 for r in quiet if r["pred_action"] == "placed")
     false_handling = sum(1 for r in quiet if r["pred_action"] in ("picked_up", "carried"))
+
+    absent = [r for r in records if r["absent"]]
+    phantom = sum(1 for r in absent if not r["no_box"])
 
     # Per-event recall: overlapping windows mean the pipeline needs any one of
     # them to see the placement, so this -- not the per-window rate -- is what
@@ -860,13 +918,19 @@ def score_events(records: list[dict], truths: dict[str, ClipTruth]) -> dict:
                 for r in records
                 if r["clip"] == clip and r["start"] < float(event["t"]) <= r["end"]
             ]
-            hits = [r for r in covering if r["pred_action"] == event["action"]]
+            # A window can only report the event if the object is still in its
+            # last frame -- that is where the box goes, and no box means no
+            # event. An event no window could have caught is a corpus fact, not
+            # a model failure, so it is counted apart from recall.
+            catchable = [r for r in covering if not r["absent"]]
+            hits = [r for r in catchable if r["pred_action"] == event["action"]]
             caught.append(
                 {
                     "clip": clip,
                     "t": event["t"],
                     "action": event["action"],
                     "windows_covering": len(covering),
+                    "windows_catchable": len(catchable),
                     "windows_hit": len(hits),
                     "detection_delay_s": (
                         round(min(r["end"] for r in hits) - float(event["t"]), 2) if hits else None
@@ -874,7 +938,8 @@ def score_events(records: list[dict], truths: dict[str, ClipTruth]) -> dict:
                 }
             )
     placements = [c for c in caught if c["action"] == "placed"]
-    found = [c for c in placements if c["windows_hit"]]
+    catchable_placements = [c for c in placements if c["windows_catchable"]]
+    found = [c for c in catchable_placements if c["windows_hit"]]
     delays = [c["detection_delay_s"] for c in found if c["detection_delay_s"] is not None]
 
     ious = [r["window_iou"] for r in records if r["window_iou"] is not None]
@@ -889,9 +954,15 @@ def score_events(records: list[dict], truths: dict[str, ClipTruth]) -> dict:
         "false_placed_rate": round(false_placed / len(quiet), 4) if quiet else 0.0,
         "false_handling": false_handling,
         "false_handling_rate": round(false_handling / len(quiet), 4) if quiet else 0.0,
+        "absent_windows": len(absent),
+        "phantom_boxes": phantom,
+        "phantom_rate": round(phantom / len(absent), 4) if absent else 0.0,
         "placements": len(placements),
+        "placements_catchable": len(catchable_placements),
         "placements_found": len(found),
-        "placement_recall": round(len(found) / len(placements), 4) if placements else 0.0,
+        "placement_recall": (
+            round(len(found) / len(catchable_placements), 4) if catchable_placements else 0.0
+        ),
         "detection_delay_p50_s": round(statistics.median(delays), 2) if delays else None,
         "events": caught,
         "no_box_windows": sum(1 for r in records if r["no_box"]),
@@ -991,7 +1062,7 @@ def run_events(args, arm: Arm, drift: str) -> int:
             print(f"  {truth.clip}: SKIPPED (not found under {args.clips})")
             continue
         truths[truth.clip] = truth
-        frames = decode_clip(clip, truth.frame_stride, args.long_edge)
+        frames = decode_clip(clip, truth.frame_stride, args.long_edge, truth.rotate)
         windows = build_windows(
             frames,
             window_s=args.window_seconds,
@@ -1011,7 +1082,7 @@ def run_events(args, arm: Arm, drift: str) -> int:
                 continue
             elapsed = time.perf_counter() - started
             latencies.append(elapsed)
-            truth_action = truth.action_in(window.start, window.end)
+            truth_action, absent = truth.expected(window.start, window.end, window.frames[-1].index)
             records.append(
                 {
                     "clip": truth.clip,
@@ -1021,6 +1092,7 @@ def run_events(args, arm: Arm, drift: str) -> int:
                     "frames": len(window.frames),
                     "last_index": window.frames[-1].index,
                     "truth_action": truth_action,
+                    "absent": absent,
                     "raw": raw,
                     "latency_s": round(elapsed, 3),
                 }
@@ -1042,12 +1114,12 @@ def run_events(args, arm: Arm, drift: str) -> int:
         mark = "ok " if record["truth_action"] == record["pred_action"] else "MISS"
         if record["window_iou"] is not None:
             grounding = f"IoU {record['window_iou']:.2f}"
-        elif record["no_box"]:
-            grounding = "no box"
+        elif record["absent"]:
+            # Truth says the object has left the frame, so no box is the right
+            # answer and a box is a phantom.
+            grounding = "absent, no box" if record["no_box"] else "PHANTOM BOX"
         else:
-            # The arm boxed something; truth has no box to score it against
-            # because the window's last frame lies outside the annotated span.
-            grounding = "no truth"
+            grounding = "no box"
         print(
             f"  {record['clip'][:26]:<26} {record['end']:6.1f}s  {mark} "
             f"truth={record['truth_action']:<16} said={record['pred_action']:<16} {grounding}"
@@ -1093,7 +1165,8 @@ def run_events(args, arm: Arm, drift: str) -> int:
 
     print("\n" + "=" * 72)
     print(
-        f"{arm.name}: placement recall {report['placements_found']}/{report['placements']} "
+        f"{arm.name}: placement recall {report['placements_found']}"
+        f"/{report['placements_catchable']} catchable "
         f"({report['placement_recall'] * 100:.0f}%)"
         + (
             f"   median delay {report['detection_delay_p50_s']:.1f}s after the event"
@@ -1109,6 +1182,17 @@ def run_events(args, arm: Arm, drift: str) -> int:
         f"  false handling   {report['false_handling']}/{report['quiet_windows']} "
         f"({report['false_handling_rate'] * 100:.0f}%)  -- this is what keeps "
         "promote_motion_events off"
+    )
+    if report["placements_catchable"] < report["placements"]:
+        missing = report["placements"] - report["placements_catchable"]
+        print(
+            f"  NOTE: {missing} of {report['placements']} placements had left the frame by the "
+            "end of every window covering them -- no arm could report those, and they are "
+            "excluded from recall. That is a corpus/window-geometry result, not a model one."
+        )
+    print(
+        f"  phantom boxes {report['phantom_boxes']}/{report['absent_windows']} windows where "
+        f"the object had left the frame ({report['phantom_rate'] * 100:.0f}%)"
     )
     print(
         f"  window accuracy {report['window_accuracy']:.3f}  macro-F1 {report['macro_f1']:.3f}"

@@ -29,13 +29,38 @@ a time axis. `GroundTruth.load` reads only the keys it knows, so
   "frame_stride": 5,                     // decode stride the indices are in
   "t_start": 0.0,                        // these recordings' PTS need not start at 0
   "duration_s": 28.0,                    // the last annotatable timestamp
-  "width": 1280, "height": 720           // capture size, for pixels on target
+  "rotate": 90,                          // clockwise degrees applied on decode
+  "width": 720, "height": 1280           // AFTER rotation, for pixels on target
 }
 ```
+
+## `rotate` is not optional here
+
+**PyAV ignores rotation metadata.** These recordings are shot portrait and the
+originals carry `rotation=-90`, but every `av.open` path in this repository —
+this tool, the event axis, and `media-gateway`'s virtual-glasses `--file`
+publisher — decodes them lying on their side unless told otherwise. The
+annotator applies `--rotate 90` by default and records it; the scorer reads the
+recorded value and applies the same. A truth file without the key is assumed to
+have been annotated sideways (`rotate: 0`), because that is what the tooling did
+before the key existed.
 
 `action` must be one of `placed`, `picked_up`, `carried`, `nothing_happened`,
 `unknown` — the model's own vocabulary (`reason/cosmos.py::_ACTIONS`). Anything
 else is unscoreable and `annotate_placement.py check` fails on it.
+
+## The box span is the visibility span
+
+Box the object on the **first and last frame it is visible**. Outside that
+range the scorer treats it as **absent**, and absence is scored, not skipped:
+the expected answer is no box, and a box there counts as a *phantom*.
+
+This matters more than it sounds, because boxes go in the window's **last**
+frame and `CosmosReasoner._parse` returns no events at all without a box. A
+window whose last frame no longer shows the object cannot report what happened
+in it, however clearly its earlier frames showed it. So a placement is only
+*catchable* by windows that still see the object at their end — and on the
+first annotated clip that turned out to be exactly one window out of four.
 
 ## Annotate sparsely, on purpose
 

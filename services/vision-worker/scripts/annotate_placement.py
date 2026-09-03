@@ -89,6 +89,19 @@ TARGET_ANNOTATE_FPS = 2.0
 #: resolution -- the number that governs identity.
 PREVIEW_LONG_EDGE = 1280
 
+#: Clockwise degrees applied to every decoded frame, and recorded in the truth
+#: file so the scorer applies exactly the same.
+#:
+#: These recordings need 90. The camera is mounted portrait and the container
+#: carries `rotation=-90`, but **PyAV does not apply rotation metadata** -- so
+#: every `av.open` path in this repository decodes them lying on their side,
+#: including `media-gateway`'s virtual-glasses `--file` publisher. Replaying a
+#: recording into the pipeline therefore feeds the reasoner a sideways world,
+#: which is worth knowing before blaming a model for missing an object.
+#: (The live relay is reportedly portrait already; see the rotation log in
+#: `media_gateway/transport/room_worker.py`.)
+DEFAULT_ROTATE = 90
+
 
 # --- Frame extraction --------------------------------------------------------
 
@@ -102,7 +115,24 @@ class Prepared:
     frames: int
 
 
-def prepare(clip: Path, work_root: Path, annotate_fps: float, long_edge: int) -> Prepared:
+def _rotated(image, clockwise: int):
+    """Rotate a PIL image by whole clockwise degrees."""
+    from PIL import Image
+
+    if clockwise % 360 == 0:
+        return image
+    return image.transpose(
+        {
+            90: Image.Transpose.ROTATE_270,
+            180: Image.Transpose.ROTATE_180,
+            270: Image.Transpose.ROTATE_90,
+        }[clockwise % 360]
+    )
+
+
+def prepare(
+    clip: Path, work_root: Path, annotate_fps: float, long_edge: int, rotate: int
+) -> Prepared:
     """Decode `clip` to JPEGs at a stride, keeping source frame indices.
 
     The index written here is the frame's position in the decode stream, which
@@ -117,7 +147,11 @@ def prepare(clip: Path, work_root: Path, annotate_fps: float, long_edge: int) ->
     manifest_path = root / "frames.json"
     if manifest_path.is_file():
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if existing.get("long_edge") == long_edge and existing.get("annotate_fps") == annotate_fps:
+        if (
+            existing.get("long_edge") == long_edge
+            and existing.get("annotate_fps") == annotate_fps
+            and existing.get("rotate") == rotate
+        ):
             return Prepared(root, manifest_path, len(existing["frames"]))
 
     root.mkdir(parents=True, exist_ok=True)
@@ -129,6 +163,8 @@ def prepare(clip: Path, work_root: Path, annotate_fps: float, long_edge: int) ->
         stride = max(1, round(fps / annotate_fps))
         width = int(stream.codec_context.width)
         height = int(stream.codec_context.height)
+        if rotate % 180:
+            width, height = height, width
         for position, decoded in enumerate(container.decode(stream)):
             if position % stride:
                 continue
@@ -137,7 +173,7 @@ def prepare(clip: Path, work_root: Path, annotate_fps: float, long_edge: int) ->
             # every event is annotated at one of these values.
             usable = decoded.pts is not None and time_base is not None
             t = float(decoded.pts * time_base) if usable else position / fps
-            image = Image.fromarray(decoded.to_ndarray(format="rgb24"))
+            image = _rotated(Image.fromarray(decoded.to_ndarray(format="rgb24")), rotate)
             image.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
             name = f"{position:06d}.jpg"
             image.save(root / name, format="JPEG", quality=88)
@@ -152,6 +188,7 @@ def prepare(clip: Path, work_root: Path, annotate_fps: float, long_edge: int) ->
         "frame_stride": stride,
         "annotate_fps": annotate_fps,
         "long_edge": long_edge,
+        "rotate": rotate,
         "width": width,
         "height": height,
         #: The last annotatable timestamp, not the wall duration: presentation
@@ -196,6 +233,7 @@ PAGE = """<!doctype html>
  select, textarea { background:#1c2029; border:1px solid var(--line); color:var(--ink);
                     font:inherit; border-radius:3px; padding:3px 6px; width:100%; }
  #status { color:var(--dim); padding:0 12px 10px; }
+ #rule { color:var(--dim); }
  kbd { background:#242936; border:1px solid var(--line); border-radius:3px; padding:0 4px; }
  .warn { color:#ff7b7b; } .ok { color:#7bd88f; } .mid { color:var(--hot); }
 </style></head><body>
@@ -222,6 +260,10 @@ PAGE = """<!doctype html>
     <button class="go" id="addevent">add event at this frame</button>
     <div id="events"></div>
     <h2>notes</h2><textarea id="notes" rows="3"></textarea>
+    <h2>the visibility rule</h2>
+    <div id="rule">Box the object on the <b>first</b> and <b>last</b> frame it is visible.
+      Outside that range the scorer treats it as <b>absent</b> &mdash; it expects the model to
+      return no box there, and counts one that does as a phantom.</div>
     <h2>keys</h2>
     <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> step &middot; <kbd>&darr;</kbd><kbd>&uarr;</kbd> x10
       &middot; drag to box &middot; <kbd>d</kbd> drop box &middot; <kbd>p</kbd> play
@@ -369,7 +411,8 @@ fetch("manifest").then(r => r.json()).then(data => {
   $("clipname").textContent = M.clip;
   $("status").textContent = M.frames.length + " frames at " + M.annotate_fps +
     " fps (stride " + M.frame_stride + " of " + M.fps.toFixed(2) + " fps source, " +
-    M.width + "x" + M.height + ", " + M.duration_s.toFixed(1) + "s)";
+    M.width + "x" + M.height + ", " + M.duration_s.toFixed(1) + "s, rotated " +
+    M.rotate + " deg clockwise on decode)";
   render();
 });
 </script></body></html>
@@ -441,6 +484,9 @@ def to_truth_file(payload: dict[str, Any], manifest: dict[str, Any]) -> dict[str
         "frame_stride": manifest["frame_stride"],
         "t_start": manifest["t_start"],
         "duration_s": manifest["duration_s"],
+        #: Clockwise degrees the annotator applied. The scorer must apply the
+        #: same or every box is 90 degrees wrong.
+        "rotate": manifest["rotate"],
         #: Capture resolution, not the preview's. A normalized box means
         #: nothing for identity without the pixels it covers at capture.
         "width": manifest["width"],
@@ -600,6 +646,13 @@ def main() -> int:
     )
     parser.add_argument("--annotate-fps", type=float, default=TARGET_ANNOTATE_FPS)
     parser.add_argument("--long-edge", type=int, default=PREVIEW_LONG_EDGE)
+    parser.add_argument(
+        "--rotate",
+        type=int,
+        choices=(0, 90, 180, 270),
+        default=DEFAULT_ROTATE,
+        help="clockwise degrees applied on decode; these recordings need 90 (see DEFAULT_ROTATE)",
+    )
     parser.add_argument("--port", type=int, default=8770)
     parser.add_argument("--no-open", action="store_true", help="do not launch a browser")
     args = parser.parse_args()
@@ -614,7 +667,7 @@ def main() -> int:
     if not clip.is_file():
         parser.error(f"no such clip: {args.clip}")
 
-    prepared = prepare(clip, args.work, args.annotate_fps, args.long_edge)
+    prepared = prepare(clip, args.work, args.annotate_fps, args.long_edge, args.rotate)
     print(f"prepared {prepared.frames} frames in {prepared.root}")
     if args.command == "prepare":
         return 0

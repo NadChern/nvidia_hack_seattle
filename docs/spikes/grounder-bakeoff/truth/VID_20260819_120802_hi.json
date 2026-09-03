@@ -1,0 +1,70 @@
+{
+  "object_id": "wallet_01",
+  "label": "wallet",
+  "distractor_ids": [],
+  "boxes": {
+    "10": [
+      0.298,
+      0.462,
+      0.552,
+      0.71
+    ],
+    "20": [
+      0.13,
+      0.385,
+      0.37,
+      0.68
+    ],
+    "30": [
+      0.19,
+      0.48,
+      0.34,
+      0.66
+    ],
+    "40": [
+      0.7,
+      0.505,
+      0.795,
+      0.55
+    ],
+    "50": [
+      0.373,
+      0.543,
+      0.523,
+      0.615
+    ],
+    "70": [
+      0.439,
+      0.537,
+      0.569,
+      0.592
+    ],
+    "80": [
+      0.622,
+      0.519,
+      0.732,
+      0.56
+    ]
+  },
+  "events": [
+    {
+      "t": 2.0,
+      "action": "carried",
+      "location": "in the wearer's hand, walking to the desk"
+    },
+    {
+      "t": 5.0,
+      "action": "placed",
+      "location": "on the white desk, in front of the tablet"
+    }
+  ],
+  "notes": "DRAFT -- drafted by Claude from frame-by-frame inspection, not by a human annotator, and it has not been confirmed in the browser tool. Treat every number scored against it as provisional. Release is bracketed: the hand is still on the wallet at t=4.5 and fully withdrawn at t=5.0, so `placed` is annotated at 5.0, the first frame it is demonstrably at rest. Visible from frame 5 (clipped by the frame edge) and fully from frame 10; last visible at frame 80 (t=8.0), after which the wearer turns away -- boxes span 10..80 and the scorer reads that as the visibility span. No second wallet appears, so distractor_ids is empty and this clip cannot score identity, only events and grounding. Decoded with rotate=90: PyAV ignores the container's rotation=-90, so without it the world lies on its side.",
+  "clip": "VID_20260819_120802_hi.mp4",
+  "fps": 10.0,
+  "frame_stride": 5,
+  "t_start": 0.0,
+  "duration_s": 28.0,
+  "rotate": 90,
+  "width": 720,
+  "height": 1280
+}
