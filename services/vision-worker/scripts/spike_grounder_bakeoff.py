@@ -27,7 +27,13 @@ Third-Party Service" grant is not a revenue threshold: it forbids offering the
 model as a service at *any* size, which is precisely what this product is. No
 amount of growth makes that one legal, so it is not scored at all.
 
-## The four axes
+## Two tasks, because the reasoner does two things
+
+The pipeline asks one model both *where is it* (`--task grounding`) and *what
+just happened to it* (`--task events`), and an arm can be excellent at one and
+useless at the other.
+
+### Grounding axes
 
 Grounding IoU alone picked the wrong model once already (spike 3c: containment
 was ~100% while identity F1 sat at 0.776, because the box was on the right
@@ -41,6 +47,20 @@ object but the wrong *extent*). So every arm reports:
    slower than that backs the queue up no matter how well it grounds.
 4. **No-box rate.** A model that silently returns nothing is worse than one that
    returns a loose box, because the pipeline reads it as "object not present".
+
+### Event axes
+
+`placed` / `picked_up` / `carried` / `nothing_happened` across a 20 s window, on
+the recordings annotated by `annotate_placement.py`. Only `placed` reaches
+memory today, because `promote_motion_events` is False on the impression that
+"at ~1fps Cosmos hallucinates handling on a resting object" -- an impression
+nobody has ever measured. The headline numbers are **per-event placement
+recall**, **false-placement rate** on quiet windows (a false placement writes a
+wrong location, which is worse for the product than missing one), and
+**eight-frame latency**, which is the realtime figure that actually binds.
+
+See the long comment above `ClipFrame` for why the axis is shaped this way, and
+RESULTS.md for the gates, which were fixed before any number existed.
 
 ## Prompt parity
 
@@ -69,6 +89,10 @@ Usage::
     uv run python scripts/spike_grounder_bakeoff.py --arm qwen3-vl-8b \\
         --dataset ../../clips/identity-probe --cache ../../clips/spike1-arms/_cache \\
         --out ../../docs/spikes/grounder-bakeoff/runs/qwen3-vl-8b.json
+
+    # the event axis, once the recordings are annotated
+    uv run python scripts/spike_grounder_bakeoff.py --arm qwen3-vl-8b --task events \\
+        --out ../../docs/spikes/grounder-bakeoff/runs/qwen3-vl-8b.events.json
 
     # every arm is an HTTP arm; only the serve command differs (see the README)
 """
@@ -134,26 +158,68 @@ If a recognizable {label} is clearly visible, output exactly one line and nothin
 Coordinates are 0 to 1000, top-left origin."""
 
 
+#: The reasoner's action vocabulary, verbatim from `reason/cosmos.py::_ACTIONS`.
+#: The first three become memory writes; the last two are how the model
+#: declines. `nothing_happened` is a correct answer, not a failure, and the
+#: event axis is largely a measurement of whether an arm can bring itself to
+#: say it.
+ACTIONS = ("placed", "picked_up", "carried", "nothing_happened", "unknown")
+
+#: Only `placed` reaches memory today: `promote_motion_events` is False because
+#: "at ~1fps Cosmos hallucinates handling on a resting object, and a single
+#: false pickup flips a confirmed placement to 'moved afterward'". Whether that
+#: policy can be lifted is one of the questions this axis answers.
+MEMORY_ACTIONS = ("placed", "picked_up", "carried")
+
+#: Verbatim from `reason/cosmos.py::_PROMPT` -- the window prompt the running
+#: pipeline sends. Copied for the same reason the localize prompt is, and
+#: checked by `--check-prompt-drift` for the same reason.
+_WINDOW_PROMPT = """These {count} frames are consecutive moments from one continuous video, in \
+order, recorded from a camera worn on someone's head.
+
+Look only for these objects: {labels}.
+
+For every one of those objects that is visible in the LAST frame, output exactly one \
+grounding tag on its own line, using coordinates from 0 to 1000 with the origin at the \
+top-left of the LAST frame:
+<ref>LABEL</ref><box>[x_min, y_min, x_max, y_max]</box>
+
+{extent}
+
+Then, after the tags, output a single JSON array. One entry per object you tagged:
+[{{"label": "LABEL", "action": "ACTION", "location": "a short phrase a person would \
+recognise, e.g. on the kitchen table next to a mug"}}]
+
+ACTION must be one of: placed, picked_up, carried, nothing_happened, unknown.
+Use "placed" only if the object is set down and left at rest during these frames, \
+"picked_up" if a hand lifts it, "carried" if it is moving with a person, and \
+"nothing_happened" if it just sits there untouched -- that is a correct and expected \
+answer, not a failure. Report only objects you actually see. Do not invent anything."""
+
+
+def window_prompt(labels: list[str], count: int) -> str:
+    return _WINDOW_PROMPT.format(count=count, labels=", ".join(labels), extent=_EXTENT_RULE)
+
+
 def localize_prompt(label: str) -> str:
     requirements = _LOCALIZE_REQUIREMENTS.get(
         label, f"{label.upper()} means the physical object itself, not a screen image of one."
     )
-    return _LOCALIZE_PROMPT.format(
-        label=label, requirements=requirements, extent=_EXTENT_RULE
-    )
+    return _LOCALIZE_PROMPT.format(label=label, requirements=requirements, extent=_EXTENT_RULE)
 
 
 def check_prompt_drift(repo_root: Path) -> str:
-    """Compare the inlined extent rule against the production one.
+    """Compare every inlined prompt against the production one.
+
+    Covers the extent rule (both axes), the window prompt (event axis) and the
+    action vocabulary, because an event score against a stale prompt is worse
+    than no event score: it looks like a model result and is a diff.
 
     Returns a status string rather than raising: on the rented box the service
     source may not be checked out beside the harness, and "could not check" must
     not read the same as "checked and matched".
     """
-    source = (
-        repo_root
-        / "services/vision-worker/src/vision_worker/reason/cosmos.py"
-    )
+    source = repo_root / "services/vision-worker/src/vision_worker/reason/cosmos.py"
     if not source.is_file():
         return "unchecked (reason/cosmos.py not found)"
     text = source.read_text(encoding="utf-8")
@@ -163,9 +229,27 @@ def check_prompt_drift(repo_root: Path) -> str:
     if not match:
         return "unchecked (_EXTENT_RULE not parseable)"
     literal = "".join(re.findall(r'"([^"]*)"', match.group("body")))
-    if _collapse(literal) == _collapse(_EXTENT_RULE):
-        return "ok (matches reason/cosmos.py)"
-    return "DRIFTED -- the inlined prompt no longer matches reason/cosmos.py"
+    drifted: list[str] = []
+    if _collapse(literal) != _collapse(_EXTENT_RULE):
+        drifted.append("_EXTENT_RULE")
+
+    window = re.search(r'_PROMPT = """(?P<body>.*?)"""', text, re.DOTALL)
+    if window is None:
+        return "unchecked (_PROMPT not parseable)"
+    if _collapse(window.group("body").replace("\\\n", "")) != _collapse(
+        _WINDOW_PROMPT.replace("\\\n", "")
+    ):
+        drifted.append("_PROMPT (window/event)")
+
+    actions = re.search(r"_ACTIONS = \((?P<body>[^)]*)\)", text)
+    if actions is None:
+        return "unchecked (_ACTIONS not parseable)"
+    if tuple(re.findall(r'"([^"]*)"', actions.group("body"))) != ACTIONS:
+        drifted.append("_ACTIONS")
+
+    if drifted:
+        return f"DRIFTED -- {', '.join(drifted)} no longer matches reason/cosmos.py"
+    return "ok (extent rule, window prompt and action vocabulary match reason/cosmos.py)"
 
 
 def _collapse(text: str) -> str:
@@ -298,16 +382,30 @@ def encode_data_url(image, long_edge: int) -> str:
     from PIL import Image
 
     copy = image.copy()
-    copy.thumbnail((long_edge, long_edge), Image.LANCZOS)
+    copy.thumbnail((long_edge, long_edge), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
     copy.save(buffer, format="JPEG", quality=90)
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
+def text_block(text: str) -> dict:
+    return {"type": "text", "text": text}
+
+
+def image_block(data_url: str) -> dict:
+    return {"type": "image_url", "image_url": {"url": data_url}}
+
+
 def ask_openai(
-    base_url: str, model: str, data_url: str, prompt: str, timeout: float, max_tokens: int
+    base_url: str, model: str, content: list[dict], timeout: float, max_tokens: int
 ) -> str:
-    """One image, one prompt, plain chat -- and never `response_format`.
+    """One chat turn of mixed text and images -- and never `response_format`.
+
+    Content blocks rather than a single image because the event axis sends
+    eight frames per call, exactly as `CosmosReasoner._ask_blocking` does. Both
+    axes put the **text first**, matching production: block order is part of
+    the prompt a VLM sees, so an image-first harness against a text-first
+    deployment would not be the parity this bake-off claims.
 
     Guided decoding against a box schema measured 0.05-0.16 IoU where free-form
     native `<box>` tokens measured 0.55 on the same images. The constraint is
@@ -315,15 +413,7 @@ def ask_openai(
     """
     payload = {
         "model": model,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image_url", "image_url": {"url": data_url}},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
+        "messages": [{"role": "user", "content": content}],
         "max_tokens": max_tokens,
         "temperature": 0.0,
     }
@@ -388,9 +478,7 @@ class TransformersArm:
             return_tensors="pt",
         ).to(self.device)
         with torch.inference_mode():
-            output = self.model.generate(
-                **inputs, max_new_tokens=max_tokens, do_sample=False
-            )
+            output = self.model.generate(**inputs, max_new_tokens=max_tokens, do_sample=False)
         trimmed = output[0][inputs["input_ids"].shape[1] :]
         return self.processor.decode(trimmed, skip_special_tokens=False)
 
@@ -490,6 +578,327 @@ def gpu_used_mib() -> int | None:
     return int(first[0]) if first else None
 
 
+# --- The event axis ----------------------------------------------------------
+#
+# Grounding is half of what the reasoner does. The other half is saying what
+# happened -- `placed` / `picked_up` / `carried` / `nothing_happened` -- and an
+# arm can ground beautifully while hallucinating handling on an object that
+# never moved. That failure is not hypothetical: `promote_motion_events` is
+# False in production precisely because of it, which means today only `placed`
+# reaches memory and the movement timeline is thrown away. Nobody has ever
+# measured it, so the policy rests on an impression.
+#
+# What this axis measures, in order of how much it decides:
+#
+# 1. **Per-event placement recall.** Windows overlap (20 s span, 7 s interval),
+#    so one placement is offered to several windows and the pipeline only needs
+#    one of them to see it. That is the product's number.
+# 2. **False-placement rate** on windows where nothing happened. A false
+#    `placed` writes a wrong location into memory, which is the worst outcome
+#    the product has -- worse than missing the event, because the user is told
+#    something confidently untrue.
+# 3. **False-handling rate** -- `picked_up`/`carried` on a resting object. This
+#    is the specific number that decides whether `promote_motion_events` can be
+#    turned on.
+# 4. **Latency per window.** Eight frames per call, not one, so this is the
+#    realtime figure that actually binds; the grounding axis's single-image
+#    latency flatters every arm.
+#
+# The location phrase is recorded and never scored. Judging "on the kitchen
+# table next to a mug" against an annotation needs a human who watched the
+# clip, and a previous attempt at scoring it automatically marked a correct
+# phrase as a hallucination because the wide frame really did show that
+# surface.
+
+
+@dataclass(frozen=True)
+class ClipFrame:
+    index: int
+    t: float
+    data_url: str
+
+
+@dataclass(frozen=True)
+class Window:
+    """One reasoner firing: a span of clip time and the frames sent for it."""
+
+    start: float
+    end: float
+    frames: list[ClipFrame]
+
+
+@dataclass
+class ClipTruth:
+    """One annotated recording, as `annotate_placement.py` writes it."""
+
+    path: Path
+    clip: str
+    object_id: str
+    label: str
+    boxes: dict[int, tuple[float, float, float, float]]
+    events: list[dict]
+    fps: float
+    frame_stride: int
+    t_start: float
+    duration_s: float
+    width: int
+    height: int
+    notes: str
+
+    def box_at(self, index: int) -> tuple[float, float, float, float] | None:
+        """The annotated box, or a linear interpolation between neighbours.
+
+        Same rule as `eval_harness.GroundTruth.box_at`, reimplemented rather
+        than imported: this harness runs on a rented box under `uv run
+        --isolated` and cannot see the service package.
+        """
+        if index in self.boxes:
+            return self.boxes[index]
+        keys = sorted(self.boxes)
+        before = [k for k in keys if k < index]
+        after = [k for k in keys if k > index]
+        if not before or not after:
+            return None
+        lo, hi = before[-1], after[0]
+        weight = (index - lo) / (hi - lo)
+        a, b = self.boxes[lo], self.boxes[hi]
+        return tuple(a[i] + (b[i] - a[i]) * weight for i in range(4))  # type: ignore[return-value]
+
+    def action_in(self, start: float, end: float) -> str:
+        """What truth says happened in `(start, end]`.
+
+        A span with no annotated event is `nothing_happened`, not "unlabelled":
+        the annotator saw the whole clip and marked what occurred, so silence
+        is a positive claim that nothing did. When several events land in one
+        span the memory-bearing one wins, since that is the one the pipeline
+        would have to get right.
+        """
+        found = {str(event["action"]) for event in self.events if start < float(event["t"]) <= end}
+        for action in (*MEMORY_ACTIONS, "unknown"):
+            if action in found:
+                return action
+        return "nothing_happened"
+
+
+def load_truth(path: Path) -> ClipTruth:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    missing = [k for k in ("clip", "fps", "frame_stride", "width", "height") if k not in raw]
+    if missing:
+        raise SystemExit(
+            f"{path.name} is missing {', '.join(missing)} -- it predates "
+            "annotate_placement.py and cannot be placed on a time axis"
+        )
+    return ClipTruth(
+        path=path,
+        clip=str(raw["clip"]),
+        object_id=str(raw["object_id"]),
+        label=str(raw["label"]),
+        boxes={int(k): tuple(float(x) for x in v) for k, v in (raw.get("boxes") or {}).items()},
+        events=list(raw.get("events") or []),
+        fps=float(raw["fps"]),
+        frame_stride=int(raw["frame_stride"]),
+        t_start=float(raw.get("t_start", 0.0)),
+        duration_s=float(raw.get("duration_s", 0.0)),
+        width=int(raw["width"]),
+        height=int(raw["height"]),
+        notes=str(raw.get("notes", "")),
+    )
+
+
+def decode_clip(path: Path, stride: int, long_edge: int) -> list[ClipFrame]:
+    """Decode to JPEG data URLs at the stride the annotation used.
+
+    Same stride, so a frame index in the reply's coordinates is a frame index
+    in the truth file with no second mapping to get wrong. JPEG at
+    `--long-edge` because that is what the evidence ring hands the reasoner --
+    scoring pristine 4K would measure a call the deployment never makes.
+    """
+    import av
+    from PIL import Image
+
+    frames: list[ClipFrame] = []
+    with av.open(str(path)) as container:
+        stream = container.streams.video[0]
+        fps = float(stream.average_rate or 30)
+        time_base = stream.time_base
+        for position, decoded in enumerate(container.decode(stream)):
+            if position % stride:
+                continue
+            # Same fallback as the annotator, so a window's span and the
+            # annotation it is scored against are on one time axis.
+            usable = decoded.pts is not None and time_base is not None
+            t = float(decoded.pts * time_base) if usable else position / fps
+            image = Image.fromarray(decoded.to_ndarray(format="rgb24"))
+            frames.append(ClipFrame(position, t, encode_data_url(image, long_edge)))
+    return frames
+
+
+def subsample(frames: list[ClipFrame], limit: int) -> list[ClipFrame]:
+    """Thin evenly, keeping both ends -- `reason/cosmos.py::_subsample`.
+
+    The endpoints carry the before and after that make a placement legible, and
+    the last frame is the one the boxes are in.
+    """
+    if len(frames) <= limit:
+        return frames
+    import numpy as np
+
+    positions = np.linspace(0, len(frames) - 1, limit).round().astype(int)
+    return [frames[index] for index in dict.fromkeys(int(p) for p in positions)]
+
+
+def build_windows(
+    frames: list[ClipFrame], *, window_s: float, interval_s: float, max_frames: int
+) -> list[Window]:
+    """The firing schedule the pipeline runs: a `window_s` span every `interval_s`.
+
+    Windows overlap by design (span > interval) so a placement is seen several
+    times; `event_cooldown_seconds` is what stops that becoming several memory
+    writes. Early windows are clipped to the frames that exist, which is what
+    the evidence ring does at the start of a session too.
+    """
+    if not frames:
+        return []
+    first, last = frames[0].t, frames[-1].t
+    out: list[Window] = []
+    end = first + interval_s
+    while end <= last + 1e-6:
+        span = [f for f in frames if end - window_s - 1e-6 <= f.t <= end + 1e-6]
+        if span:
+            out.append(Window(max(first, end - window_s), end, subsample(span, max_frames)))
+        end += interval_s
+    # The tail of a clip is where the placement usually is, and a schedule that
+    # stops one interval short would silently never look at it.
+    if not out or out[-1].end < last - 1e-6:
+        span = [f for f in frames if f.t >= last - window_s - 1e-6]
+        out.append(Window(max(first, last - window_s), last, subsample(span, max_frames)))
+    return out
+
+
+def parse_action_tail(reply: str) -> dict[str, dict]:
+    """The JSON array of {label, action, location}, keyed by lowercased label.
+
+    Mirrors `reason/cosmos.py::_parse_action_tail`: the last balanced `[...]`
+    in the reply, tolerating a reasoning preamble and the grounding tags before
+    it. A malformed tail yields nothing, so the arm is scored as `unknown`
+    rather than credited with an event it did not clearly state.
+    """
+    start, end = reply.rfind("["), reply.rfind("]")
+    if start < 0 or end <= start:
+        return {}
+    try:
+        parsed = json.loads(reply[start : end + 1])
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, list):
+        return {}
+    out: dict[str, dict] = {}
+    for item in parsed:
+        if isinstance(item, dict) and "label" in item:
+            out[str(item["label"]).strip().lower()] = item
+    return out
+
+
+def parse_labeled_box(reply: str, label: str, order: str) -> tuple | None:
+    """The box tagged with `label`, or any box in the reply as a fallback.
+
+    The fallback matters because the tail and the tags disagree on casing and
+    plurality more often than they disagree on the object -- and the event axis
+    is not trying to re-measure formatting compliance.
+    """
+    wanted = label.strip().lower()
+    for match in _GROUNDING.finditer(reply):
+        if match.group("label").strip().lower() == wanted:
+            box = parse_box(match.group(0), order)
+            if box is not None:
+                return box
+    return parse_box(reply, order)
+
+
+def score_events(records: list[dict], truths: dict[str, ClipTruth]) -> dict:
+    """Turn per-window replies into the numbers that decide the axis."""
+    labels = list(ACTIONS)
+    confusion = {truth: dict.fromkeys(labels, 0) for truth in labels}
+    for record in records:
+        confusion[record["truth_action"]][record["pred_action"]] += 1
+
+    total = len(records)
+    correct = sum(confusion[a][a] for a in labels)
+    per_action: dict[str, dict] = {}
+    f1s: list[float] = []
+    for action in labels:
+        tp = confusion[action][action]
+        support = sum(confusion[action].values())
+        predicted = sum(confusion[t][action] for t in labels)
+        precision = tp / predicted if predicted else 0.0
+        recall = tp / support if support else 0.0
+        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+        per_action[action] = {
+            "support": support,
+            "predicted": predicted,
+            "precision": round(precision, 4),
+            "recall": round(recall, 4),
+            "f1": round(f1, 4),
+        }
+        if support:
+            f1s.append(f1)
+
+    quiet = [r for r in records if r["truth_action"] == "nothing_happened"]
+    false_placed = sum(1 for r in quiet if r["pred_action"] == "placed")
+    false_handling = sum(1 for r in quiet if r["pred_action"] in ("picked_up", "carried"))
+
+    # Per-event recall: overlapping windows mean the pipeline needs any one of
+    # them to see the placement, so this -- not the per-window rate -- is what
+    # the product experiences.
+    caught: list[dict] = []
+    for clip, truth in truths.items():
+        for event in truth.events:
+            if event["action"] not in MEMORY_ACTIONS:
+                continue
+            covering = [
+                r
+                for r in records
+                if r["clip"] == clip and r["start"] < float(event["t"]) <= r["end"]
+            ]
+            hits = [r for r in covering if r["pred_action"] == event["action"]]
+            caught.append(
+                {
+                    "clip": clip,
+                    "t": event["t"],
+                    "action": event["action"],
+                    "windows_covering": len(covering),
+                    "windows_hit": len(hits),
+                    "detection_delay_s": (
+                        round(min(r["end"] for r in hits) - float(event["t"]), 2) if hits else None
+                    ),
+                }
+            )
+    placements = [c for c in caught if c["action"] == "placed"]
+    found = [c for c in placements if c["windows_hit"]]
+    delays = [c["detection_delay_s"] for c in found if c["detection_delay_s"] is not None]
+
+    ious = [r["window_iou"] for r in records if r["window_iou"] is not None]
+    return {
+        "windows": total,
+        "window_accuracy": round(correct / total, 4) if total else 0.0,
+        "macro_f1": round(statistics.fmean(f1s), 4) if f1s else 0.0,
+        "per_action": per_action,
+        "confusion": confusion,
+        "quiet_windows": len(quiet),
+        "false_placed": false_placed,
+        "false_placed_rate": round(false_placed / len(quiet), 4) if quiet else 0.0,
+        "false_handling": false_handling,
+        "false_handling_rate": round(false_handling / len(quiet), 4) if quiet else 0.0,
+        "placements": len(placements),
+        "placements_found": len(found),
+        "placement_recall": round(len(found) / len(placements), 4) if placements else 0.0,
+        "detection_delay_p50_s": round(statistics.median(delays), 2) if delays else None,
+        "events": caught,
+        "no_box_windows": sum(1 for r in records if r["no_box"]),
+        "mean_window_iou": round(statistics.fmean(ious), 4) if ious else 0.0,
+    }
+
+
 # --- The run -----------------------------------------------------------------
 
 IMAGE_SUFFIXES = frozenset({".heic", ".heif", ".jpg", ".jpeg", ".png", ".webp"})
@@ -551,19 +960,261 @@ def score(replies: list[dict], order: str) -> dict:
     }
 
 
+def run_events(args, arm: Arm, drift: str) -> int:
+    """Score one arm on the event axis across every annotated recording."""
+    truth_files = sorted(args.truth_dir.glob("*.json"))
+    if not truth_files:
+        print(
+            f"no annotations under {args.truth_dir}.\n"
+            "Annotate first:  uv run python scripts/annotate_placement.py annotate "
+            "--clip ../../clips/recordings/<file>.mp4"
+        )
+        return 1
+
+    print(f"arm      {arm.name}  ({arm.model})")
+    print(f"licence  {arm.licence}{'' if arm.shippable else '   [CEILING ONLY -- not shippable]'}")
+    print(f"clips    {len(truth_files)}   prompt drift: {drift}")
+    print(
+        f"windows  {args.window_seconds:.0f}s span every {args.interval_seconds:.0f}s, "
+        f"{args.max_frames} frames each -- the production schedule"
+    )
+    print("-" * 72)
+
+    truths: dict[str, ClipTruth] = {}
+    records: list[dict] = []
+    latencies: list[float] = []
+    errors = 0
+    for path in truth_files:
+        truth = load_truth(path)
+        clip = args.clips / truth.clip
+        if not clip.is_file():
+            print(f"  {truth.clip}: SKIPPED (not found under {args.clips})")
+            continue
+        truths[truth.clip] = truth
+        frames = decode_clip(clip, truth.frame_stride, args.long_edge)
+        windows = build_windows(
+            frames,
+            window_s=args.window_seconds,
+            interval_s=args.interval_seconds,
+            max_frames=args.max_frames,
+        )
+        print(f"  {truth.clip}  {len(frames)} frames -> {len(windows)} windows")
+        for window in windows:
+            content = [text_block(window_prompt([truth.label], len(window.frames)))]
+            content += [image_block(frame.data_url) for frame in window.frames]
+            started = time.perf_counter()
+            try:
+                raw = ask_openai(args.base_url, arm.model, content, args.timeout, args.max_tokens)
+            except (urllib.error.URLError, OSError, KeyError, TimeoutError) as exc:
+                errors += 1
+                print(f"    {window.end:6.1f}s  ERROR {exc}")
+                continue
+            elapsed = time.perf_counter() - started
+            latencies.append(elapsed)
+            truth_action = truth.action_in(window.start, window.end)
+            records.append(
+                {
+                    "clip": truth.clip,
+                    "label": truth.label,
+                    "start": round(window.start, 2),
+                    "end": round(window.end, 2),
+                    "frames": len(window.frames),
+                    "last_index": window.frames[-1].index,
+                    "truth_action": truth_action,
+                    "raw": raw,
+                    "latency_s": round(elapsed, 3),
+                }
+            )
+
+    if not records:
+        print(f"\nno replies at all ({errors} errors) -- is the server up at {args.base_url}?")
+        return 1
+
+    requested = args.coord_order or arm.coord_order
+    orders = ("xyxy", "yxyx") if requested == "auto" else (requested,)
+    scored = [(order, _resolve(records, truths, order)) for order in orders]
+    order, resolved = max(scored, key=lambda pair: _mean_iou(pair[1]))
+    for record, extra in zip(records, resolved, strict=True):
+        record.update(extra)
+    summary = score_events(records, truths)
+
+    for record in records:
+        mark = "ok " if record["truth_action"] == record["pred_action"] else "MISS"
+        if record["window_iou"] is not None:
+            grounding = f"IoU {record['window_iou']:.2f}"
+        elif record["no_box"]:
+            grounding = "no box"
+        else:
+            # The arm boxed something; truth has no box to score it against
+            # because the window's last frame lies outside the annotated span.
+            grounding = "no truth"
+        print(
+            f"  {record['clip'][:26]:<26} {record['end']:6.1f}s  {mark} "
+            f"truth={record['truth_action']:<16} said={record['pred_action']:<16} {grounding}"
+        )
+
+    report = {
+        "axis": "events",
+        "arm": arm.name,
+        "model": arm.model,
+        "licence": arm.licence,
+        "shippable": arm.shippable,
+        "params_b": arm.params_b,
+        "runtime": arm.runtime,
+        "clips": sorted(truths),
+        "errors": errors,
+        "prompt_drift": drift,
+        "long_edge": args.long_edge,
+        "window_seconds": args.window_seconds,
+        "interval_seconds": args.interval_seconds,
+        "max_frames": args.max_frames,
+        "coord_order_used": order,
+        "latency_p50_s": round(statistics.median(latencies), 3),
+        "latency_p95_s": round(
+            sorted(latencies)[min(len(latencies) - 1, int(0.95 * len(latencies)))], 3
+        ),
+        "latency_mean_s": round(statistics.fmean(latencies), 3),
+        "gpu_used_mib": gpu_used_mib(),
+        # Recorded, never scored -- judging a location phrase needs a human who
+        # watched the clip. Read these when picking the winner; a model that
+        # grounds well and describes the wrong room is not shippable either.
+        "locations": [
+            {
+                "clip": r["clip"],
+                "end": r["end"],
+                "action": r["pred_action"],
+                "location": r["location"],
+            }
+            for r in records
+            if r["location"]
+        ],
+        **summary,
+    }
+
+    print("\n" + "=" * 72)
+    print(
+        f"{arm.name}: placement recall {report['placements_found']}/{report['placements']} "
+        f"({report['placement_recall'] * 100:.0f}%)"
+        + (
+            f"   median delay {report['detection_delay_p50_s']:.1f}s after the event"
+            if report["detection_delay_p50_s"] is not None
+            else "   (no placement ever caught)"
+        )
+    )
+    print(
+        f"  false placements {report['false_placed']}/{report['quiet_windows']} quiet windows "
+        f"({report['false_placed_rate'] * 100:.0f}%)  -- each one writes a wrong location"
+    )
+    print(
+        f"  false handling   {report['false_handling']}/{report['quiet_windows']} "
+        f"({report['false_handling_rate'] * 100:.0f}%)  -- this is what keeps "
+        "promote_motion_events off"
+    )
+    print(
+        f"  window accuracy {report['window_accuracy']:.3f}  macro-F1 {report['macro_f1']:.3f}"
+        f"  no box on {report['no_box_windows']}/{report['windows']}"
+    )
+    print(
+        f"  last-frame grounding IoU {report['mean_window_iou']:.3f} "
+        f"(against interpolated truth; the grounding axis is the real measurement)"
+    )
+    print(
+        f"  latency p50 {report['latency_p50_s']:.2f}s  p95 {report['latency_p95_s']:.2f}s"
+        f"   -- {args.max_frames} frames per call, fired every {args.interval_seconds:.0f}s"
+    )
+    if report["latency_p50_s"] > args.interval_seconds:
+        print("  WARNING: p50 exceeds the firing interval; this arm backs the queue up.")
+    if report["gpu_used_mib"]:
+        print(f"  card in use: {report['gpu_used_mib']} MiB")
+
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        args.out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+        print(f"\nwrote {args.out}")
+    return 0
+
+
+def _resolve(records: list[dict], truths: dict[str, ClipTruth], order: str) -> list[dict]:
+    """Read every reply under one coordinate convention.
+
+    Only the box depends on the convention, but resolving actions here too
+    keeps the two in one place -- and `no_box` changes the predicted action,
+    because the pipeline drops a window with no grounding tag entirely
+    (`CosmosReasoner._parse` returns nothing without a box), so an arm that
+    forgets the tag has effectively said "nothing happened".
+    """
+    out: list[dict] = []
+    for record in records:
+        raw = record["raw"]
+        entry = parse_action_tail(raw).get(record["label"].strip().lower(), {})
+        claimed = str(entry.get("action", "unknown")).strip().lower()
+        if claimed not in ACTIONS:
+            claimed = "unknown"
+        box = parse_labeled_box(raw, record["label"], order)
+        truth = truths[record["clip"]]
+        reference = truth.box_at(record["last_index"])
+        out.append(
+            {
+                "claimed_action": claimed,
+                # What the pipeline would actually have recorded.
+                "pred_action": claimed if box is not None else "nothing_happened",
+                "no_box": box is None,
+                "box": None if box is None else [round(v, 4) for v in box],
+                "window_iou": (
+                    None if box is None or reference is None else round(iou(reference, box), 4)
+                ),
+                "location": entry.get("location"),
+            }
+        )
+    return out
+
+
+def _mean_iou(resolved: list[dict]) -> float:
+    values = [r["window_iou"] for r in resolved if r["window_iou"] is not None]
+    return statistics.fmean(values) if values else 0.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    repo_root = Path(__file__).resolve().parents[3]
     parser.add_argument("--arm", required=True, choices=sorted(ARMS), help="which contender")
-    parser.add_argument("--dataset", type=Path, required=True, help="identity-probe root")
-    parser.add_argument("--cache", type=Path, required=True, help="ground-truth boxes")
+    parser.add_argument(
+        "--task",
+        choices=("grounding", "events"),
+        default="grounding",
+        help="grounding: one box per still image. events: what happened across a window.",
+    )
+    parser.add_argument("--dataset", type=Path, help="identity-probe root (grounding)")
+    parser.add_argument("--cache", type=Path, help="ground-truth boxes (grounding)")
+    parser.add_argument(
+        "--truth-dir",
+        type=Path,
+        default=repo_root / "docs/spikes/grounder-bakeoff/truth",
+        help="annotations from annotate_placement.py (events)",
+    )
+    parser.add_argument(
+        "--clips",
+        type=Path,
+        default=repo_root / "clips/recordings",
+        help="where the annotated recordings live (events)",
+    )
+    # Defaults are the production values (config.py). Overridable because "is
+    # the window wide enough" is itself an open question -- spike 5b only
+    # bracketed the minimum between a 10 s window that failed and a 28 s clip
+    # that passed -- and this harness is now the cheapest way to answer it.
+    parser.add_argument("--window-seconds", type=float, default=20.0)
+    parser.add_argument("--interval-seconds", type=float, default=7.0)
+    parser.add_argument("--max-frames", type=int, default=8)
     parser.add_argument("--out", type=Path, help="write the run's JSON report here")
     parser.add_argument("--label", default="keys")
     parser.add_argument("--base-url", default="http://127.0.0.1:8001/v1")
     parser.add_argument("--device", default="cuda", help="transformers arms only")
     parser.add_argument("--long-edge", type=int, default=768, help="JPEG long edge sent")
-    parser.add_argument("--max-tokens", type=int, default=256)
+    #: 320 is `reason_max_tokens`: a window reply is tags *plus* a JSON tail,
+    #: and truncating the tail scores as `unknown` on every window.
+    parser.add_argument("--max-tokens", type=int, default=320)
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument("--limit", type=int, help="stop after N images (smoke test)")
     parser.add_argument(
@@ -579,12 +1230,18 @@ def main() -> int:
     args = parser.parse_args()
 
     arm = ARMS[args.arm]
-    repo_root = Path(__file__).resolve().parents[3]
     drift = check_prompt_drift(repo_root) if args.check_prompt_drift else "not requested"
     if drift.startswith("DRIFTED"):
         print(f"FATAL: {drift}")
         return 2
 
+    if args.task == "events":
+        if arm.transport != "openai":
+            parser.error("the event axis sends several frames per call; openai transport only")
+        return run_events(args, arm, drift)
+
+    if args.dataset is None or args.cache is None:
+        parser.error("--dataset and --cache are required for the grounding task")
     items = collect(args.dataset, args.cache, args.limit)
     if not items:
         parser.error(f"no annotated images found under {args.dataset} with {args.cache}")
@@ -626,8 +1283,7 @@ def main() -> int:
                 raw = ask_openai(
                     args.base_url,
                     arm.model,
-                    encode_data_url(image, args.long_edge),
-                    prompt,
+                    [text_block(prompt), image_block(encode_data_url(image, args.long_edge))],
                     args.timeout,
                     args.max_tokens,
                 )

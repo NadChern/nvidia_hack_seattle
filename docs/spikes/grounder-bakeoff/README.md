@@ -36,7 +36,17 @@ offering the model as a service at *any* size, which is exactly what this produc
 is. No amount of growth makes it legal, so unlike LFM there is no trade to weigh.
 [vLLM also does not support the architecture](https://github.com/vllm-project/vllm/issues/25215).
 
-## The four axes
+## Two tasks, because the reasoner does two things
+
+The pipeline asks one model both *where is it* and *what just happened to it*,
+and an arm can be excellent at one and useless at the other. Both are scored.
+
+```bash
+--task grounding   # one still image, one box       (36 annotated images)
+--task events      # a 20 s window, 8 frames        (annotated recordings)
+```
+
+### Grounding axes
 
 Grounding IoU alone already picked the wrong model once here. In spike 3c
 containment sat at ~100% while identity F1 was 0.776: the box was on the right
@@ -49,10 +59,41 @@ object at the wrong *extent*, and IoU could not say so. Every arm reports:
 | **Latency p50/p95** | per grounding call | **< 7 s** = `reason_interval_seconds`, or the pipeline backs up |
 | **No-box rate** | silent declines | a decline reads downstream as "object absent" |
 
+### Event axes
+
+Only `placed` reaches memory today: `promote_motion_events` is `False` because
+"at ~1fps Cosmos hallucinates handling on a resting object, and a single false
+pickup flips a confirmed placement to *moved afterward*". That policy has never
+been measured — it rests on an impression from the hackathon. This axis is what
+turns it into a number.
+
+| Axis | Measures | Gate |
+|---|---|---|
+| **Placement recall (per event)** | did *any* window covering a real placement call it `placed` | the product's number: windows overlap, one hit is enough |
+| **False-placement rate** | `placed` on a window where nothing happened | each one writes a **wrong location** into memory — the worst failure the product has |
+| **False-handling rate** | `picked_up`/`carried` on a resting object | the specific number that decides whether `promote_motion_events` can be turned on |
+| **Detection delay** | window end − event time | how long after a placement the memory exists |
+| **Latency p50/p95** | per **8-frame** call | the real realtime figure; single-image latency flatters every arm |
+| Window accuracy / macro-F1 | all five actions | diagnostic, not a gate — see below |
+
+Per-window accuracy is deliberately *not* a gate. Windows overlap by 13 s, so a
+single placement is offered to three of them and the pipeline needs only the
+first (`event_cooldown_seconds` suppresses the rest). An arm that reports the
+placement once and then goes quiet scores badly per-window and is behaving
+exactly as wanted.
+
+**Location phrases are recorded and never scored.** Judging "on the kitchen
+table next to a mug" needs a human who watched the clip; scoring it
+automatically once marked a correct phrase as a hallucination, because the wide
+frame really did show that surface. Read them out of `runs/*.json` by eye.
+
 Latency is the axis "realtime" actually lives on, and it is the one the
-incumbent is weakest on (~5 s warm, against a 7 s window interval).
+incumbent is weakest on (~5 s warm on a *single* image, against a 7 s window
+interval — the event axis sends eight).
 
 ## Data
+
+**Grounding:**
 
 - **Images:** `clips/identity-probe/` — 36 HEIC stills, keys_1 (15), keys_2 (14),
   keys_3 (7), across `reference` / `query_clean` / `query_realistic`.
@@ -63,6 +104,51 @@ Do **not** score against `clips/extent-*/_boxes/` — those are *predicted* boxe
 saved from an earlier run, and scoring a model against another model's output
 measures agreement, not accuracy.
 
+**Events:**
+
+- **Footage:** `clips/recordings/` — twelve files, six distinct scenes. The four
+  `_hi` / `_relay` / `_win` files are the same two scenes re-encoded at what the
+  gateway and relay actually deliver (720p/10 fps, 360p/6 fps), which makes them
+  the *more* representative ones to annotate: the deployment never sees the 4 K
+  original.
+- **Ground truth:** `docs/spikes/grounder-bakeoff/truth/` — **does not exist
+  until someone annotates it.** See below; the schema is documented in
+  `truth/README.md`.
+
+## Annotating the recordings
+
+The event axis has no data until this is done. `clips/` is gitignored, so
+annotations are written into `docs/` and committed.
+
+```bash
+cd services/vision-worker
+uv run python scripts/annotate_placement.py annotate \
+  --clip ../../clips/recordings/VID_20260819_120802_hi.mp4
+```
+
+It decodes the clip to JPEGs at ~2 fps, serves a browser annotator on
+`127.0.0.1:8770`, and writes `docs/spikes/grounder-bakeoff/truth/<clip>.json` on
+save. Drag to box, arrow keys to step, `1`–`5`/the dropdown to mark an event at
+the current frame, `s` to save.
+
+Two things it shows that matter more than they look:
+
+- **Interpolated boxes are drawn dashed.** Annotate two anchors, scrub, and stop
+  as soon as the dashed box tracks the object — the scorer interpolates the same
+  way, so anything more is unpaid work.
+- **Pixels on target, live, at capture resolution.** Below ~128 px identity is at
+  its floor and by ~48 px it is at chance (docs/spikes/capture-resolution). A
+  clip whose keyring never clears the floor should be discovered *now*, not
+  after a model scores badly on it for reasons that are not the model's.
+
+Annotate the quiet clips too, marking `nothing_happened`. Half of what this axis
+measures — the false-positive rate — is measured only on windows where nothing
+happened.
+
+```bash
+uv run python scripts/annotate_placement.py check   # validate every annotation
+```
+
 ## Prompt parity
 
 Every arm gets the **production** enrollment-localize prompt from
@@ -71,9 +157,21 @@ tuning would measure prompt-engineering effort rather than model quality, and
 spike 12c showed one sentence moves the worst noun from IoU 0.12 to 0.92, an
 effect big enough to swamp the differences we are looking for.
 
-The harness inlines that prompt (it must run under `uv --isolated`, where the
+The event axis gets the production **window** prompt the same way, and
+`--check-prompt-drift` now covers three things: the extent rule, the window
+prompt, and the action vocabulary. An event score against a stale prompt is
+worse than no event score — it looks like a model result and is actually a diff.
+
+The harness inlines those prompts (it must run under `uv --isolated`, where the
 service package is not importable) and `--check-prompt-drift` re-reads
-`reason/cosmos.py` to prove the copy is current. A drift is fatal, not a warning.
+`reason/cosmos.py` to prove the copies are current. A drift is fatal, not a
+warning.
+
+Parity extends to **block order**: text first, then images, exactly as
+`CosmosReasoner` builds its requests. Block order is part of what a VLM sees,
+and the harness previously sent the image first on the grounding task — fixed
+when the event axis landed, so grounding numbers taken before 2026-09-02 are not
+comparable with ones taken after.
 
 ## Running it
 
@@ -90,14 +188,14 @@ pip install "sglang[all]"       # MOSS-VL only
 
 ```bash
 vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8001 \
-  --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":1}'
+  --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":8}'
 ```
 
 ### Cosmos3-Nano — the incumbent baseline
 
 ```bash
 vllm serve nvidia/Cosmos3-Nano --port 8001 \
-  --max-model-len 8192 --gpu-memory-utilization 0.85
+  --max-model-len 8192 --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":8}'
 ```
 
 BF16 only — there is no official FP8/FP4 path, which is why this arm alone costs
@@ -114,7 +212,7 @@ python -m sglang.launch_server --model-path OpenMOSS-Team/MOSS-VL-Realtime \
 means the deployment maintains two inference runtimes. Not disqualifying, but it
 should have to win clearly, not narrowly.
 
-### Score any HTTP arm
+### Score any HTTP arm — grounding
 
 ```bash
 cd services/vision-worker && uv run --isolated \
@@ -126,11 +224,37 @@ cd services/vision-worker && uv run --isolated \
 
 `pillow-heif` is required, not optional — all 36 probe images are HEIC.
 
+### Score any HTTP arm — events
+
+Same server, same arm, second task. `av` replaces `pillow-heif` here (video, not
+HEIC), and the window geometry defaults to the production values from
+`config.py`.
+
+```bash
+cd services/vision-worker && uv run --isolated \
+  --with pillow --with av --with numpy \
+  python scripts/spike_grounder_bakeoff.py --arm qwen3-vl-8b --task events \
+    --check-prompt-drift \
+    --out ../../docs/spikes/grounder-bakeoff/runs/qwen3-vl-8b.events.json
+```
+
+Both `--truth-dir` and `--clips` default to the right places. The serve commands
+above all cap images at **8**, which is `reason_max_frames`; a lower cap makes
+every window call fail, and a higher one measures a request the pipeline never
+sends.
+
+`--window-seconds` / `--interval-seconds` / `--max-frames` default to 20 / 7 / 8,
+the shipped values. They are exposed because "is the window wide enough" is
+itself unresolved — spike 5b only bracketed the minimum between a 10 s window
+that failed and a 28 s clip that passed — and re-running this axis at a
+different width is now the cheapest way to answer it. Change them only
+deliberately, and never between two arms being compared.
+
 ### LFM2.5-VL-3B — vLLM, like the others
 
 ```bash
 vllm serve LiquidAI/LFM2.5-VL-3B --port 8001 \
-  --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":1}'
+  --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":8}'
 ```
 
 **Needs vLLM ≥ 0.23.0** — LFM2.5-VL is native (`Lfm2VlForConditionalGeneration`,
@@ -145,7 +269,10 @@ the deployment would run it.
 
 ## Reading the result
 
-The winner is **not** simply the highest IoU.
+The winner is **not** simply the highest IoU, and it is not decided on grounding
+alone — an arm that grounds best and hallucinates a pickup on every resting
+object is not shippable, because the product's promise is knowing where things
+are.
 
 1. **Shippable arms only** — every arm in the table now qualifies except
    Moondream 3, which is not scored. If LFM wins, note in RESULTS.md what its
