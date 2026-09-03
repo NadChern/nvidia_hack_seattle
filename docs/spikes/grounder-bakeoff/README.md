@@ -15,18 +15,26 @@ best-grounding candidates from contention.
 | Qwen3-VL-8B-Instruct | 9B | Apache-2.0 | ✅ |
 | MOSS-VL-Realtime | 11.3B | Apache-2.0 | ✅ |
 | Cosmos3-Nano *(incumbent)* | 16B | NVIDIA Open Model License | ~ permissive, not Apache |
-| LFM2.5-VL-3B | 3B | LFM Open License — **free only below $10M revenue** | ❌ ceiling only |
+| LFM2.5-VL-3B | 3B | LFM Open License — free below $10M revenue | ✅ capped |
 | ~~Moondream 3~~ | 9B MoE | **BSL 1.1**, "No Third-Party Service" | ❌ excluded |
 
 LFM2.5-VL-3B is the current measured best (IoU 0.889, **0.92** with the extent
-rule, spike 12c) and is exactly the model we would otherwise pick. Its revenue
-cap bites precisely when the company starts working. It stays in the table as a
-**ceiling**: without it we cannot tell whether the shippable winner is good or
-merely the least bad of a bad set.
+rule, spike 12c) and the smallest arm at 6.02 GiB resident — if it wins, the
+deployment card drops with it, potentially to a 48 GB L40S at ~$1.55/hr.
 
-Moondream 3 is excluded outright rather than scored — BSL 1.1 forbids offering it
-as a third-party service, which is the product, and [vLLM does not support the
-architecture](https://github.com/vllm-project/vllm/issues/25215).
+Its licence caps commercial use above $10M annual revenue. **Owner decision,
+2026-09-02: contend anyway.** The threshold is distant, and a grounder is a
+replaceable component on roughly a six-month cycle — by the time the cap binds,
+its replacement probably has not been published yet, and switching cost is a
+bake-off re-run rather than a rewrite. What the choice costs is the *claim*, not
+the code: "fully open source" becomes "open weights, commercially licensed above
+$10M" if a customer asks. Due for review when revenue is within a year of the cap.
+
+**Moondream 3 remains excluded, and it is not the same case.** BSL 1.1's "No
+Third-Party Service" grant is not a revenue threshold to grow into — it forbids
+offering the model as a service at *any* size, which is exactly what this product
+is. No amount of growth makes it legal, so unlike LFM there is no trade to weigh.
+[vLLM also does not support the architecture](https://github.com/vllm-project/vllm/issues/25215).
 
 ## The four axes
 
@@ -74,7 +82,7 @@ unambiguous and no two models contend for the card.
 
 ```bash
 # 0. once per box
-pip install "vllm>=0.13"        # Qwen3-VL FP8 + Cosmos
+pip install "vllm>=0.23"        # >=0.13 covers Qwen3-VL FP8 + Cosmos; LFM needs >=0.23
 pip install "sglang[all]"       # MOSS-VL only
 ```
 
@@ -118,26 +126,31 @@ cd services/vision-worker && uv run --isolated \
 
 `pillow-heif` is required, not optional — all 36 probe images are HEIC.
 
-### LFM2.5-VL-3B — the ceiling arm, local weights
+### LFM2.5-VL-3B — vLLM, like the others
 
 ```bash
-cd services/vision-worker && uv run --isolated \
-  --with 'transformers>=5.0' --with torch --with accelerate \
-  --with pillow --with pillow-heif --with numpy \
-  python scripts/spike_grounder_bakeoff.py --arm lfm2.5-vl-3b \
-    --dataset ../../clips/identity-probe --cache ../../clips/spike1-arms/_cache \
-    --out ../../docs/spikes/grounder-bakeoff/runs/lfm2.5-vl-3b.json
+vllm serve LiquidAI/LFM2.5-VL-3B --port 8001 \
+  --gpu-memory-utilization 0.85 --limit-mm-per-prompt '{"image":1}'
 ```
 
-Isolated because LFM needs `transformers>=5.0` while the service pins 4.57.6 for
-C-RADIOv4 — the same split that forced every grounding spike to run alone.
+**Needs vLLM ≥ 0.23.0** — LFM2.5-VL is native (`Lfm2VlForConditionalGeneration`,
+no `--trust-remote-code`) but landed later than the Qwen arms, which only need
+≥0.13. Use one vLLM ≥0.23 for every arm so the latency axis is a comparison
+rather than a mix of serving stacks.
+
+Earlier grounding spikes ran LFM under `uv --isolated` with `transformers>=5.0`,
+because the service pins 4.57.6 for C-RADIOv4. That is no longer necessary here:
+serving it puts the dependency split behind an HTTP boundary, which is also how
+the deployment would run it.
 
 ## Reading the result
 
 The winner is **not** simply the highest IoU.
 
-1. **Shippable arms only.** An unshippable ceiling arm winning tells you how much
-   quality the licence constraint costs, not what to deploy.
+1. **Shippable arms only** — every arm in the table now qualifies except
+   Moondream 3, which is not scored. If LFM wins, note in RESULTS.md what its
+   licence costs the pitch, so the trade stays a decision rather than drifting
+   into an unexamined default.
 2. **Latency p50 must be under 7 s.** An arm that grounds beautifully at 12 s
    cannot hold the window interval and is disqualified for realtime video.
 3. **Containment ≈ 1 with low IoU is a prompt result, not a model result** — that

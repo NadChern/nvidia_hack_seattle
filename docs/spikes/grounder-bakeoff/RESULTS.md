@@ -7,9 +7,12 @@ exist, on purpose. A rule chosen after seeing the results is not a rule.
 
 An arm wins only if it passes all four, in order:
 
-1. **Shippable licence.** Apache-2.0, or a licence with no revenue cap and no
-   third-party-service restriction. LFM2.5-VL-3B and Moondream 3 fail here and
-   can never win, whatever they score.
+1. **Shippable licence** — open weights we may actually deploy. Apache-2.0
+   qualifies; so does LFM's revenue-capped licence, by owner decision
+   (2026-09-02): the cap is distant and a grounder is a replaceable component,
+   so the lock-in is cheap. Moondream 3 still fails — BSL 1.1's "No Third-Party
+   Service" grant forbids offering it as a service at any size, which is the
+   product, so no amount of growth fixes it.
 2. **Latency p50 < 7 s** at 768 px, one image. That is
    `reason_interval_seconds`; a slower arm backs the window queue up and is
    disqualified for realtime video regardless of accuracy.
@@ -20,9 +23,16 @@ An arm wins only if it passes all four, in order:
    Nemotron already runs on vLLM and a second runtime is a standing maintenance
    cost.
 
-If no shippable arm passes 2 and 3, that is a real result: it means the product
-keeps Cosmos and pays 32 GiB, or the pipeline changes shape. Record it, don't
-retune until something passes.
+If no arm passes 2 and 3, that is a real result: it means the product keeps
+Cosmos and pays 32 GiB, or the pipeline changes shape. Record it, don't retune
+until something passes.
+
+**If LFM wins, record what the licence costs**, so the trade stays visible rather
+than becoming an unexamined default: the pitch says "open weights, commercially
+licensed above $10M" instead of "fully open source", and the decision is due for
+review when revenue comes within a year of the cap. If a clean-licence arm lands
+within ~0.03 mean IoU of it, prefer the clean one — that gap is inside the noise
+this 36-image set can resolve, and it buys back the claim for nothing.
 
 ## Summary
 
@@ -34,7 +44,7 @@ Fill from `runs/*.json`, not from terminal scrollback.
 | qwen3-vl-8b | Apache-2.0 | ✅ | | | | | | | | | |
 | moss-vl-realtime | Apache-2.0 | ✅ | | | | | | | | | |
 | cosmos3-nano *(incumbent)* | NVIDIA OML | ~ | | | | | | | | | |
-| lfm2.5-vl-3b *(ceiling)* | LFM, capped | ❌ | | | | | | | | | |
+| lfm2.5-vl-3b | LFM, capped >$10M | ✅ | | | | | | | | | |
 
 Prior knowledge to compare against, both measured on this same probe set:
 LFM2.5-VL-3B **0.889** (0.92 with the extent rule, spike 12c); Cosmos3-Nano

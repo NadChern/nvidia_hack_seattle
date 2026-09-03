@@ -16,6 +16,14 @@
 # fractions below are explicit and must sum, with the in-process models in
 # compose.gpu.yaml (C-RADIO, SAM2, Parakeet, Kokoro), to comfortably under 1.0.
 #
+# THE OTHER THING: the vLLM tag has a floor set by the grounder, not by Nemotron.
+#
+# Qwen3-VL FP8 and Cosmos need >=0.13; LFM2.5-VL is native but only from >=0.23.
+# The default is therefore 0.23, which serves every candidate. Pinning lower to
+# match an older runbook gives an "unknown architecture
+# Lfm2VlForConditionalGeneration" at startup, which reads like an unsupported
+# model rather than a version floor.
+#
 # They are placeholders sized from derived weights, NOT from measurement:
 # docs/spikes/cloud-vram/ exists to replace them with measured values, and
 # `runs/` is empty until someone rents a card. Treat a stack that OOMs on
@@ -23,7 +31,7 @@
 services:
   # --- Agent reasoning and tool routing ------------------------------------
   nemotron:
-    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.13.0}
+    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.23.0}
     command:
       - --model=nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4
       - --port=8000
@@ -73,7 +81,7 @@ services:
   # ~32 GiB of weights, about 45% of the whole budget. A Qwen3-VL winner would
   # cut that to ~8-18 GiB and change which card is needed.
   grounder:
-    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.13.0}
+    image: vllm/vllm-openai:${VMA_VLLM_TAG:-v0.23.0}
     command:
       - --model=${VMA_GROUNDER_MODEL:-nvidia/Cosmos3-Nano}
       - --port=8001

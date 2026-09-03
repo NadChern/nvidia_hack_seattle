@@ -6,20 +6,26 @@ answer has to survive being shown to someone: **the winner must be a model we
 are allowed to ship** under the privacy-first, open-source story, and it must be
 fast enough for realtime video.
 
-That second requirement disqualifies two models that would otherwise win on
-quality alone, which is why they are still scored here as *ceilings* rather than
-candidates:
+"Open source" is applied as **open weights we may actually ship**, which is not
+the same as OSI-approved:
 
 | Arm | Licence | Shippable |
 |---|---|---|
 | Qwen3-VL-4B / 8B | Apache-2.0 | yes |
 | MOSS-VL-Realtime | Apache-2.0 | yes |
 | Cosmos3-Nano | NVIDIA Open Model License | incumbent, permissive-ish |
-| LFM2.5-VL-3B | LFM Open License -- free only below $10M revenue | **no** |
+| LFM2.5-VL-3B | LFM Open License -- free below $10M revenue | yes, with a cap |
 
-LFM2.5-VL-3B is the current measured best (IoU 0.889, 0.92 with the extent rule,
-spike 12c). It is kept in the table because a bake-off with no ceiling cannot
-tell you whether the shippable winner is good or merely least bad.
+LFM2.5-VL-3B carries a commercial-use cap above $10M annual revenue and is still
+a full contender (owner decision, 2026-09-02): the threshold is distant, and a
+grounder is a replaceable component whose switching cost is a bake-off re-run.
+The cost is to the *claim* rather than the code -- "fully open source" becomes
+"open weights, commercially licensed above $10M" if a customer asks.
+
+**Moondream 3 is a different case and stays excluded.** BSL 1.1's "No
+Third-Party Service" grant is not a revenue threshold: it forbids offering the
+model as a service at *any* size, which is precisely what this product is. No
+amount of growth makes that one legal, so it is not scored at all.
 
 ## The four axes
 
@@ -64,10 +70,7 @@ Usage::
         --dataset ../../clips/identity-probe --cache ../../clips/spike1-arms/_cache \\
         --out ../../docs/spikes/grounder-bakeoff/runs/qwen3-vl-8b.json
 
-    # the transformers ceiling arm, isolated:
-    uv run --isolated --with 'transformers>=5.0' --with torch --with accelerate \\
-        --with pillow --with numpy --with pillow-heif \\
-        python scripts/spike_grounder_bakeoff.py --arm lfm2.5-vl-3b ...
+    # every arm is an HTTP arm; only the serve command differs (see the README)
 """
 
 from __future__ import annotations
@@ -252,13 +255,31 @@ ARMS: dict[str, Arm] = {
         Arm(
             name="lfm2.5-vl-3b",
             model="LiquidAI/LFM2.5-VL-3B",
-            transport="transformers",
+            # Served, not loaded in-process. LFM2.5-VL is native to vLLM as
+            # `Lfm2VlForConditionalGeneration` (no --trust-remote-code), so it
+            # can be measured on the same serving path as every other arm.
+            # That matters specifically for the latency axis: a
+            # transformers `.generate()` against vLLM-served arms would not be
+            # a comparison, and latency is what decides realtime.
+            transport="openai",
             licence="LFM Open License (free below $10M revenue)",
-            shippable=False,
+            # Full contender, by owner decision 2026-09-02. The revenue cap is
+            # real but distant, and a grounder is a replaceable component on a
+            # roughly six-month cycle -- by the time the cap binds, the arm that
+            # replaces this one probably does not exist yet. Switching cost is a
+            # bake-off re-run, not a rewrite, which is what makes the lock-in
+            # cheap enough to accept.
+            #
+            # What it does cost is the claim, not the code: "fully open source"
+            # becomes "open weights, commercially licensed above $10M" if a
+            # customer asks. Revisit when revenue is within one year of the cap.
+            shippable=True,
             params_b=3.0,
-            runtime="transformers >=5.0",
-            notes="CEILING ONLY -- the revenue cap makes this unshippable for the product "
-            "story. Kept because it measured 0.889/0.92 and is the number to beat.",
+            runtime="vLLM >=0.23 (LFM2.5-VL landed later than the Qwen arms)",
+            notes="Current measured best (IoU 0.889, 0.92 with the extent rule, spike 12c) "
+            "and the smallest arm at 6.02 GiB resident -- if it wins, the deployment card "
+            "drops with it. Licence caps commercial use above $10M revenue; judged an "
+            "acceptable trade rather than a disqualification.",
         ),
     )
 }
@@ -323,6 +344,11 @@ def ask_openai(
 
 class TransformersArm:
     """Local-weights transport, for an arm with no serving path.
+
+    No registered arm currently uses this -- LFM2.5-VL moved to vLLM once its
+    native support was confirmed. Kept as the escape hatch for a future
+    contender that transformers can load and no server can, which is a
+    recurring shape in this space (Moondream 3 is exactly that today).
 
     Holds the model for the whole run so the reported latency is warm, matching
     the HTTP arms -- a cold first call would otherwise flatter the servers.
