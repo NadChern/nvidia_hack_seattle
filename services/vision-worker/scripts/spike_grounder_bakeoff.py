@@ -110,7 +110,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 # --- Prompt, copied from the production reasoner -----------------------------
@@ -645,43 +645,65 @@ class ClipTruth:
     height: int
     rotate: int
     notes: str
+    #: Inclusive (first, last) source-frame ranges the object is in shot for.
+    #: Empty means the file predates the field; see `visible`.
+    visibility: list[tuple[int, int]] = field(default_factory=list)
 
     @property
-    def visible(self) -> tuple[int, int]:
-        """The frame range the object is annotated as visible in.
+    def visible(self) -> list[tuple[int, int]]:
+        """The frame ranges the object is annotated as being in shot for.
 
-        The annotated box span *is* the visibility span, by convention (stated
-        in the annotator and in truth/README.md): the annotator boxes the first
-        and last frame the object appears in, and outside that range the object
-        is absent. This is what lets "the model returned no box" be scored as
-        correct in one window and a miss in another, instead of being a single
-        undifferentiated no-box rate.
+        Explicit, and a *list*, because an object leaves and comes back. The
+        first version of this derived the span from the boxes -- first boxed
+        frame to last boxed frame -- which is right for a clip where the object
+        appears once and silently wrong for one where the wearer walks away and
+        returns: `min..max` swallows the whole absence, so every window in the
+        middle is scored as "the object was there and the model failed to box
+        it" when in fact it was two rooms away.
+
+        Sparse boxes cannot recover this on their own either. An annotator
+        boxes the frames worth boxing, not every frame the object is in, so the
+        last box before an absence is not the last sighting. Visibility is
+        therefore annotated rather than inferred, and `annotate_placement.py`
+        asks for it.
+
+        Files written before that field existed fall back to the old rule --
+        one span, boxes' min to max -- which is what their annotator meant.
         """
+        if self.visibility:
+            return sorted(self.visibility)
         keys = sorted(self.boxes)
-        return (keys[0], keys[-1]) if keys else (0, -1)
+        return [(keys[0], keys[-1])] if keys else []
 
     def is_visible(self, index: int) -> bool:
-        low, high = self.visible
-        return low <= index <= high
+        return any(low <= index <= high for low, high in self.visible)
 
     def box_at(self, index: int) -> tuple[float, float, float, float] | None:
         """The annotated box, or a linear interpolation between neighbours.
 
         Same rule as `eval_harness.GroundTruth.box_at`, reimplemented rather
-        than imported: this harness runs on a rented box under `uv run
-        --isolated` and cannot see the service package.
+        than imported (this harness runs on a rented box under `uv run
+        --isolated` and cannot see the service package), with one addition:
+        interpolation never crosses an absence. Sliding a box along the
+        straight line from the desk before the walk to the desk after it would
+        invent a target for every frame of the kitchen.
         """
         if index in self.boxes:
             return self.boxes[index]
+        if not self.is_visible(index):
+            return None
         keys = sorted(self.boxes)
-        before = [k for k in keys if k < index]
-        after = [k for k in keys if k > index]
+        before = [k for k in keys if k < index and self._same_span(k, index)]
+        after = [k for k in keys if k > index and self._same_span(k, index)]
         if not before or not after:
             return None
         lo, hi = before[-1], after[0]
         weight = (index - lo) / (hi - lo)
         a, b = self.boxes[lo], self.boxes[hi]
         return tuple(a[i] + (b[i] - a[i]) * weight for i in range(4))  # type: ignore[return-value]
+
+    def _same_span(self, a: int, b: int) -> bool:
+        return any(low <= a <= high and low <= b <= high for low, high in self.visible)
 
     def expected(self, start: float, end: float, last_index: int) -> tuple[str, bool]:
         """What the pipeline should record for this window, and whether the
@@ -739,6 +761,7 @@ def load_truth(path: Path) -> ClipTruth:
         # decoded sideways. Zero reproduces what that annotator saw.
         rotate=int(raw.get("rotate", 0)),
         notes=str(raw.get("notes", "")),
+        visibility=[(int(a), int(b)) for a, b in (raw.get("visibility") or [])],
     )
 
 

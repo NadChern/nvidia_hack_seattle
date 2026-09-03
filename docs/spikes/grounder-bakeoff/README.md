@@ -87,10 +87,13 @@ earlier frames showed the placement. Recall is therefore computed over
 because that number is a fact about the corpus and the window geometry rather
 than about any model.
 
-On the first annotated clip (a wallet placed on a desk, then the wearer walks
-away) it is **one window out of four**. If that holds across the corpus it is a
-finding in its own right: at a 7 s interval, the pipeline gets roughly one shot
-at each placement, and `reason_interval_seconds` matters far more than it looks.
+On the first annotated clip (a wallet placed on a desk, the wearer walks to the
+kitchen, then comes back) it is **two windows out of four** — and it was one
+until the clip was annotated properly, because the wearer returning to the same
+desk makes the third window catchable again. If a ratio like that holds across
+the corpus it is a finding in its own right: at a 7 s interval the pipeline gets
+one or two shots at each placement, and `reason_interval_seconds` matters far
+more than it looks.
 
 Per-window accuracy is deliberately *not* a gate. Windows overlap by 13 s, so a
 single placement is offered to three of them and the pipeline needs only the
@@ -155,9 +158,12 @@ of these files into the pipeline feeds the reasoner a sideways world. The
 annotator records what it applied and the scorer applies the same, so the two
 can never disagree.
 
-**Box the object on the first and last frame it is visible.** That span *is*
-the visibility span: outside it the scorer expects no box and counts one as a
-phantom.
+**Mark every stretch the object is in shot** (`v` on the first frame of a
+stretch, `v` again on the last). Outside those ranges the scorer expects no box
+and counts one as a phantom. An object that leaves and comes back needs two
+ranges — deriving them from the boxes instead was the first version of this and
+it put ground truth in a room the object was not in; `truth/README.md` has the
+numbers. Boxes stay sparse; the ranges are the part worth marking exhaustively.
 
 The page is one viewport tall by construction — the frame is fit to the
 available height, the sidebar scrolls on its own, and the page itself never

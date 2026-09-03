@@ -122,15 +122,17 @@ measures a call that is never made.
 | VID_20260819_120633 | 19.8 s | 3840×2160 @30 | ? | ☐ |
 | VID_20260819_120701 | 18.5 s | 3840×2160 @30 | ? | ☐ |
 | VID_20260819_120727 (+ `_hi` `_relay` `_win`) | 27.8 s | 3840×2160 @30 | ? | ☐ |
-| **VID_20260819_120802_hi** | 28.1 s | 1280×720 @10 | wallet placed on a desk at t≈5 s | **draft** |
+| **VID_20260819_120802_hi** | 28.1 s | 1280×720 @10 | wallet placed on a desk at t≈4.5 s, wearer leaves and returns | **done** |
 | VID_20260819_120802 (+ `_relay` `_win`) | 28.5 s | 3840×2160 @30 | same scene, other encodes | ☐ |
 | VID_20260819_160630 | 47.0 s | 3840×2160 @120 | ? | ☐ |
 | VID_20260819_162151 | 61.7 s | 3840×2160 @30 | ? | ☐ |
 
-The one draft annotation is **machine-drafted, not human-confirmed** — written
-by Claude from frame-by-frame inspection and marked as such in its `notes`.
-Open it in the annotator and confirm it before any number scored against it is
-quoted to anyone.
+The one finished annotation was machine-drafted and then **corrected by hand in
+the annotator** (2026-09-02), which is where the visibility bug below was found.
+Its two remaining soft spots: the second in-shot range has boxes only from frame
+220, so the window ending at t=21 can be scored for its event but not for IoU;
+and its range boundaries sit on the 5-frame annotation grid, so each is accurate
+to ±0.5 s.
 
 At 20 s windows firing every 7 s, that is roughly 4 windows per short clip and 8
 for the longest — call it 35 model calls per arm, 175 across five arms. Cheap
@@ -139,14 +141,20 @@ enough to re-run when a prompt changes, which is the point.
 Annotate the quiet stretches too. Gate 2 — the one that decides the winner — is
 measured **only** on windows where the object is present and truth says nothing
 happened, so a corpus of nothing but placements cannot answer the question this
-axis exists to ask. The wallet clip has **zero** such windows: the wearer walks
-away immediately after the placement, so of its four windows one catches the
-event and three have no wallet in frame at all.
+axis exists to ask. The wallet clip still has **zero** such windows even after a
+careful annotation, and the reason is worth knowing before recording more
+footage: the wallet is back in shot from t=19.5, but the 20 s window ending at
+t=21 reaches back to t=1 and so still contains the placement, and the next
+window ends at t=28 with the wearer facing the window. **A quiet window needs
+the object in shot at a window boundary that is more than 20 s after the last
+event** — in practice, footage that keeps the object in view for half a minute
+with nothing happening. None of the twelve recordings was shot with that in
+mind.
 
 ## What the first annotated clip already shows
 
-Three things fell out of annotating one 28 s clip, before any model has been
-run. All three are about the corpus and the pipeline, not about any arm.
+Four things fell out of annotating one 28 s clip, before any model has been
+run. All four are about the corpus and the harness, not about any arm.
 
 1. **Everything decodes sideways.** The originals carry `rotation=-90` and PyAV
    ignores rotation metadata, so every `av.open` path here — the annotator, the
@@ -158,14 +166,31 @@ run. All three are about the corpus and the pipeline, not about any arm.
    dev/demo path rather than a harness detail. The gateway's own log line says
    the live relay arrives portrait, so this is likely replay-only — worth
    confirming from a session log before assuming it.
-2. **One window out of four could catch the placement.** Boxes go in a window's
-   last frame and no box means no event, so a window whose last frame no longer
-   shows the object cannot report it. The wearer turns away ~3 s after setting
-   the wallet down, and only the window ending at t=7 still sees it. Recall is
-   scored over catchable placements for that reason, and if this pattern holds
-   the pipeline gets roughly one shot per placement — which makes
-   `reason_interval_seconds` a much sharper knob than it looks.
-3. **A placed object sits below the identity floor at gateway resolution.** The
+2. **Two windows out of four could catch the placement**, and which two is not
+   obvious. Boxes go in a window's last frame and no box means no event, so a
+   window whose last frame no longer shows the object cannot report it. The
+   wearer turns away ~3 s after setting the wallet down (so the window ending at
+   t=14 is blind) but walks back to the same desk, which makes the window ending
+   at t=21 catchable again — 16 s after the event, and only because a 20 s span
+   still reaches it. Recall is scored over catchable placements for that reason.
+   If this pattern holds the pipeline gets one or two shots per placement, which
+   makes `reason_interval_seconds` and `reason_window_seconds` sharper knobs
+   than they look.
+3. **Visibility has to be annotated, not derived.** The first version of the
+   scorer took the object's in-shot span to be its first boxed frame through its
+   last, which is right for a clip where the object appears once and wrong for
+   this one: the wearer leaves for eleven seconds and returns. Under the derived
+   rule the whole kitchen stretch counted as "the object was there", and truth
+   interpolated a box along the straight line between the two desk sightings —
+   so a scripted arm that hallucinated a placement in the kitchen scored
+   **window accuracy 0.75 and mean IoU 0.37 with 1/1 phantom**, where against
+   the corrected file it scores 0.50 and 1.00 with 2/2 phantom. It was being
+   rewarded for hallucinating. Truth files now carry an explicit `visibility`
+   list of frame ranges and the annotator has a key for it. Worth stating
+   plainly: a wrong visibility model does not make the score noisier, it makes
+   it answer a different question, and nothing in the output looks wrong.
+
+4. **A placed object sits below the identity floor at gateway resolution.** The
    wallet measures 241–255 px on target while held up to the camera and
    **63–100 px** once it is on the desk, against a ~128 px floor and ~48 px
    chance level (docs/spikes/capture-resolution). Grounding it is one problem;

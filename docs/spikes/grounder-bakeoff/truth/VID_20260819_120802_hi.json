@@ -3,11 +3,23 @@
   "label": "wallet",
   "distractor_ids": [],
   "boxes": {
+    "5": [
+      0.3336,
+      0.7166,
+      0.5707,
+      0.8922
+    ],
     "10": [
       0.298,
       0.462,
       0.552,
       0.71
+    ],
+    "15": [
+      0.12,
+      0.3932,
+      0.4721,
+      0.6559
     ],
     "20": [
       0.13,
@@ -15,11 +27,17 @@
       0.37,
       0.68
     ],
+    "25": [
+      0.1881,
+      0.4143,
+      0.4815,
+      0.6057
+    ],
     "30": [
-      0.19,
-      0.48,
-      0.34,
-      0.66
+      0.3477,
+      0.4869,
+      0.5777,
+      0.6176
     ],
     "40": [
       0.7,
@@ -27,11 +45,35 @@
       0.795,
       0.55
     ],
+    "45": [
+      0.3735,
+      0.5556,
+      0.5941,
+      0.6348
+    ],
     "50": [
       0.373,
       0.543,
       0.523,
       0.615
+    ],
+    "55": [
+      0.3829,
+      0.5424,
+      0.5801,
+      0.6176
+    ],
+    "60": [
+      0.3665,
+      0.5542,
+      0.5894,
+      0.6348
+    ],
+    "65": [
+      0.3946,
+      0.545,
+      0.5918,
+      0.6163
     ],
     "70": [
       0.439,
@@ -39,26 +81,143 @@
       0.569,
       0.592
     ],
+    "75": [
+      0.5355,
+      0.5173,
+      0.7044,
+      0.5714
+    ],
     "80": [
       0.622,
       0.519,
       0.732,
       0.56
+    ],
+    "220": [
+      0.3266,
+      0.4763,
+      0.4768,
+      0.5424
+    ],
+    "225": [
+      0.3172,
+      0.5186,
+      0.4885,
+      0.5965
+    ],
+    "230": [
+      0.3594,
+      0.5252,
+      0.5589,
+      0.6031
+    ],
+    "235": [
+      0.3782,
+      0.545,
+      0.5566,
+      0.6163
+    ],
+    "240": [
+      0.3524,
+      0.5424,
+      0.5519,
+      0.6255
+    ],
+    "245": [
+      0.2726,
+      0.5595,
+      0.4838,
+      0.648
     ]
   },
   "events": [
+    {
+      "t": 0.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 1.5,
+      "action": "carried",
+      "location": null
+    },
     {
       "t": 2.0,
       "action": "carried",
       "location": "in the wearer's hand, walking to the desk"
     },
     {
-      "t": 5.0,
+      "t": 2.5,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 3.0,
+      "action": "carried",
+      "location": null
+    },
+    {
+      "t": 4.5,
       "action": "placed",
-      "location": "on the white desk, in front of the tablet"
+      "location": null
+    },
+    {
+      "t": 6.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 6.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 7.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 22.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 22.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 23.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 23.5,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 24.0,
+      "action": "nothing_happened",
+      "location": null
+    },
+    {
+      "t": 24.5,
+      "action": "nothing_happened",
+      "location": null
     }
   ],
-  "notes": "DRAFT -- drafted by Claude from frame-by-frame inspection, not by a human annotator, and it has not been confirmed in the browser tool. Treat every number scored against it as provisional. Release is bracketed: the hand is still on the wallet at t=4.5 and fully withdrawn at t=5.0, so `placed` is annotated at 5.0, the first frame it is demonstrably at rest. Visible from frame 5 (clipped by the frame edge) and fully from frame 10; last visible at frame 80 (t=8.0), after which the wearer turns away -- boxes span 10..80 and the scorer reads that as the visibility span. No second wallet appears, so distractor_ids is empty and this clip cannot score identity, only events and grounding. Decoded with rotate=90: PyAV ignores the container's rotation=-90, so without it the world lies on its side.",
+  "visibility": [
+    [
+      0,
+      80
+    ],
+    [
+      195,
+      250
+    ]
+  ],
+  "notes": "Wallet carried in hand, set on the white desk at t=4.5, then the wearer walks to the kitchen (out of shot t=8.5-19.0) and returns to the same desk, where the wallet is still lying at t=19.5-25.0. Two in-shot ranges for that reason. Repeated `carried` and `nothing_happened` markers are deliberate: a window's expected answer comes from the events inside its span, so a state that lasts across windows needs a marker in each. On the desk the wallet is 63-100 px on target at 720p -- below the ~128 px identity floor, so this clip can score grounding and events but not identity.",
   "clip": "VID_20260819_120802_hi.mp4",
   "fps": 10.0,
   "frame_stride": 5,

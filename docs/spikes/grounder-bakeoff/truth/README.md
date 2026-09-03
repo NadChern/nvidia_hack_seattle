@@ -22,6 +22,7 @@ a time axis. `GroundTruth.load` reads only the keys it knows, so
   "events": [
     {"t": 12.5, "action": "placed", "location": "on the desk beside a mug"}
   ],
+  "visibility": [[0, 80], [195, 250]],   // inclusive frame ranges it is in shot
   "notes": "",
 
   "clip": "VID_20260819_120802_hi.mp4",  // resolved against clips/recordings/
@@ -49,18 +50,44 @@ before the key existed.
 `unknown` — the model's own vocabulary (`reason/cosmos.py::_ACTIONS`). Anything
 else is unscoreable and `annotate_placement.py check` fails on it.
 
-## The box span is the visibility span
+## `visibility` is annotated, not inferred
 
-Box the object on the **first and last frame it is visible**. Outside that
-range the scorer treats it as **absent**, and absence is scored, not skipped:
-the expected answer is no box, and a box there counts as a *phantom*.
+Mark every stretch the object is **in shot** — `visibility` is a list of
+inclusive `[first, last]` frame ranges, and an object that leaves and comes back
+gets two of them. Outside those ranges the scorer treats it as **absent**, and
+absence is scored, not skipped: the expected answer is no box, and a box there
+counts as a *phantom*.
 
-This matters more than it sounds, because boxes go in the window's **last**
-frame and `CosmosReasoner._parse` returns no events at all without a box. A
-window whose last frame no longer shows the object cannot report what happened
-in it, however clearly its earlier frames showed it. So a placement is only
-*catchable* by windows that still see the object at their end — and on the
-first annotated clip that turned out to be exactly one window out of four.
+The first version of this derived the ranges from the boxes — first boxed frame
+to last — and that is wrong in both directions, which the wallet clip showed the
+moment a human annotated it properly. The wearer sets the wallet down, walks to
+the kitchen for eleven seconds, and comes back to the same desk. `min..max`
+swallows the absence whole, so:
+
+- every kitchen window was scored as *the object was there and the model failed
+  to box it*, and
+- `box_at` cheerfully interpolated a ground-truth box along the straight line
+  between the two desk sightings, putting truth on a kitchen worktop.
+
+Scored against the corrected file a phantom-happy arm reports 2/2 phantom boxes
+and mean IoU 1.00 on the windows that can be scored. Scored against the derived
+version the same arm reported 1/1 phantom, **window accuracy 0.75** and mean IoU
+0.37 — it was rewarded for hallucinating in the kitchen because truth had a box
+there too. A visibility model that is wrong does not degrade the score; it
+measures a different question.
+
+Sparse boxes cannot recover this on their own, either: an annotator boxes the
+frames worth boxing, not every frame the object is in shot for, so the last box
+before an absence is not the last sighting. Hence two fields. Boxes stay sparse;
+`visibility` is the one thing worth marking exhaustively.
+
+## Only some windows can catch an event
+
+Boxes go in the window's **last** frame and `CosmosReasoner._parse` returns no
+events at all without a box. A window whose last frame no longer shows the
+object cannot report what happened in it, however clearly its earlier frames
+showed it. So a placement is only *catchable* by windows that still see the
+object at their end, and `placement_recall` is scored over those.
 
 ## Annotate sparsely, on purpose
 
@@ -85,7 +112,8 @@ uv run python scripts/annotate_placement.py check
 ```
 
 It refuses an action outside the vocabulary, an event outside the clip, a
-degenerate box, and a clip whose smallest annotated box is below ~48 px on
-target — beneath that, identity is at chance (docs/spikes/capture-resolution)
+degenerate box, a box sitting outside every visibility range (and a file with
+boxes but no ranges at all), and a clip whose smallest annotated box is below
+~48 px on target — beneath that, identity is at chance (docs/spikes/capture-resolution)
 and any event score from it will be confusing for a reason that has nothing to
 do with the model.

@@ -275,6 +275,9 @@ PAGE = """<!doctype html>
   <aside>
     <div id="where">-</div>
     <div id="pixels">-</div>
+    <h2>in shot</h2>
+    <button class="go" id="span">mark in-shot from here</button>
+    <div id="spans"></div>
     <h2>boxes</h2><div id="boxes"></div>
     <h2>events</h2>
     <select id="action">
@@ -286,19 +289,27 @@ PAGE = """<!doctype html>
     <div id="events"></div>
     <h2>notes</h2><textarea id="notes" rows="3"></textarea>
     <details open><summary>the visibility rule</summary>
-      <div>Box the object on the <b>first</b> and <b>last</b> frame it is visible.
-      Outside that range the scorer treats it as <b>absent</b> &mdash; it expects the model to
-      return no box there, and counts one that does as a phantom.</div></details>
+      <div>Mark every stretch the object is <b>in shot</b>, however small it looks &mdash;
+      press <kbd>v</kbd> on the first frame of a stretch and again on the last. Outside those
+      stretches the scorer treats it as <b>absent</b>: it expects the model to return no box,
+      and counts one that does as a phantom. An object that leaves and comes back needs
+      <b>two</b> stretches.
+      <br><br>Boxes are separate and can be sparse &mdash; box the frames worth boxing and the
+      scorer interpolates between them, but never across a gap between two stretches.</div>
+      </details>
     <details><summary>keys</summary>
       <div><kbd>&larr;</kbd><kbd>&rarr;</kbd> step &middot; <kbd>&darr;</kbd><kbd>&uarr;</kbd> x10
-      &middot; drag to box &middot; <kbd>d</kbd> drop box &middot; <kbd>p</kbd> play
-      &middot; <kbd>s</kbd> save</div></details>
+      &middot; drag to box &middot; <kbd>d</kbd> drop box &middot; <kbd>v</kbd> in-shot
+      &middot; <kbd>p</kbd> play &middot; <kbd>s</kbd> save</div></details>
   </aside>
 </main>
 <div id="status">loading...</div>
 <script>
 let M = null, pos = 0, playing = null;
-let truth = {object_id:"keys_01", label:"keys", distractor_ids:[], boxes:{}, events:[], notes:""};
+let truth = {object_id:"keys_01", label:"keys", distractor_ids:[], boxes:{}, events:[],
+             visibility:[], notes:""};
+// The frame a still-open in-shot stretch was started on, or null.
+let spanFrom = null;
 const $ = (id) => document.getElementById(id);
 const img = $("frame"), cv = $("overlay"), ctx = cv.getContext("2d"), stage = $("stage");
 
@@ -320,14 +331,38 @@ function syncOverlay() {
 
 function frameNow() { return M.frames[pos]; }
 
+function inShot(index) {
+  return truth.visibility.some(([a, b]) => a <= index && index <= b);
+}
+function sameSpan(a, b) {
+  return truth.visibility.some(([lo, hi]) => lo <= a && a <= hi && lo <= b && b <= hi);
+}
+
 function boxAt(index) {
   if (truth.boxes[index]) return truth.boxes[index];
-  const keys = Object.keys(truth.boxes).map(Number).sort((a,b) => a-b);
+  // Mirrors ClipTruth.box_at in the scorer, absence rule included: without it
+  // the preview draws a confident interpolated box across frames where the
+  // object is in another room, and the annotation looks finished when it is
+  // measuring the wrong thing.
+  if (truth.visibility.length && !inShot(index)) return null;
+  const keys = Object.keys(truth.boxes).map(Number).sort((a,b) => a-b)
+    .filter(k => !truth.visibility.length || sameSpan(k, index));
   const lo = keys.filter(k => k < index).pop(), hi = keys.filter(k => k > index)[0];
   if (lo === undefined || hi === undefined) return null;
   const w = (index - lo) / (hi - lo), a = truth.boxes[lo], b = truth.boxes[hi];
   return [0,1,2,3].map(i => a[i] + (b[i] - a[i]) * w);
 }
+
+function markSpan() {
+  const index = frameNow().index;
+  if (spanFrom === null) { spanFrom = index; render(); return; }
+  const span = [Math.min(spanFrom, index), Math.max(spanFrom, index)];
+  spanFrom = null;
+  truth.visibility.push(span);
+  truth.visibility.sort((a, b) => a[0] - b[0]);
+  render();
+}
+function dropSpan(i) { truth.visibility.splice(i, 1); render(); }
 
 function verdict(px) {
   if (px >= 256) return ["comfortable", "ok"];
@@ -354,8 +389,11 @@ function draw() {
 function render() {
   const f = frameNow();
   img.src = "frames/" + f.file;
-  $("where").textContent = "frame " + f.index + "  t=" + f.t.toFixed(2) + "s   (" +
-    (pos+1) + "/" + M.frames.length + ")";
+  const shot = truth.visibility.length
+    ? (inShot(f.index) ? "<span class=ok>in shot</span>" : "<span class=warn>out of shot</span>")
+    : "<span class=warn>no in-shot range yet</span>";
+  $("where").innerHTML = "frame " + f.index + "  t=" + f.t.toFixed(2) + "s   (" +
+    (pos+1) + "/" + M.frames.length + ")  " + shot;
   const keys = Object.keys(truth.boxes).map(Number).sort((a,b) => a-b);
   // Rows seek. Reviewing someone else's annotation is mostly "show me the
   // frame this box is on", and arrowing 40 frames to get there is the reason
@@ -365,6 +403,13 @@ function render() {
     "'><span class=seek onclick='seekIndex(" + k + ")'>frame " + k +
     "</span><button onclick='dropBox(" + k + ")'>drop</button></div>").join("") ||
     "<div class=row><span style='color:#8b93a7'>none yet</span></div>";
+  $("spans").innerHTML = truth.visibility.map(([a, b], i) =>
+    "<div class='row" + (a <= f.index && f.index <= b ? " here" : "") +
+    "'><span class=seek onclick='seekIndex(" + a + ")'>frames " + a + "&ndash;" + b +
+    "</span><button onclick='dropSpan(" + i + ")'>drop</button></div>").join("") ||
+    "<div class=row><span style='color:#8b93a7'>none yet</span></div>";
+  $("span").textContent = spanFrom === null
+    ? "mark in-shot from here" : "close in-shot range (opened at frame " + spanFrom + ")";
   $("events").innerHTML = truth.events.map((e, i) =>
     "<div class=row><span class=seek onclick='seekTime(" + e.t + ")'>" +
     e.t.toFixed(2) + "s " + e.action + (e.location ? " &middot; " + e.location : "") +
@@ -419,6 +464,7 @@ function seekTime(t) {
 }
 $("scrub").addEventListener("input", (e) => { pos = Number(e.target.value); render(); });
 
+$("span").onclick = markSpan;
 $("addevent").onclick = () => {
   truth.events.push({t: frameNow().t, action: $("action").value,
                      location: $("location").value || null});
@@ -435,6 +481,11 @@ function collect() {
 }
 
 async function save() {
+  if (spanFrom !== null) {
+    $("saved").innerHTML = "<span class=warn>close the in-shot range opened at frame " +
+      spanFrom + " first</span>";
+    return;
+  }
   const r = await fetch("truth", {method: "POST", headers: {"content-type": "application/json"},
                                   body: JSON.stringify(collect())});
   const body = await r.json();
@@ -448,6 +499,7 @@ document.addEventListener("keydown", (e) => {
   const go = {ArrowLeft:-1, ArrowRight:1, ArrowDown:-10, ArrowUp:10}[e.key];
   if (go !== undefined) { e.preventDefault(); step(go); }
   else if (e.key === "d") { dropBox(frameNow().index); }
+  else if (e.key === "v") { markSpan(); }
   else if (e.key === "s") { save(); }
   else if (e.key === "p") {
     if (playing) { clearInterval(playing); playing = null; }
@@ -464,6 +516,7 @@ fetch("manifest").then(r => r.json()).then(data => {
   if (data.truth) {
     truth = data.truth;
     truth.boxes = truth.boxes || {}; truth.events = truth.events || [];
+    truth.visibility = (truth.visibility || []).map(s => [Number(s[0]), Number(s[1])]);
     $("object_id").value = truth.object_id || ""; $("label").value = truth.label || "";
     $("distractors").value = (truth.distractor_ids || []).join(", ");
     $("notes").value = truth.notes || "";
@@ -504,6 +557,7 @@ def validate(payload: dict[str, Any], manifest: dict[str, Any]) -> list[str]:
             problems.append(f"box at frame {key} is not four values in 0..1")
         elif float(box[2]) <= float(box[0]) or float(box[3]) <= float(box[1]):
             problems.append(f"box at frame {key} is degenerate")
+    problems.extend(_visibility_problems(payload, boxes))
     events = payload.get("events") or []
     duration = float(manifest.get("duration_s", 0.0))
     for event in events:
@@ -516,6 +570,58 @@ def validate(payload: dict[str, Any], manifest: dict[str, Any]) -> list[str]:
             "no events -- annotate `nothing_happened` explicitly if that is the answer, "
             "since a clip with no entry cannot be told from one nobody labelled"
         )
+    return problems
+
+
+def _visibility_problems(payload: dict[str, Any], boxes: dict[str, Any]) -> list[str]:
+    """Why this annotation's in-shot ranges could not be scored against.
+
+    Separated out because it is the field that decides the gate the bake-off
+    turns on. A window where the object is out of shot is where a phantom box
+    is counted, and a window where it is in shot and nothing happens is the
+    only place the false-placement rate is measured -- so getting the ranges
+    wrong does not degrade the score, it measures a different question.
+    """
+    spans = payload.get("visibility")
+    if not spans:
+        if boxes:
+            return [
+                "no visibility ranges -- mark the frames the object is actually in shot for. "
+                "Boxes alone cannot say: an object that leaves and comes back reads as one "
+                "unbroken sighting, and the absence in between is scored as a miss"
+            ]
+        return []
+    problems: list[str] = []
+    clean: list[tuple[int, int]] = []
+    for span in spans:
+        if len(span) != 2:
+            problems.append(f"visibility range {span!r} is not a (first, last) pair")
+            continue
+        first, last = int(span[0]), int(span[1])
+        if last < first:
+            problems.append(f"visibility range {first}..{last} ends before it starts")
+            continue
+        clean.append((first, last))
+    clean.sort()
+    for (a_first, a_last), (b_first, b_last) in zip(clean, clean[1:], strict=False):
+        if b_first <= a_last:
+            problems.append(
+                f"visibility ranges {a_first}..{a_last} and {b_first}..{b_last} overlap"
+            )
+    for key in sorted(boxes, key=int):
+        index = int(key)
+        if not any(first <= index <= last for first, last in clean):
+            problems.append(
+                f"box at frame {index} sits outside every visibility range -- either the "
+                "object is in shot there and the range is short, or the box is stray"
+            )
+    for first, last in clean:
+        if not any(first <= int(k) <= last for k in boxes):
+            problems.append(
+                f"visibility range {first}..{last} has no box in it, so nothing in it can be "
+                "scored for grounding (fine if the object is only distantly visible; say so "
+                "in notes)"
+            )
     return problems
 
 
@@ -538,6 +644,12 @@ def to_truth_file(payload: dict[str, Any], manifest: dict[str, Any]) -> dict[str
                 "location": e.get("location") or None,
             }
             for e in sorted(payload.get("events", []), key=lambda e: float(e["t"]))
+        ],
+        #: Inclusive (first, last) source-frame ranges the object is in shot
+        #: for. Annotated rather than derived from the boxes: see the scorer's
+        #: `ClipTruth.visible` for why min..max is not the same question.
+        "visibility": [
+            [int(a), int(b)] for a, b in sorted(payload.get("visibility") or [], key=lambda s: s[0])
         ],
         "notes": payload.get("notes", ""),
         "clip": manifest["clip"],
@@ -642,8 +754,10 @@ def check(truth_dir: Path, clips: Path) -> int:
         print(f"no annotations under {truth_dir}")
         return 1
     bad = 0
-    print(f"{'clip':<34}{'label':<9}{'boxes':>6}{'events':>8}  {'min px':>7}  actions")
-    print("-" * 96)
+    print(
+        f"{'clip':<34}{'label':<9}{'boxes':>6}{'events':>8}{'in shot':>9}  {'min px':>7}  actions"
+    )
+    print("-" * 100)
     for path in files:
         payload = json.loads(path.read_text(encoding="utf-8"))
         # A saved truth file carries `duration_s` itself, so it is its own
@@ -664,14 +778,17 @@ def check(truth_dir: Path, clips: Path) -> int:
                     f"smallest box is {floor:.0f} px on target -- below the ~{PIXEL_CHANCE:.0f} px "
                     "at which identity reaches chance, so this clip cannot carry an identity score"
                 )
+        spans = payload.get("visibility") or []
+        covered = sum(int(b) - int(a) + 1 for a, b in spans)
+        in_shot = f"{len(spans)}x{covered}f" if spans else "-"
         print(
             f"{path.stem:<34}{payload.get('label', '?'):<9}{len(boxes):>6}{len(actions):>8}"
-            f"  {smallest:>7}  {', '.join(sorted(set(actions))) or '-'}"
+            f"{in_shot:>9}  {smallest:>7}  {', '.join(sorted(set(actions))) or '-'}"
         )
         for problem in problems:
             bad += 1
             print(f"    FAIL {problem}")
-    print("-" * 96)
+    print("-" * 100)
     print(f"{len(files)} annotated clip(s), {bad} problem(s)")
     return 1 if bad else 0
 
