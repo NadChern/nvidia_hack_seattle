@@ -256,6 +256,27 @@ def _collapse(text: str) -> str:
     return " ".join(text.split())
 
 
+#: Consecutive transport failures after which a run is abandoned.
+#:
+#: `--timeout` is *per call*, and a filtered port is silently dropped rather
+#: than refused — so a typo'd `--base-url` costs 36 x 180 s on the grounding
+#: axis before the "is the server up" message appears, on a GPU billed by the
+#: hour. Five refusals in a row is a server that is not coming back mid-run;
+#: the counter resets on any success, so a genuinely flaky one still completes.
+CONSECUTIVE_ERROR_LIMIT = 5
+
+
+def abandoned(kind: str, base_url: str, errors: int) -> int:
+    """Say what happened and how to check it, then fail loudly."""
+    print(
+        f"\nabandoned after {CONSECUTIVE_ERROR_LIMIT} consecutive transport failures "
+        f"({errors} total) -- is the server up at {base_url}?\n"
+        f"  curl -s {base_url.rstrip('/')}/models\n"
+        f"A partial {kind} run is not comparable with a complete one, so nothing was written."
+    )
+    return 1
+
+
 # --- The arms ----------------------------------------------------------------
 
 
@@ -1078,7 +1099,10 @@ def run_events(args, arm: Arm, drift: str) -> int:
     records: list[dict] = []
     latencies: list[float] = []
     errors = 0
+    consecutive = 0
     for path in truth_files:
+        if consecutive >= CONSECUTIVE_ERROR_LIMIT:
+            break
         truth = load_truth(path)
         clip = args.clips / truth.clip
         if not clip.is_file():
@@ -1101,8 +1125,12 @@ def run_events(args, arm: Arm, drift: str) -> int:
                 raw = ask_openai(args.base_url, arm.model, content, args.timeout, args.max_tokens)
             except (urllib.error.URLError, OSError, KeyError, TimeoutError) as exc:
                 errors += 1
+                consecutive += 1
                 print(f"    {window.end:6.1f}s  ERROR {exc}")
+                if consecutive >= CONSECUTIVE_ERROR_LIMIT:
+                    break
                 continue
+            consecutive = 0
             elapsed = time.perf_counter() - started
             latencies.append(elapsed)
             truth_action, absent = truth.expected(window.start, window.end, window.frames[-1].index)
@@ -1121,6 +1149,8 @@ def run_events(args, arm: Arm, drift: str) -> int:
                 }
             )
 
+    if consecutive >= CONSECUTIVE_ERROR_LIMIT:
+        return abandoned("event", args.base_url, errors)
     if not records:
         print(f"\nno replies at all ({errors} errors) -- is the server up at {args.base_url}?")
         return 1
@@ -1373,6 +1403,7 @@ def main() -> int:
     replies: list[dict] = []
     latencies: list[float] = []
     errors = 0
+    consecutive = 0
     for name, image_path, cached in items:
         image = load_rgb(image_path)
         truth_px = np.load(cached)["box"]
@@ -1398,8 +1429,12 @@ def main() -> int:
             # An arm that errors is a real result -- an unavailable server and a
             # model that cannot answer must not be averaged together silently.
             errors += 1
+            consecutive += 1
             print(f"  {name}: ERROR {exc}")
+            if consecutive >= CONSECUTIVE_ERROR_LIMIT:
+                break
             continue
+        consecutive = 0
         elapsed = time.perf_counter() - started
         latencies.append(elapsed)
         replies.append({"name": name, "raw": raw, "truth": truth})
@@ -1407,6 +1442,8 @@ def main() -> int:
         shown = f"IoU {iou(truth, preview):.3f}" if preview else f"NO BOX  raw={raw[:60]!r}"
         print(f"  {name}: {shown}  ({elapsed:.2f}s)")
 
+    if consecutive >= CONSECUTIVE_ERROR_LIMIT:
+        return abandoned("grounding", args.base_url, errors)
     if not replies:
         print(f"\nno replies at all ({errors} errors) -- is the server up at {args.base_url}?")
         return 1

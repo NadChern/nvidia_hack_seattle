@@ -214,6 +214,53 @@ and the harness previously sent the image first on the grounding task — fixed
 when the event axis landed, so grounding numbers taken before 2026-09-02 are not
 comparable with ones taken after.
 
+## Rehearse it before renting anything
+
+The harness had never talked to a server of any kind, and the first time would
+have been on a rented H200 at $4.50/hour with 156 calls queued behind it. So
+there is a scripted arm that answers out of the ground truth itself, and a set
+of known-answer scenarios asserting what the harness reports back:
+
+```bash
+cd services/vision-worker
+uv run --with pillow --with pillow-heif --with av --with numpy \
+  python scripts/spike_bakeoff_selftest.py
+```
+
+Sixteen scenarios, ~4 minutes, no GPU. It runs the real harness as a
+subprocess through the exact `uv run --isolated` command lines above, so the
+documented dependency sets are part of what is tested.
+
+| Scenario | Asserts |
+|---|---|
+| exact truth box | IoU 1.00, containment 1.00, area ratio 1.00 |
+| truth box at half extent | containment 1.00 with IoU 0.25 — the extent failure, separated |
+| truth box transposed | detected *as* `yxyx`, not scored as a bad model |
+| `"bbox_2d": [...]` | the JSON fallback parses when the model ignores `<box>` |
+| `NO_OBJECT` / prose | counted as no-box, not as a box at the origin |
+| honest window replies | window accuracy 1.00, recall 1.00, 0 false, 0 phantom |
+| a box on every window | false-placement **and** phantom rates both 1.00 |
+| `placed` with no box | scores as silence — no box means no event, as production does |
+| the wrong noun | one clip lost entirely; recall 4/5 |
+| server down | exits 1 saying so |
+| server dies mid-run | both axes stop after 5 failures and write no report |
+| every other call fails | rides it out — half the windows, no abort |
+
+Two of those were written after they caught something. **The wrong-noun case
+exists because the fake originally answered `"label": "keys"` on all four
+clips** — and `120802_hi` is the wallet — which showed up as a phantom arm
+scoring 4/5 recall when it should score 5/5. The harness was right and the fake
+was wrong, but a silent 4/5 is exactly the kind of result that would have been
+read as a model property on a rented box.
+
+**Still, check your `--base-url` by hand first.** `--timeout` is per call, and
+a *filtered* port (rather than a closed one) is dropped rather than refused, so
+each call waits the full 180 s. The harness abandons a run after five
+consecutive transport failures — so a typo'd host costs 5 × 180 s and a message
+naming the URL, rather than 36 × 180 s of paid GPU. The counter resets on any
+success, so a genuinely flaky server still completes; an abandoned run writes
+no report, because a partial axis is not comparable with a complete one.
+
 ## Running it
 
 One arm at a time, one server at a time — so `nvidia-smi` attribution is
