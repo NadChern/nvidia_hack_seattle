@@ -213,9 +213,11 @@ The recording brief changes shape accordingly. It is not one long static shot:
 > a window; ~8 minutes of that kind of footage across a few sessions is worth
 > more than one long clip, because the frames differ.
 
-Two or three ordinary "living in the flat" recordings would do it, and they are
-much cheaper to shoot than staged placements — which is the opposite of what
-this corpus is made of, and the reason gate 2 is the number missing.
+Ordinary "living in the flat" recordings do it, and they are much cheaper to
+shoot than staged placements — which is the opposite of what this corpus is
+made of, and the reason gate 2 is the number missing. The shot list, the
+re-encode recipe and the two annotation decisions it forces are in
+[RECORDING.md](RECORDING.md).
 
 ## What the first annotated clip already shows
 

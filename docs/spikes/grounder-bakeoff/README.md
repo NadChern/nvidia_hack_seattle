@@ -130,9 +130,12 @@ measures agreement, not accuracy.
   gateway and relay actually deliver (720p/10 fps, 360p/6 fps), which makes them
   the *more* representative ones to annotate: the deployment never sees the 4 K
   original.
-- **Ground truth:** `docs/spikes/grounder-bakeoff/truth/` — **does not exist
-  until someone annotates it.** See below; the schema is documented in
-  `truth/README.md`.
+- **Ground truth:** `docs/spikes/grounder-bakeoff/truth/` — four clips
+  annotated, one confirmed by hand; see RESULTS.md for what they can and
+  cannot measure. The schema is documented in `truth/README.md`.
+- **Still missing:** the quiet windows gate 2 needs. [RECORDING.md](RECORDING.md)
+  is the brief for shooting them and the recipe for re-encoding what comes off
+  the glasses.
 
 ## Annotating the recordings
 
